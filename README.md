@@ -59,6 +59,7 @@ sh  ./scripts/install/install_cu121.sh
 | LAM-20K | VFHQ                          | TBD       | TBD      | 1.4 s               | 562.9FPS                    | 110+FPS   |
 | LAM-20K | VFHQ+Nersemble                | [Link](https://huggingface.co/3DAIGC/LAM-20K) | [Link](https://virutalbuy-public.oss-cn-hangzhou.aliyuncs.com/share/aigc3d/data/for_yisheng/LAM/LAM_20K.tar)   | 1.4 s               | 562.9FPS                    | 110+FPS   |
 | LAM-20K | self-constructed large dataset | TBD      | TBD      | 1.4 s               | 562.9FPS                    | 110+FPS   |
+
 (**A & R:** Animation & Render)
 
 ```
