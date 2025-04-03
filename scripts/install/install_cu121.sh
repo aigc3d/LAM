@@ -5,6 +5,10 @@ pip install -U xformers==0.0.26.post1 --index-url https://download.pytorch.org/w
 # install dependencies
 pip install -r requirements.txt
 
+cd external/landmark_detection/FaceBoxesV2/utils/
+sh make.sh
+cd ../../../../
+
 cd ..
 # install pytorch3d
 pip install "git+https://github.com/facebookresearch/pytorch3d.git"

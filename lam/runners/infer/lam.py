@@ -136,12 +136,15 @@ class LAMInferrer(Inferrer):
         """
 
         self.model: LAMInferrer = self._build_model(self.cfg).to(self.device)
+
         self.flametracking = FlameTrackingSingleImage(output_dir='tracking_output',
                                              alignment_model_path='./pretrain_model/68_keypoints_model.pkl',
                                              vgghead_model_path='./pretrain_model/vgghead/vgg_heads_l.trcd',
                                              human_matting_path='./pretrain_model/matting/stylematte_synth.pt',
                                              facebox_model_path='./pretrain_model/FaceBoxesV2.pth',
-                                             detect_iris_landmarks=True)
+                                             detect_iris_landmarks=True,
+                                             args = self.cfg)
+
 
     def _build_model(self, cfg):
         """
@@ -259,16 +262,20 @@ class LAMInferrer(Inferrer):
         os.makedirs(os.path.dirname(dump_mesh_path), exist_ok=True)
         mesh.export(dump_mesh_path)
 
-    def save_imgs_2_video(self, imgs, v_pth, fps):
-        img_lst = [imgs[i] for i in range(imgs.shape[0])]
-        # Convert the list of NumPy arrays to a list of ImageClip objects
-        clips = [mpy.ImageClip(img).set_duration(0.1) for img in img_lst]  # 0.1 seconds per frame
+    def add_audio_to_video(self, video_path, out_path, audio_path):
+        from moviepy.editor import VideoFileClip, AudioFileClip
+        video_clip = VideoFileClip(video_path)
+        audio_clip = AudioFileClip(audio_path)
+        video_clip_with_audio = video_clip.set_audio(audio_clip)
+        video_clip_with_audio.write_videofile(out_path, codec='libx264', audio_codec='aac')
+        print(f"Audio added successfully at {out_path}")
 
-        # Concatenate the ImageClips into a single VideoClip
-        video = mpy.concatenate_videoclips(clips, method="compose")
-
-        # Write the VideoClip to a file
-        video.write_videofile(v_pth, fps=fps)  # setting fps to 10 as example
+    def save_imgs_2_video(self, img_lst, v_pth, fps):
+        from moviepy.editor import ImageSequenceClip
+        images = [image.astype(np.uint8) for image in img_lst]
+        clip = ImageSequenceClip(images, fps=fps)
+        clip.write_videofile(v_pth, codec='libx264')
+        print(f"Video saved successfully at {v_pth}")
     
     def infer_single(self, image_path: str,
                      motion_seqs_dir, 
@@ -311,7 +318,7 @@ class LAMInferrer(Inferrer):
         vis_ref_img = (image[0].permute(1, 2 ,0).cpu().detach().numpy() * 255).astype(np.uint8)
         Image.fromarray(vis_ref_img).save(save_ref_img_path)
         # prepare motion seq
-        test_sample=self.cfg.get("test_sample", True)
+        test_sample=self.cfg.get("test_sample", False)
         # test_sample=True
         src = image_path.split('/')[-3]
         driven = motion_seqs_dir.split('/')[-2]
@@ -355,6 +362,10 @@ class LAMInferrer(Inferrer):
         os.makedirs(os.path.dirname(dump_video_path), exist_ok=True)
         # images_to_video(rgb, output_path=dump_video_path, fps=render_fps, gradio_codec=False, verbose=True)
         self.save_imgs_2_video(rgb, dump_video_path, render_fps)
+        base_vid = motion_seqs_dir.strip('/').split('/')[-1]
+        audio_path = os.path.join(motion_seqs_dir, base_vid+".wav")
+        dump_video_path_wa = dump_video_path.replace(".mp4", "_audio.mp4")
+        self.add_audio_to_video(dump_video_path, dump_video_path_wa, audio_path)
         if save_img and dump_image_dir is not None:
             for i in range(rgb.shape[0]):
                 save_file = os.path.join(dump_image_dir, f"{i:04d}.png")

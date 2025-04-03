@@ -2,8 +2,8 @@
 
 TRAIN_CONFIG="configs/inference/lam-20k-8gpu.yaml"
 MODEL_NAME="exps/releases/lam/lam-20k/step_045500/"
-IMAGE_INPUT="assets/sample_input/cluo.jpg"
-MOTION_SEQS_DIR="assets/sample_motion/export/Anti_Drugs/flame_param/"
+IMAGE_INPUT="assets/sample_input/status.png"
+MOTION_SEQS_DIR="assets/sample_motion/export/Look_In_My_Eyes/"
 
 
 TRAIN_CONFIG=${1:-$TRAIN_CONFIG}

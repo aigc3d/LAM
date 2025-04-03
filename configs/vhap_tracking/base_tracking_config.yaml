@@ -1,0 +1,64 @@
+"# tyro YAML.\n!dataclass:BaseTrackingConfig\nasync_func: true\nbegin_frame_idx: 0\n\
+  begin_stage: null\ndata: !dataclass:DataConfig\n  _target: vhap.data.video_dataset.VideoDataset\n\
+  \  align_cameras_to_axes: true\n  background_color: white\n  calibrated: false\n\
+  \  camera_convention_conversion: opencv->opengl\n  division: null\n  landmark_source:\
+  \ star\n  n_downsample_rgb: null\n  root_folder: ''\n  scale_factor: 1.0\n  sequence:\
+  \ ''\n  subset: null\n  target_extrinsic_type: w2c\n  use_alpha_map: false\n  use_landmark:\
+  \ true\ndevice: cuda\nexp: !dataclass:ExperimentConfig\n  keyframes: !!python/tuple\
+  \ []\n  output_folder: !!python/object/apply:pathlib.PosixPath\n  - output\n  -\
+  \ track\n  photometric: false\n  reuse_landmarks: true\nlog: !dataclass:LogConfig\n\
+  \  image_format: jpg\n  interval_media: 500\n  interval_scalar: 100\n  max_num_views:\
+  \ 3\n  stack_views_in_rows: true\n  view_indices: !!python/tuple []\nlr: !dataclass:LearningRateConfig\n\
+  \  base: 0.005\n  camera: 0.005\n  dynamic_offset: 0.0005\n  expr: 0.05\n  light:\
+  \ 0.005\n  static_offset: 0.0005\n  translation: 0.001\nmodel: !dataclass:ModelConfig\n\
+  \  add_teeth: true\n  flame_params_path: null\n  n_expr: 100\n  n_shape: 300\n \
+  \ n_tex: 100\n  occluded: !!python/tuple\n  - hair\n  remove_lip_inside: false\n\
+  \  residual_tex: true\n  tex_clusters: !!python/tuple\n  - skin\n  - hair\n  - boundary\n\
+  \  - lips_tight\n  - teeth\n  - sclerae\n  - irises\n  tex_extra: true\n  tex_painted:\
+  \ true\n  tex_resolution: 2048\n  use_dynamic_offset: false\n  use_static_offset:\
+  \ false\npipeline: !dataclass:PipelineConfig\n  lmk_global_tracking: !dataclass:StageLmkGlobalTrackingConfig\n\
+  \    disable_jawline_landmarks: false\n    num_epochs: 0\n    optimizable_params:\
+  \ &id001 !!python/tuple\n    - cam\n    - pose\n    - shape\n    - joints\n    -\
+  \ expr\n  lmk_init_all: !dataclass:StageLmkInitAllConfig\n    disable_jawline_landmarks:\
+  \ false\n    num_steps: 300\n    optimizable_params: *id001\n  lmk_init_rigid: !dataclass:StageLmkInitRigidConfig\n\
+  \    disable_jawline_landmarks: false\n    num_steps: 300\n    optimizable_params:\
+  \ !!python/tuple\n    - cam\n    - pose\n  lmk_sequential_tracking: !dataclass:StageLmkSequentialTrackingConfig\n\
+  \    disable_jawline_landmarks: false\n    num_steps: 50\n    optimizable_params:\
+  \ !!python/tuple\n    - pose\n    - joints\n    - expr\n  rgb_global_tracking: !dataclass:StageRgbGlobalTrackingConfig\n\
+  \    align_boundary_except: !!python/tuple\n    - bottomline\n    - hair\n    align_texture_except:\
+  \ !!python/tuple\n    - hair\n    disable_jawline_landmarks: true\n    num_epochs:\
+  \ 30\n    optimizable_params: !!python/tuple\n    - cam\n    - pose\n    - shape\n\
+  \    - joints\n    - expr\n    - texture\n    - lights\n    - static_offset\n  \
+  \  - dynamic_offset\n  rgb_init_all: !dataclass:StageRgbInitAllConfig\n    align_boundary_except:\
+  \ !!python/tuple\n    - hair\n    - bottomline\n    - hair\n    align_texture_except:\
+  \ !!python/tuple\n    - hair\n    - boundary\n    - neck\n    - hair\n    disable_jawline_landmarks:\
+  \ true\n    num_steps: 500\n    optimizable_params: !!python/tuple\n    - cam\n\
+  \    - pose\n    - shape\n    - joints\n    - expr\n    - texture\n    - lights\n\
+  \  rgb_init_offset: !dataclass:StageRgbInitOffsetConfig\n    align_boundary_except:\
+  \ !!python/tuple\n    - bottomline\n    - hair\n    align_texture_except: !!python/tuple\n\
+  \    - hair\n    - boundary\n    - neck\n    - hair\n    disable_jawline_landmarks:\
+  \ true\n    num_steps: 500\n    optimizable_params: !!python/tuple\n    - cam\n\
+  \    - pose\n    - shape\n    - joints\n    - expr\n    - texture\n    - lights\n\
+  \    - static_offset\n  rgb_init_texture: !dataclass:StageRgbInitTextureConfig\n\
+  \    align_boundary_except: !!python/tuple\n    - hair\n    - boundary\n    - hair\n\
+  \    align_texture_except: !!python/tuple\n    - hair\n    - boundary\n    - neck\n\
+  \    - hair\n    disable_jawline_landmarks: false\n    num_steps: 500\n    optimizable_params:\
+  \ !!python/tuple\n    - cam\n    - shape\n    - texture\n    - lights\n  rgb_sequential_tracking:\
+  \ !dataclass:StageRgbSequentialTrackingConfig\n    align_boundary_except: !!python/tuple\n\
+  \    - bottomline\n    - hair\n    align_texture_except: !!python/tuple\n    - hair\n\
+  \    disable_jawline_landmarks: true\n    num_steps: 50\n    optimizable_params:\
+  \ !!python/tuple\n    - pose\n    - joints\n    - expr\n    - texture\n    - dynamic_offset\n\
+  render: !dataclass:RenderConfig\n  backend: nvdiffrast\n  background_eval: target\n\
+  \  background_train: target\n  disturb_rate_bg: 0.5\n  disturb_rate_fg: 0.5\n  lighting_space:\
+  \ world\n  lighting_type: SH\n  use_opengl: false\nw: !dataclass:LossWeightConfig\n\
+  \  always_enable_jawline_landmarks: true\n  blur_iter: 0\n  landmark: 10.0\n  photo:\
+  \ 30.0\n  prior_eyes: 0.03\n  prior_jaw: 0.3\n  prior_neck: 0.3\n  reg_diffuse:\
+  \ 100.0\n  reg_expr: 0.03\n  reg_light: null\n  reg_offset: 300.0\n  reg_offset_dynamic:\
+  \ 300000.0\n  reg_offset_lap: 1000000.0\n  reg_offset_lap_relax_coef: 0.1\n  reg_offset_lap_relax_for:\
+  \ &id002 !!python/tuple\n  - hair\n  - ears\n  reg_offset_relax_coef: 1.0\n  reg_offset_relax_for:\
+  \ *id002\n  reg_offset_rigid: 300.0\n  reg_offset_rigid_for: !!python/tuple\n  -\
+  \ left_ear\n  - right_ear\n  - neck\n  - left_eye\n  - right_eye\n  - lips_tight\n\
+  \  reg_shape: 0.3\n  reg_tex_pca: 0.0001\n  reg_tex_res: null\n  reg_tex_res_clusters:\
+  \ 10.0\n  reg_tex_res_for: !!python/tuple\n  - sclerae\n  - teeth\n  reg_tex_tv:\
+  \ 10000.0\n  smooth_eyes: 0\n  smooth_jaw: 0.1\n  smooth_neck: 30.0\n  smooth_rot:\
+  \ 30.0\n  smooth_trans: 300.0\n"

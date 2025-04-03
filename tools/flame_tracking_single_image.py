@@ -63,7 +63,8 @@ class FlameTrackingSingleImage:
             vgghead_model_path='./pretrain_model/vgghead/vgg_heads_l.trcd',
             human_matting_path='./pretrain_model/matting/stylematte_synth.pt',
             facebox_model_path='./pretrain_model/FaceBoxesV2.pth',
-            detect_iris_landmarks=False):
+            detect_iris_landmarks=False,
+            args=None):
 
         logger.info(f'Output Directory: {output_dir}')
 
@@ -79,7 +80,8 @@ class FlameTrackingSingleImage:
         # Load alignment model
         assert os.path.exists(
             alignment_model_path), f'{alignment_model_path} does not exist!'
-        args = self._parse_args()
+        #args = self._parse_args()
+        args.config_name = "alignment"
         args.model_path = alignment_model_path
         self.alignment = Alignment(args,
                                    alignment_model_path,
@@ -241,7 +243,10 @@ class FlameTrackingSingleImage:
         logger.info('Starting Optimization...')
 
         tyro.extras.set_accent_color('bright_yellow')
-        config_data = tyro.cli(BaseTrackingConfig)
+        from yaml import safe_load, safe_dump
+        with open("configs/vhap_tracking/base_tracking_config.yaml", 'r') as yml_f:
+            config_data = safe_load(yml_f)
+        config_data = tyro.from_yaml(BaseTrackingConfig, config_data)
 
         config_data.data.sequence = self.sub_output_dir.split('/')[-1]
         config_data.data.root_folder = Path(

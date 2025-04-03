@@ -350,4 +350,8 @@ class BaseTrackingConfig(Config):
 
 if __name__ == "__main__":
     config = tyro.cli(BaseTrackingConfig)
-    print(tyro.to_yaml(config))
+    config_yml = tyro.to_yaml(config)
+    print(config_yml)
+    from yaml import safe_dump, safe_load
+    with open("configs/vhap_tracking/base_tracking_config.yaml", 'w') as file:
+        safe_dump(config_yml, file)

@@ -4,7 +4,7 @@ accelerate
 smplx
 iopath
 wheel
-# gradio
+gradio
 face-detection-tflite
 moviepy==1.0.3
 decord==0.6.0
@@ -39,10 +39,6 @@ setuptools==74.0.0
 taming_transformers_rom1504==0.0.6
 timm==1.0.15
 pymcubes==0.1.6
-
-https://download.pytorch.org/whl/cu121/torch-2.4.0%2Bcu121-cp310-cp310-linux_x86_64.whl#sha256=28bfba084dca52a06c465d7ad0f3cc372c35fc503f3eab881cc17a5fd82914e7
-https://download.pytorch.org/whl/cu121/torchvision-0.19.0%2Bcu121-cp310-cp310-linux_x86_64.whl#sha256=5ee103c7eb47f8b08837e0e48b178f7ecc91d769d2b61240b90cb5aa2d06ce77
-
 tqdm==4.66.4
 transformers==4.41.2
 trimesh==4.4.9
