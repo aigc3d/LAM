@@ -80,7 +80,8 @@ class FlameTrackingSingleImage:
         # Load alignment model
         assert os.path.exists(
             alignment_model_path), f'{alignment_model_path} does not exist!'
-        #args = self._parse_args()
+        if args is None:
+            args = self._parse_args()
         args.config_name = "alignment"
         args.model_path = alignment_model_path
         self.alignment = Alignment(args,

@@ -1,1 +1,10 @@
 wheels
+__pycache__/
+build/
+*.so
+assets/sample_input/
+assets/sample_motion/
+configs/vhap_tracking/
+exps/
+pretrain_model/
+pretrained_models/

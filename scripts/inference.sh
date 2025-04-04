@@ -32,6 +32,8 @@ GAGA_TRACK_TYPE=""
 device=0
 nodes=0
 
+export PYTHONPATH=$PYTHONPATH:$pwd
+
 
 CUDA_VISIBLE_DEVICES=$device python -m lam.launch infer.lam --config $TRAIN_CONFIG \
         model_name=$MODEL_NAME image_input=$IMAGE_INPUT \
