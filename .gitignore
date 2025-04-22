@@ -8,3 +8,9 @@ configs/vhap_tracking/
 exps/
 pretrain_model/
 pretrained_models/
+.glut/
+*.bat
+external/landmark_detection/FaceBoxesV2/utils/nms/cpu_nms.cp310-win_amd64.pyd
+/external/landmark_detection/FaceBoxesV2/utils/build
+/tracking_output
+external/landmark_detection/FaceBoxesV2/utils/nms/cpu_nms.c

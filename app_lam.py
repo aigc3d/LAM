@@ -38,8 +38,11 @@ try:
 except:
     pass
 
+from pathlib import Path
 
 h5_rendering = False  # True
+torch._dynamo.config.suppress_errors = True  # 禁用动态编译错误
+torch._dynamo.config.disable = True
 
 
 def launch_env_not_compile_with_cuda():
@@ -249,7 +252,7 @@ def demo_lam(flametracking, lam, cfg):
         assert (return_code == 0), "flametracking export failed!"
 
         image_path = os.path.join(output_dir, "images/00000_00.png")
-        mask_path = os.path.join(output_dir, "/fg_masks/00000_00.png")
+        mask_path = os.path.join(output_dir, "fg_masks/00000_00.png")
         print(image_path, mask_path)
 
         aspect_standard = 1.0/1.0
@@ -267,8 +270,8 @@ def demo_lam(flametracking, lam, cfg):
         Image.fromarray(vis_ref_img).save(save_ref_img_path)
 
         # prepare motion seq
-        src = image_path.split('/')[-3]
-        driven = motion_seqs_dir.split('/')[-2]
+        src = Path(image_path).parent.parent.name
+        driven = Path(motion_seqs_dir).parent.name
         src_driven = [src, driven]
         motion_seq = prepare_motion_seqs(motion_seqs_dir, None, save_root=dump_tmp_dir, fps=render_fps,
                                             bg_color=1., aspect_standard=aspect_standard, enlarge_ratio=[1.0, 1,0],
