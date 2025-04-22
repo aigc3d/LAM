@@ -249,7 +249,7 @@ def demo_lam(flametracking, lam, cfg):
         assert (return_code == 0), "flametracking export failed!"
 
         image_path = os.path.join(output_dir, "images/00000_00.png")
-        mask_path = image_path.replace("/images/", "/fg_masks/").replace(".jpg", ".png")
+        mask_path = os.path.join(output_dir, "/fg_masks/00000_00.png")
         print(image_path, mask_path)
 
         aspect_standard = 1.0/1.0
