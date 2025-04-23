@@ -21,7 +21,7 @@ class VGGHeadDetector(torch.nn.Module):
 
     def _init_models(self,):
         # vgg_heads_l
-        self.model = torch.load(self.vggheadmodel_path, map_location='cpu')
+        self.model = torch.load(self.vggheadmodel_path, map_location='cpu', weights_only=False)
         self.model.to(self._device).eval()
 
     @torch.no_grad()

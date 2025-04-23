@@ -249,7 +249,7 @@ class FlameTrackingSingleImage:
             config_data = safe_load(yml_f)
         config_data = tyro.from_yaml(BaseTrackingConfig, config_data)
 
-        config_data.data.sequence = self.sub_output_dir.split('/')[-1]
+        config_data.data.sequence = Path(self.sub_output_dir).name 
         config_data.data.root_folder = Path(
             os.path.dirname(self.sub_output_dir))
 
@@ -328,7 +328,7 @@ class FlameTrackingSingleImage:
 
         src_folder = Path(self.output_tracking)
         tgt_folder = Path(self.output_export,
-                          self.sub_output_dir.split('/')[-1])
+                          Path(self.sub_output_dir).name)
         src_folder, config_data = load_config(src_folder)
 
         nerf_writer = NeRFDatasetWriter(config_data.data, tgt_folder, None,
