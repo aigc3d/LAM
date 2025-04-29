@@ -129,6 +129,9 @@ class FlameTrackingSingleImage:
                             type=str,
                             help='Configuration name',
                             default='alignment')
+        parser.add_argument('--blender_path',
+                            type=str,
+                            help='Blender path')
         return parser.parse_args()
 
     def preprocess(self, input_image_path):

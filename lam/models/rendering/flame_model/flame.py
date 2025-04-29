@@ -787,6 +787,20 @@ class FlameHeadSubdivided(FlameHead):
 
             mesh = trimesh.Trimesh(vertices=v_shaped_expr, faces=faces)
             mesh.export(os.path.join(bs_fd, f"expr{i}.obj"))
+
+    def save_shaped_mesh(self, shape_params, fd="./runtime_data/"):
+        if not os.path.exists(fd):
+            os.system(f"mkdir -p {fd}")
+        faces = self.faces_up.cpu().numpy()
+        batch_size = shape_params.shape[0]
+        template_vertices = self.v_template_up.unsqueeze(0).expand(batch_size, -1, -1)
+        v_shaped = template_vertices + blend_shapes(shape_params, self.shapedirs_up[:, :, :self.n_shape_params])
+
+        mesh = trimesh.Trimesh(vertices=v_shaped.squeeze(0).cpu().numpy(), faces=faces)
+        saved_path = os.path.join(fd, "nature.obj")
+        mesh.export(saved_path)
+
+        return saved_path
             
     def get_cano_verts(self, shape_params):
         # TODO check

@@ -128,10 +128,13 @@ def parse_configs():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str)
     parser.add_argument("--infer", type=str)
+    parser.add_argument("--blender_path", type=str, help="Path to Blender executable")
     args, unknown = parser.parse_known_args()
 
     cfg = OmegaConf.create()
     cli_cfg = OmegaConf.from_cli(unknown)
+
+    cfg.blender_path = args.blender_path
 
     # parse from ENV
     if os.environ.get("APP_INFER") is not None:
@@ -202,7 +205,7 @@ def create_zip_archive(output_zip='runtime_/h5_render_data.zip', base_vid="nice"
 def demo_lam(flametracking, lam, cfg):
 
     # @spaces.GPU(duration=80)
-    def core_fn(image_path: str, video_params, working_dir):
+    def core_fn(image_path: str, video_params, working_dir, enable_oac_file):
         image_raw = os.path.join(working_dir.name, "raw.png")
         with Image.open(image_path).convert('RGB') as img:
             img.save(image_raw)
@@ -297,6 +300,41 @@ def demo_lam(flametracking, lam, cfg):
             os.system(cmd)
             create_zip_archive(output_zip='runtime_data/h5_render_data.zip', base_vid=base_vid)
 
+        if enable_oac_file:
+            try:
+                from tools.generateARKITGLBWithBlender import generate_glb
+                from pathlib import Path
+                import shutil
+                import patoolib
+
+                oac_dir = os.path.join('./output/open_avatar_chat',base_iid)
+                saved_head_path = lam.renderer.flame_model.save_shaped_mesh(shape_param.unsqueeze(0).cuda(), fd=oac_dir)
+                res['cano_gs_lst'][0].save_ply(os.path.join(oac_dir, "offset.ply"), rgb2sh=False, offset2xyz=True)
+                generate_glb(
+                    input_mesh=Path(saved_head_path),
+                    template_fbx=Path("./assets/sample_oac/template_file.fbx"),
+                    output_glb=Path(os.path.join(oac_dir, "skin.glb")),
+                    blender_exec=Path(cfg.blender_path)
+                )
+                shutil.copy(
+                    src='./assets/sample_oac/animation.glb',
+                    dst=os.path.join(oac_dir, 'animation.glb')
+                )
+                os.remove(saved_head_path)
+
+                output_zip_path = os.path.join('./output/open_avatar_chat',base_iid+'.zip')
+                if(os.path.exists(output_zip_path)):
+                    os.remove(output_zip_path)
+                patoolib.create_archive(
+                    archive=output_zip_path,
+                    filenames=[oac_dir],
+                    verbosity=-1,
+                    program='zip'
+                )
+                shutil.rmtree(oac_dir)
+            except Exception as e:
+                output_zip_path = f"Archive creation failed: {str(e)}"
+
         rgb = res["comp_rgb"].detach().cpu().numpy()  # [Nv, H, W, 3], 0-1
         mask = res["comp_mask"].detach().cpu().numpy()  # [Nv, H, W, 3], 0-1
         mask[mask < 0.5] = 0.0
@@ -316,7 +354,7 @@ def demo_lam(flametracking, lam, cfg):
         dump_video_path_wa = dump_video_path.replace(".mp4", "_audio.mp4")
         add_audio_to_video(dump_video_path, dump_video_path_wa, audio_path)
 
-        return dump_image_path, dump_video_path_wa
+        return dump_image_path, dump_video_path_wa, output_zip_path if enable_oac_file else ''
 
     with gr.Blocks(analytics_enabled=False) as demo:
 
@@ -407,9 +445,18 @@ def demo_lam(flametracking, lam, cfg):
         # SETTING
         with gr.Row():
             with gr.Column(variant='panel', scale=1):
+                enable_oac_file = gr.Checkbox(label="Export ZIP file for Chatting Avatar",
+                                              value=False,
+                                              visible=os.path.exists(cfg.blender_path))
                 submit = gr.Button('Generate',
                                    elem_id='lam_generate',
                                    variant='primary')
+                output_zip_textbox = gr.Textbox(
+                    label="Export ZIP File Path",
+                    interactive=False,
+                    placeholder="Export ZIP File Path ...",
+                    visible=os.path.exists(cfg.blender_path)
+                )
 
         if h5_rendering:
             gr.set_static_paths("runtime_data/")
@@ -432,8 +479,8 @@ def demo_lam(flametracking, lam, cfg):
         ).success(
             fn=core_fn,
             inputs=[input_image, video_input,
-                    working_dir],  # video_params refer to smpl dir
-            outputs=[processed_image, output_video],
+                    working_dir, enable_oac_file],  # video_params refer to smpl dir
+            outputs=[processed_image, output_video, output_zip_textbox],
         )
 
         demo.queue()
@@ -480,13 +527,14 @@ def launch_gradio_app():
     cfg, _ = parse_configs()
     lam = _build_model(cfg)
     lam.to('cuda')
+    lam.eval()
 
-    flametracking = FlameTrackingSingleImage(output_dir='tracking_output',
+    flametracking = FlameTrackingSingleImage(output_dir='output/tracking',
                                              alignment_model_path='./model_zoo/flame_tracking_models/68_keypoints_model.pkl',
                                              vgghead_model_path='./model_zoo/flame_tracking_models/vgghead/vgg_heads_l.trcd',
                                              human_matting_path='./model_zoo/flame_tracking_models/matting/stylematte_synth.pt',
                                              facebox_model_path='./model_zoo/flame_tracking_models/FaceBoxesV2.pth',
-                                             detect_iris_landmarks=True)
+                                             detect_iris_landmarks=False)
 
     demo_lam(flametracking, lam, cfg)
 
