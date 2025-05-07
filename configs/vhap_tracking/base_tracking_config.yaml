@@ -5,7 +5,7 @@
   \ star\n  n_downsample_rgb: null\n  root_folder: ''\n  scale_factor: 1.0\n  sequence:\
   \ ''\n  subset: null\n  target_extrinsic_type: w2c\n  use_alpha_map: false\n  use_landmark:\
   \ true\ndevice: cuda\nexp: !dataclass:ExperimentConfig\n  keyframes: !!python/tuple\
-  \ []\n  output_folder: !!python/object/apply:pathlib.PosixPath\n  - output\n  -\
+  \ []\n  output_folder: !!python/object/apply:pathlib.Path\n  - output\n  -\
   \ track\n  photometric: false\n  reuse_landmarks: true\nlog: !dataclass:LogConfig\n\
   \  image_format: jpg\n  interval_media: 500\n  interval_scalar: 100\n  max_num_views:\
   \ 3\n  stack_views_in_rows: true\n  view_indices: !!python/tuple []\nlr: !dataclass:LearningRateConfig\n\

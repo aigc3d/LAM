@@ -38,7 +38,11 @@ try:
 except:
     pass
 
+from pathlib import Path
 
+
+torch._dynamo.config.suppress_errors = True  # 禁用动态编译错误
+torch._dynamo.config.disable = True
 h5_rendering = False  # True
 
 
@@ -271,8 +275,8 @@ def demo_lam(flametracking, lam, cfg):
         Image.fromarray(vis_ref_img).save(save_ref_img_path)
 
         # prepare motion seq
-        src = image_path.split('/')[-3]
-        driven = motion_seqs_dir.split('/')[-2]
+        src = Path(image_path).parent.parent.name
+        driven = Path(motion_seqs_dir).parent.name
         src_driven = [src, driven]
         motion_seq = prepare_motion_seqs(motion_seqs_dir, None, save_root=dump_tmp_dir, fps=render_fps,
                                             bg_color=1., aspect_standard=aspect_standard, enlarge_ratio=[1.0, 1,0],
@@ -412,7 +416,7 @@ def demo_lam(flametracking, lam, cfg):
                         examples_per_page=20,
                     )
 
-            with gr.Column():
+            with gr.Column(variant='panel', scale=1):
                 with gr.Tabs(elem_id='lam_input_video'):
                     with gr.TabItem('Input Video'):
                         with gr.Row():
