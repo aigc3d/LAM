@@ -55,6 +55,10 @@ Open "x64 Native Tools" terminal and install dependencies:
     pip install git+https://github.com/ashawkey/diff-gaussian-rasterization/
     pip install nvdiffrast@git+https://github.com/ShenhanQian/nvdiffrast@backface-culling
     pip install git+https://github.com/camenduru/simple-knn/
+
+    cd external/landmark_detection/FaceBoxesV2/utils/
+    python3 build.py build_ext --inplace
+    cd ../../../../
     ```
 
 

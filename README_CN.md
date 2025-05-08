@@ -7,7 +7,7 @@
 [![Website](https://raw.githubusercontent.com/prs-eth/Marigold/main/doc/badges/badge-website.svg)](https://aigc3d.github.io/projects/LAM/) 
 [![arXiv Paper](https://img.shields.io/badge/📜-arXiv:2503-10625)](https://arxiv.org/pdf/2502.17796)
 [![HuggingFace](https://img.shields.io/badge/🤗-HuggingFace_Space-blue)](https://huggingface.co/spaces/3DAIGC/LAM)
-[![ModelScope](https://img.shields.io/badge/%20ModelScope%20-Space-blue)](https://www.modelscope.cn/studios/Damo_XR_Lab/LAM_Large_Avatar_Model)
+[![ModelScope](https://img.shields.io/badge/🧱-ModelScope_Space-blue)](https://www.modelscope.cn/studios/Damo_XR_Lab/LAM_Large_Avatar_Model) 
 [![Apache License](https://img.shields.io/badge/📃-Apache--2.0-929292)](https://www.apache.org/licenses/LICENSE-2.0)
 
 <p align="center">
@@ -15,6 +15,8 @@
 </p>
 
 ### <p align="center"> LAM: Large Avatar Model for One-shot Animatable Gaussian Head </p>
+
+#### <p align="center"> SIGGRAPH 2025 </p>
 
 #####  <p align="center"> Yisheng He*, Xiaodong Gu*, Xiaodan Ye, Chao Xu, Zhengyi Zhao, Yuan Dong†, Weihao Yuan†, Zilong Dong, Liefeng Bo </p>
 
@@ -59,11 +61,25 @@
 
 ## 🚀 快速开始
 
-我们提供了在Windows系统（Cuda 12.8）上的一键安装包，感谢"十字鱼"的支持. &nbsp; &nbsp;
-[视频](https://www.bilibili.com/video/BV1vzL8zAEUu) &nbsp; &nbsp;
-[下载链接](https://virutalbuy-public.oss-cn-hangzhou.aliyuncs.com/share/aigc3d/data/LAM/Installation/LAM-windows-one-click-install.zip)
+### 在线试玩
+
+单图生成3D数字人:
+
+  [![HuggingFace](https://img.shields.io/badge/🤗-HuggingFace_Space-blue)](https://huggingface.co/spaces/3DAIGC/LAM)
+  [![ModelScope](https://img.shields.io/badge/🧱-ModelScope_Space-blue)](https://www.modelscope.cn/studios/Damo_XR_Lab/LAM_Large_Avatar_Model) 
+
+交互聊天:
+
+  [![HuggingFace](https://img.shields.io/badge/🤗-HuggingFace_Space-blue)](https://huggingface.co/spaces/HumanAIGC-Engineering-Team/open-avatar-chat)
+  [![ModelScope](https://img.shields.io/badge/🧱-ModelScope_Space-blue)](https://www.modelscope.cn/studios/HumanAIGC-Engineering/open-avatar-chat) 
+
+
 
 ### 环境设置
+
+我们提供了在Windows系统（Cuda 12.8）上的一键安装包，感谢"十字鱼"的支持. &nbsp; &nbsp;
+[视频](https://www.bilibili.com/video/BV13QGizqEey) &nbsp; &nbsp;
+[下载链接](https://virutalbuy-public.oss-cn-hangzhou.aliyuncs.com/share/aigc3d/data/LAM/Installation/LAM-windows-one-click-install.zip)
 
 #### Linux:
 ```bash
@@ -149,7 +165,7 @@ sh ./scripts/inference.sh ${CONFIG} ${MODEL_NAME} ${IMAGE_PATH_OR_FOLDER} ${MOTI
   author={
     Yisheng He and Xiaodong Gu and Xiaodan Ye and Chao Xu and Zhengyi Zhao and Yuan Dong and Weihao Yuan and Zilong Dong and Liefeng Bo
   },
-  booktitle={arXiv preprint arXiv:2502.17796},
+  booktitle={SIGGRAPH},
   year={2025}
 }
 ```
