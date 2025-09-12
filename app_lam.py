@@ -323,16 +323,16 @@ def demo_lam(flametracking, lam, cfg):
                 )
                 os.remove(saved_head_path)
 
-                output_zip_path = os.path.join('./output/open_avatar_chat', base_iid + '.zip')
+                oac_parent_dir = os.path.dirname(oac_dir)
+                base_iid_dir = os.path.basename(oac_dir)
+                output_zip_path = os.path.abspath(os.path.join(oac_parent_dir, base_iid + '.zip'))
                 if os.path.exists(output_zip_path):
                     os.remove(output_zip_path)
                 original_cwd = os.getcwd()
-                oac_parent_dir = os.path.dirname(oac_dir)
-                base_iid_dir = os.path.basename(oac_dir)
-                os.chdir(oac_parent_dir)
                 try:
+                    os.chdir(oac_parent_dir)
                     patoolib.create_archive(
-                        archive=os.path.abspath(output_zip_path),
+                        archive=output_zip_path,
                         filenames=[base_iid_dir],
                         verbosity=-1,
                         program='zip'
