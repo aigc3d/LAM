@@ -10,3 +10,6 @@ pretrain_model/
 pretrained_models/
 model_zoo/
 tracking_output/
+tmp/
+*.tar
+.pytest_cache/
