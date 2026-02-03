@@ -134,27 +134,31 @@ await controller.connectWebSocket('ws://localhost:8283/ws/' + sessionId);
 
 ## GCP Cloud Run デプロイ
 
-### 方法1: ソースから直接デプロイ
+### PowerShell スクリプトでデプロイ（推奨）
+
+```powershell
+cd audio2exp-service
+./deploy.ps1
+```
+
+### 手動デプロイ
 
 ```bash
 cd audio2exp-service
 
+# ビルド
+gcloud builds submit --tag gcr.io/hp-support-477512/audio2exp-service --project hp-support-477512
+
+# デプロイ
 gcloud run deploy audio2exp-service \
-  --source . \
-  --region asia-northeast1 \
+  --image gcr.io/hp-support-477512/audio2exp-service \
+  --platform managed \
+  --region us-central1 \
   --allow-unauthenticated \
   --memory 1Gi \
   --cpu 1 \
-  --timeout 300
-```
-
-### 方法2: Cloud Build を使用
-
-```bash
-cd audio2exp-service
-
-# Cloud Build でビルド＆デプロイ
-gcloud builds submit --config cloudbuild.yaml
+  --timeout 300 \
+  --project hp-support-477512
 ```
 
 ### デプロイ後の確認
@@ -162,28 +166,29 @@ gcloud builds submit --config cloudbuild.yaml
 ```bash
 # サービスURLを取得
 gcloud run services describe audio2exp-service \
-  --region asia-northeast1 \
-  --format 'value(status.url)'
+  --region us-central1 \
+  --format 'value(status.url)' \
+  --project hp-support-477512
 
 # ヘルスチェック
-curl https://audio2exp-service-xxxxx-an.a.run.app/health
+curl https://audio2exp-service-xxxxx-uc.a.run.app/health
 ```
 
 ## gourmet-support との連携設定
 
-### 1. 環境変数の設定
+### 1. gourmet-support の deploy.ps1 に環境変数を追加
 
-gourmet-support の Cloud Run に環境変数を追加:
+```powershell
+# deploy.ps1 の環境変数部分に追加
+$AUDIO2EXP_SERVICE_URL = "https://audio2exp-service-xxxxx-uc.a.run.app"
 
-```bash
-gcloud run services update gourmet-support \
-  --region asia-northeast1 \
-  --set-env-vars "AUDIO2EXP_SERVICE_URL=https://audio2exp-service-xxxxx-an.a.run.app"
+# --set-env-vars に追加
+--set-env-vars "...,AUDIO2EXP_SERVICE_URL=$AUDIO2EXP_SERVICE_URL"
 ```
 
 ### 2. バックエンドコードの追加
 
-`integration/gourmet_support_integration.py` を参照して、
+`integration/gourmet_support_patch.py` を参照して、
 TTS処理後に audio2exp-service へ音声を転送するコードを追加。
 
 ## 動作モード

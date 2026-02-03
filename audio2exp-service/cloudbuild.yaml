@@ -33,7 +33,7 @@ steps:
       - '--image'
       - 'gcr.io/$PROJECT_ID/audio2exp-service:$COMMIT_SHA'
       - '--region'
-      - 'asia-northeast1'
+      - 'us-central1'
       - '--platform'
       - 'managed'
       - '--allow-unauthenticated'
