@@ -132,27 +132,59 @@ const controller = window.lamAvatarController;
 await controller.connectWebSocket('ws://localhost:8283/ws/' + sessionId);
 ```
 
-## デプロイ
+## GCP Cloud Run デプロイ
 
-### Cloud Run
+### 方法1: ソースから直接デプロイ
 
 ```bash
+cd audio2exp-service
+
 gcloud run deploy audio2exp-service \
   --source . \
   --region asia-northeast1 \
-  --allow-unauthenticated
+  --allow-unauthenticated \
+  --memory 1Gi \
+  --cpu 1 \
+  --timeout 300
 ```
 
-### Docker
+### 方法2: Cloud Build を使用
 
-```dockerfile
-FROM python:3.10-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-COPY app.py .
-CMD ["python", "app.py", "--host", "0.0.0.0", "--port", "8080"]
+```bash
+cd audio2exp-service
+
+# Cloud Build でビルド＆デプロイ
+gcloud builds submit --config cloudbuild.yaml
 ```
+
+### デプロイ後の確認
+
+```bash
+# サービスURLを取得
+gcloud run services describe audio2exp-service \
+  --region asia-northeast1 \
+  --format 'value(status.url)'
+
+# ヘルスチェック
+curl https://audio2exp-service-xxxxx-an.a.run.app/health
+```
+
+## gourmet-support との連携設定
+
+### 1. 環境変数の設定
+
+gourmet-support の Cloud Run に環境変数を追加:
+
+```bash
+gcloud run services update gourmet-support \
+  --region asia-northeast1 \
+  --set-env-vars "AUDIO2EXP_SERVICE_URL=https://audio2exp-service-xxxxx-an.a.run.app"
+```
+
+### 2. バックエンドコードの追加
+
+`integration/gourmet_support_integration.py` を参照して、
+TTS処理後に audio2exp-service へ音声を転送するコードを追加。
 
 ## 動作モード
 
