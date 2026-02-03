@@ -1,17 +1,22 @@
 ---
 // LAMAvatar.astro - LAM 3D Avatar Component using gaussian-splat-renderer-for-lam
 // This component renders a 3D avatar using WebGL Gaussian Splatting
+// With OpenAvatarChat WebSocket integration for real-time lip sync
 
 export interface Props {
   avatarPath?: string;  // Path to avatar .zip file
   width?: string;
   height?: string;
+  wsUrl?: string;       // WebSocket URL for OpenAvatarChat backend
+  autoConnect?: boolean; // Auto-connect to WebSocket on load
 }
 
 const {
   avatarPath = '/avatar/concierge.zip',
   width = '100%',
-  height = '100%'
+  height = '100%',
+  wsUrl = '',
+  autoConnect = false
 } = Astro.props;
 ---
 
@@ -19,6 +24,8 @@ const {
   class="lam-avatar-container"
   id="lamAvatarContainer"
   data-avatar-path={avatarPath}
+  data-ws-url={wsUrl}
+  data-auto-connect={autoConnect.toString()}
   style={`width: ${width}; height: ${height};`}
 >
   <div class="lam-avatar-canvas" id="lamAvatarCanvas"></div>
@@ -103,17 +110,19 @@ const {
 
 <script>
 /**
- * LAM Avatar Controller
+ * LAM Avatar Controller with OpenAvatarChat WebSocket Integration
  *
  * Usage in your local environment:
  * 1. Install NPM package: npm install gaussian-splat-renderer-for-lam
  * 2. Place avatar .zip file in public/avatar/ directory
- * 3. Prepare expression data JSON (from Audio2Expression)
+ * 3. Connect to OpenAvatarChat backend for real-time lip sync
  */
 
-interface ExpressionData {
-  [key: string]: number;
-}
+import {
+  LAMWebSocketManager,
+  type ExpressionData,
+  type MotionData
+} from '../scripts/lam/lam-websocket-manager';
 
 type ChatState = 'Idle' | 'Listening' | 'Thinking' | 'Responding';
 
@@ -123,10 +132,16 @@ class LAMAvatarController {
   private loading: HTMLElement;
   private fallback: HTMLElement;
   private avatarPath: string;
+  private wsUrl: string;
+  private autoConnect: boolean;
   private renderer: any = null;
+  private wsManager: LAMWebSocketManager | null = null;
   private currentState: ChatState = 'Idle';
   private expressionData: ExpressionData = {};
   private isInitialized = false;
+  private audioContext: AudioContext | null = null;
+  private audioQueue: Int16Array[] = [];
+  private isPlayingAudio = false;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -134,6 +149,8 @@ class LAMAvatarController {
     this.loading = container.querySelector('#lamAvatarLoading') as HTMLElement;
     this.fallback = container.querySelector('#lamAvatarFallback') as HTMLElement;
     this.avatarPath = container.dataset.avatarPath || '/avatar/concierge.zip';
+    this.wsUrl = container.dataset.wsUrl || '';
+    this.autoConnect = container.dataset.autoConnect === 'true';
 
     this.init();
   }
@@ -142,6 +159,11 @@ class LAMAvatarController {
     try {
       // Try to load the LAM WebGL renderer
       await this.loadRenderer();
+
+      // Auto-connect to WebSocket if configured
+      if (this.autoConnect && this.wsUrl) {
+        await this.connectWebSocket(this.wsUrl);
+      }
     } catch (error) {
       console.warn('LAM WebGL renderer not available, using fallback image:', error);
       this.showFallback();
@@ -185,6 +207,93 @@ class LAMAvatarController {
     this.fallback.classList.remove('hidden');
   }
 
+  // WebSocket connection management
+
+  public async connectWebSocket(url: string): Promise<void> {
+    if (this.wsManager) {
+      this.wsManager.disconnect();
+    }
+
+    this.wsManager = new LAMWebSocketManager({
+      onExpressionUpdate: (data: ExpressionData) => {
+        this.expressionData = data;
+      },
+      onAudioData: (audio: Int16Array) => {
+        this.queueAudio(audio);
+      },
+      onConnectionChange: (connected: boolean) => {
+        this.container.dispatchEvent(new CustomEvent('lamConnectionChange', {
+          detail: { connected }
+        }));
+        if (connected) {
+          this.setChatState('Idle');
+        }
+      }
+    });
+
+    await this.wsManager.connect(url);
+    console.log('[LAM Avatar] WebSocket connected to:', url);
+  }
+
+  public disconnectWebSocket(): void {
+    if (this.wsManager) {
+      this.wsManager.disconnect();
+      this.wsManager = null;
+    }
+  }
+
+  public isWebSocketConnected(): boolean {
+    return this.wsManager?.isConnected() ?? false;
+  }
+
+  // Audio playback
+
+  private async initAudioContext(): Promise<void> {
+    if (!this.audioContext) {
+      this.audioContext = new AudioContext({ sampleRate: 16000 });
+    }
+    if (this.audioContext.state === 'suspended') {
+      await this.audioContext.resume();
+    }
+  }
+
+  private queueAudio(audio: Int16Array): void {
+    this.audioQueue.push(audio);
+    if (!this.isPlayingAudio) {
+      this.playNextAudio();
+    }
+  }
+
+  private async playNextAudio(): Promise<void> {
+    if (this.audioQueue.length === 0) {
+      this.isPlayingAudio = false;
+      return;
+    }
+
+    this.isPlayingAudio = true;
+    await this.initAudioContext();
+
+    const audio = this.audioQueue.shift()!;
+    const audioBuffer = this.audioContext!.createBuffer(1, audio.length, 16000);
+    const channelData = audioBuffer.getChannelData(0);
+
+    // Convert Int16 to Float32 (-1.0 to 1.0)
+    for (let i = 0; i < audio.length; i++) {
+      channelData[i] = audio[i] / 32768.0;
+    }
+
+    const source = this.audioContext!.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(this.audioContext!.destination);
+    source.onended = () => this.playNextAudio();
+    source.start();
+  }
+
+  public stopAudio(): void {
+    this.audioQueue = [];
+    this.isPlayingAudio = false;
+  }
+
   // Public API for external control
 
   public getChatState(): ChatState {
@@ -207,13 +316,23 @@ class LAMAvatarController {
     this.expressionData = data;
   }
 
-  // Update expression from Audio2Expression output
+  // Update expression from Audio2Expression output (manual mode)
   public updateFromAudio2Expression(frameData: { names: string[], weights: number[] }) {
     const newExpression: ExpressionData = {};
     frameData.names.forEach((name, index) => {
       newExpression[name] = frameData.weights[index];
     });
     this.expressionData = newExpression;
+  }
+
+  // Send end speech signal to backend
+  public sendEndSpeech(): void {
+    this.wsManager?.sendEndSpeech();
+  }
+
+  // Get WebSocket manager for advanced usage
+  public getWebSocketManager(): LAMWebSocketManager | null {
+    return this.wsManager;
   }
 }
 

@@ -70,6 +70,8 @@ import LAMAvatar from '../components/LAMAvatar.astro';
 | `avatarPath` | string | `/avatar/concierge.zip` | アバター.zipファイルのパス |
 | `width` | string | `100%` | コンテナの幅 |
 | `height` | string | `100%` | コンテナの高さ |
+| `wsUrl` | string | `''` | OpenAvatarChat WebSocket URL |
+| `autoConnect` | boolean | `false` | 自動WebSocket接続 |
 
 ### JavaScript API
 
@@ -135,9 +137,66 @@ import ConciergeComponent from '../components/Concierge.astro';
    cp generated_avatar.zip public/avatar/concierge.zip
    ```
 
-## Audio2Expression との連携
+## OpenAvatarChat WebSocket 連携（リップシンク）
 
-音声からリップシンクを実現するには、Audio2Expressionを使用：
+OpenAvatarChatバックエンドとWebSocketで接続して、リアルタイムリップシンクを実現します。
+
+### 接続方法
+
+```astro
+<!-- 自動接続（推奨） -->
+<LAMAvatar
+  avatarPath="/avatar/concierge.zip"
+  wsUrl="wss://your-openavatarchat-server:8282/ws"
+  autoConnect={true}
+/>
+```
+
+```javascript
+// または、JavaScriptから手動接続
+const controller = window.lamAvatarController;
+
+// WebSocket接続
+await controller.connectWebSocket('wss://your-server:8282/ws');
+
+// 接続状態の確認
+console.log('Connected:', controller.isWebSocketConnected());
+
+// 切断
+controller.disconnectWebSocket();
+```
+
+### イベントリスナー
+
+```javascript
+// 接続状態の変更を監視
+document.getElementById('lamAvatarContainer').addEventListener('lamConnectionChange', (e) => {
+  console.log('WebSocket connected:', e.detail.connected);
+});
+
+// チャット状態の変更を監視
+document.getElementById('lamAvatarContainer').addEventListener('lamStateChange', (e) => {
+  console.log('Chat state:', e.detail.state);
+});
+```
+
+### データフロー
+
+1. **OpenAvatarChat バックエンド** がAudio2Expressionで音声を解析
+2. **JBIN形式** でARKit表情データ（52チャンネル）をWebSocket送信
+3. **LAMWebSocketManager** がバイナリをパースして表情データに変換
+4. **GaussianSplatRenderer** がリアルタイムでアバターを更新
+
+### ファイル構成
+
+```
+src/scripts/lam/
+└── lam-websocket-manager.ts  # JBIN パーサー & WebSocket管理
+```
+
+## Audio2Expression との連携（手動モード）
+
+WebSocketを使わずに、手動で表情データを設定する場合：
 
 ```javascript
 // バックエンドからの表情データを受信
