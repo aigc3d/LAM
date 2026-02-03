@@ -1,0 +1,231 @@
+---
+// LAMAvatar.astro - LAM 3D Avatar Component using gaussian-splat-renderer-for-lam
+// This component renders a 3D avatar using WebGL Gaussian Splatting
+
+export interface Props {
+  avatarPath?: string;  // Path to avatar .zip file
+  width?: string;
+  height?: string;
+}
+
+const {
+  avatarPath = '/avatar/concierge.zip',
+  width = '100%',
+  height = '100%'
+} = Astro.props;
+---
+
+<div
+  class="lam-avatar-container"
+  id="lamAvatarContainer"
+  data-avatar-path={avatarPath}
+  style={`width: ${width}; height: ${height};`}
+>
+  <div class="lam-avatar-canvas" id="lamAvatarCanvas"></div>
+  <div class="lam-avatar-loading" id="lamAvatarLoading">
+    <div class="spinner"></div>
+    <p>Loading 3D Avatar...</p>
+  </div>
+  <div class="lam-avatar-fallback" id="lamAvatarFallback">
+    <img src="/images/avatar-anime.png" alt="AI Avatar" class="fallback-img" />
+  </div>
+</div>
+
+<style>
+.lam-avatar-container {
+  position: relative;
+  background: transparent;
+  overflow: hidden;
+}
+
+.lam-avatar-canvas {
+  width: 100%;
+  height: 100%;
+  display: none;
+}
+
+.lam-avatar-canvas.ready {
+  display: block;
+}
+
+.lam-avatar-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  z-index: 10;
+}
+
+.lam-avatar-loading.hidden {
+  display: none;
+}
+
+.lam-avatar-loading .spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid rgba(6, 182, 212, 0.3);
+  border-top-color: #06b6d4;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 12px;
+}
+
+.lam-avatar-loading p {
+  color: #0891b2;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.lam-avatar-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lam-avatar-fallback.hidden {
+  display: none;
+}
+
+.fallback-img {
+  max-width: 80%;
+  max-height: 80%;
+  object-fit: contain;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+</style>
+
+<script>
+/**
+ * LAM Avatar Controller
+ *
+ * Usage in your local environment:
+ * 1. Install NPM package: npm install gaussian-splat-renderer-for-lam
+ * 2. Place avatar .zip file in public/avatar/ directory
+ * 3. Prepare expression data JSON (from Audio2Expression)
+ */
+
+interface ExpressionData {
+  [key: string]: number;
+}
+
+type ChatState = 'Idle' | 'Listening' | 'Thinking' | 'Responding';
+
+class LAMAvatarController {
+  private container: HTMLElement;
+  private canvas: HTMLElement;
+  private loading: HTMLElement;
+  private fallback: HTMLElement;
+  private avatarPath: string;
+  private renderer: any = null;
+  private currentState: ChatState = 'Idle';
+  private expressionData: ExpressionData = {};
+  private isInitialized = false;
+
+  constructor(container: HTMLElement) {
+    this.container = container;
+    this.canvas = container.querySelector('#lamAvatarCanvas') as HTMLElement;
+    this.loading = container.querySelector('#lamAvatarLoading') as HTMLElement;
+    this.fallback = container.querySelector('#lamAvatarFallback') as HTMLElement;
+    this.avatarPath = container.dataset.avatarPath || '/avatar/concierge.zip';
+
+    this.init();
+  }
+
+  private async init() {
+    try {
+      // Try to load the LAM WebGL renderer
+      await this.loadRenderer();
+    } catch (error) {
+      console.warn('LAM WebGL renderer not available, using fallback image:', error);
+      this.showFallback();
+    }
+  }
+
+  private async loadRenderer() {
+    // Dynamic import of the gaussian-splat-renderer-for-lam package
+    // This will fail gracefully if the package is not installed
+    try {
+      const GaussianSplats3D = await import('gaussian-splat-renderer-for-lam');
+
+      this.renderer = await GaussianSplats3D.GaussianSplatRenderer.getInstance(
+        this.canvas,
+        this.avatarPath,
+        {
+          getChatState: () => this.getChatState(),
+          getExpressionData: () => this.getExpressionData(),
+          backgroundColor: '0xbae6fd', // Light blue background
+          alpha: 0.0 // Transparent background
+        }
+      );
+
+      this.isInitialized = true;
+      this.showCanvas();
+      console.log('LAM Avatar initialized successfully');
+    } catch (error) {
+      throw new Error(`Failed to load LAM renderer: ${error}`);
+    }
+  }
+
+  private showCanvas() {
+    this.loading.classList.add('hidden');
+    this.fallback.classList.add('hidden');
+    this.canvas.classList.add('ready');
+  }
+
+  private showFallback() {
+    this.loading.classList.add('hidden');
+    this.canvas.classList.remove('ready');
+    this.fallback.classList.remove('hidden');
+  }
+
+  // Public API for external control
+
+  public getChatState(): ChatState {
+    return this.currentState;
+  }
+
+  public setChatState(state: ChatState) {
+    this.currentState = state;
+    // Emit event for other components
+    this.container.dispatchEvent(new CustomEvent('lamStateChange', {
+      detail: { state }
+    }));
+  }
+
+  public getExpressionData(): ExpressionData {
+    return this.expressionData;
+  }
+
+  public setExpressionData(data: ExpressionData) {
+    this.expressionData = data;
+  }
+
+  // Update expression from Audio2Expression output
+  public updateFromAudio2Expression(frameData: { names: string[], weights: number[] }) {
+    const newExpression: ExpressionData = {};
+    frameData.names.forEach((name, index) => {
+      newExpression[name] = frameData.weights[index];
+    });
+    this.expressionData = newExpression;
+  }
+}
+
+// Initialize when DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+  const container = document.getElementById('lamAvatarContainer');
+  if (container) {
+    // Expose controller globally for external access
+    (window as any).lamAvatarController = new LAMAvatarController(container);
+  }
+});
+
+// Export for module usage
+export { LAMAvatarController };
+</script>

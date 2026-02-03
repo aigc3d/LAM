@@ -1,12 +1,20 @@
 ---
 // Concierge.astro - コンシェルジュモードUI (チャットモードと同様の機能)
+// LAM 3D Avatar Integration enabled
 import ReservationModal from './ReservationModal.astro';
+import LAMAvatar from './LAMAvatar.astro';
 
 export interface Props {
   apiBaseUrl?: string;
+  useLAMAvatar?: boolean;  // Enable LAM 3D Avatar
+  avatarPath?: string;     // Path to LAM avatar .zip file
 }
 
-const { apiBaseUrl = '' } = Astro.props;
+const {
+  apiBaseUrl = '',
+  useLAMAvatar = true,    // Default to LAM 3D Avatar
+  avatarPath = '/avatar/concierge.zip'
+} = Astro.props;
 ---
 
 <div class="gourmet-chat-container mode-concierge" data-api-base={apiBaseUrl}>
@@ -49,9 +57,15 @@ const { apiBaseUrl = '' } = Astro.props;
   </div>
 
   <div class="avatar-stage" id="avatarStage">
-    <div class="avatar-container">
-      <img id="avatarImage" src="/images/avatar-anime.png" alt="AI Avatar" class="avatar-img" />
-    </div>
+    {useLAMAvatar ? (
+      <!-- LAM 3D Avatar (WebGL Gaussian Splatting) -->
+      <LAMAvatar avatarPath={avatarPath} width="100%" height="100%" />
+    ) : (
+      <!-- Fallback 2D Avatar -->
+      <div class="avatar-container">
+        <img id="avatarImage" src="/images/avatar-anime.png" alt="AI Avatar" class="avatar-img" />
+      </div>
+    )}
   </div>
 
   <div class="voice-status stopped" id="voiceStatus">🎤 Ready</div>
