@@ -456,7 +456,7 @@ class LAMAvatarController {
     }, frameInterval);
   }
 
-  private stopFramePlayback(): void {
+  public stopFramePlayback(): void {
     if (this.framePlaybackTimer) {
       clearInterval(this.framePlaybackTimer);
       this.framePlaybackTimer = null;

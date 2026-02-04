@@ -56,17 +56,29 @@ export class ConciergeController extends CoreController {
 
     this.ttsPlayer.addEventListener('ended', () => {
       const lamController = (window as any).lamAvatarController;
-      if (lamController && typeof lamController.setChatState === 'function') {
-        console.log('[Concierge] TTS ended event - setChatState(Idle)');
-        lamController.setChatState('Idle');
+      if (lamController) {
+        console.log('[Concierge] TTS ended event - stopping frame playback');
+        // フレーム再生を停止
+        if (typeof lamController.stopFramePlayback === 'function') {
+          lamController.stopFramePlayback();
+        }
+        if (typeof lamController.setChatState === 'function') {
+          lamController.setChatState('Idle');
+        }
       }
     });
 
     this.ttsPlayer.addEventListener('pause', () => {
       const lamController = (window as any).lamAvatarController;
-      if (lamController && typeof lamController.setChatState === 'function') {
-        console.log('[Concierge] TTS pause event - setChatState(Idle)');
-        lamController.setChatState('Idle');
+      if (lamController) {
+        console.log('[Concierge] TTS pause event - stopping frame playback');
+        // フレーム再生を停止
+        if (typeof lamController.stopFramePlayback === 'function') {
+          lamController.stopFramePlayback();
+        }
+        if (typeof lamController.setChatState === 'function') {
+          lamController.setChatState('Idle');
+        }
       }
     });
   }
