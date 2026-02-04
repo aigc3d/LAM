@@ -25,19 +25,44 @@ export class ConciergeController extends CoreController {
   protected async init() {
     // 親クラスの初期化を実行
     await super.init();
-    
+
     // コンシェルジュ固有の要素とイベントを追加
     const query = (sel: string) => this.container.querySelector(sel) as HTMLElement;
     this.els.avatarContainer = query('.avatar-container');
     this.els.avatarImage = query('#avatarImage') as HTMLImageElement;
     this.els.modeSwitch = query('#modeSwitch') as HTMLInputElement;
-    
+
     // モードスイッチのイベントリスナー追加
     if (this.els.modeSwitch) {
       this.els.modeSwitch.addEventListener('change', () => {
         this.toggleMode();
       });
     }
+
+    // ★ LAMAvatar リップシンク: ttsPlayer の再生イベントに直接フック
+    this.ttsPlayer.addEventListener('play', () => {
+      const lamController = (window as any).lamAvatarController;
+      if (lamController && typeof lamController.setChatState === 'function') {
+        console.log('[Concierge] TTS play event - setChatState(Responding)');
+        lamController.setChatState('Responding');
+      }
+    });
+
+    this.ttsPlayer.addEventListener('ended', () => {
+      const lamController = (window as any).lamAvatarController;
+      if (lamController && typeof lamController.setChatState === 'function') {
+        console.log('[Concierge] TTS ended event - setChatState(Idle)');
+        lamController.setChatState('Idle');
+      }
+    });
+
+    this.ttsPlayer.addEventListener('pause', () => {
+      const lamController = (window as any).lamAvatarController;
+      if (lamController && typeof lamController.setChatState === 'function') {
+        console.log('[Concierge] TTS pause event - setChatState(Idle)');
+        lamController.setChatState('Idle');
+      }
+    });
   }
 
   // ========================================
@@ -157,13 +182,8 @@ export class ConciergeController extends CoreController {
       this.els.avatarContainer.classList.add('speaking');
     }
 
-    // ★ LAMAvatar リップシンク状態を開始
-    const lamController = (window as any).lamAvatarController;
-    if (lamController && typeof lamController.setChatState === 'function') {
-      lamController.setChatState('Responding');
-    }
-
     // 親クラスのTTS処理を実行
+    // ※ LAMAvatar の状態は ttsPlayer イベントで管理（init で設定済み）
     await super.speakTextGCP(text, stopPrevious, autoRestartMic, skipAudio);
 
     // アバターアニメーションを停止
@@ -175,12 +195,7 @@ export class ConciergeController extends CoreController {
     if (this.els.avatarContainer) {
       this.els.avatarContainer.classList.remove('speaking');
     }
-
-    // ★ LAMAvatar リップシンク状態を終了
-    const lamController = (window as any).lamAvatarController;
-    if (lamController && typeof lamController.setChatState === 'function') {
-      lamController.setChatState('Idle');
-    }
+    // ※ LAMAvatar の状態は ttsPlayer イベント（ended/pause）で管理
   }
 
   // ★ LAMAvatar を audio2exp-service WebSocket に接続
