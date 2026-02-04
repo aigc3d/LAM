@@ -170,6 +170,13 @@ class LAMAvatarController {
       // Try to load the LAM WebGL renderer
       await this.loadRenderer();
 
+      // デバッグ：レンダラー状態を定期的にチェック
+      setInterval(() => {
+        const canvasVisible = this.canvas.classList.contains('ready');
+        const jawOpen = this.expressionData['jawOpen'] || 0;
+        console.log(`[LAM Health] canvas=${canvasVisible}, renderer=${!!this.renderer}, jaw=${jawOpen.toFixed(3)}`);
+      }, 2000);
+
       // Auto-connect to WebSocket if configured
       if (this.autoConnect && this.wsUrl) {
         await this.connectWebSocket(this.wsUrl);
@@ -226,10 +233,19 @@ class LAMAvatarController {
 
     this.wsManager = new LAMWebSocketManager({
       onExpressionUpdate: (data: ExpressionData) => {
-        // オブジェクト参照を維持して値のみ更新（rendererの安定性のため）
-        Object.keys(data).forEach(key => {
-          this.expressionData[key] = data[key];
-        });
+        try {
+          // デバッグログ：受信データの詳細
+          const keys = Object.keys(data);
+          const jawOpen = data['jawOpen'] || 0;
+          console.log(`[LAM Expression] Received: ${keys.length} keys, jawOpen=${jawOpen.toFixed(3)}`);
+
+          // オブジェクト参照を維持して値のみ更新（rendererの安定性のため）
+          Object.keys(data).forEach(key => {
+            this.expressionData[key] = data[key];
+          });
+        } catch (e) {
+          console.error('[LAM Expression] Update error:', e);
+        }
       },
       onAudioData: (audio: Int16Array) => {
         this.queueAudio(audio);
