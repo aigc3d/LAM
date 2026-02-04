@@ -36,6 +36,12 @@ export interface ExpressionData {
   [key: string]: number;
 }
 
+export interface ExpressionFrameData {
+  frames: ExpressionData[];  // All frames for this audio chunk
+  frameRate: number;         // Frames per second
+  frameCount: number;        // Total number of frames
+}
+
 /**
  * JBIN形式のバイナリデータをパース
  */
@@ -111,6 +117,7 @@ export class LAMWebSocketManager {
   private definition: MotionDataDescription | null = null;
   private channelNames: string[] = [];
   private onExpressionUpdate: ((data: ExpressionData) => void) | null = null;
+  private onExpressionFrames: ((data: ExpressionFrameData) => void) | null = null;
   private onAudioData: ((audio: Int16Array) => void) | null = null;
   private onConnectionChange: ((connected: boolean) => void) | null = null;
   private reconnectAttempts = 0;
@@ -121,11 +128,13 @@ export class LAMWebSocketManager {
 
   constructor(options?: {
     onExpressionUpdate?: (data: ExpressionData) => void;
+    onExpressionFrames?: (data: ExpressionFrameData) => void;
     onAudioData?: (audio: Int16Array) => void;
     onConnectionChange?: (connected: boolean) => void;
   }) {
     if (options) {
       this.onExpressionUpdate = options.onExpressionUpdate || null;
+      this.onExpressionFrames = options.onExpressionFrames || null;
       this.onAudioData = options.onAudioData || null;
       this.onConnectionChange = options.onConnectionChange || null;
     }
@@ -179,16 +188,40 @@ export class LAMWebSocketManager {
       try {
         const msg = JSON.parse(event.data);
 
-        // audio2exp-service からの表情データ
+        // audio2exp-service からの表情データ（複数フレーム対応）
         if (msg.type === 'expression' && msg.channels && msg.weights) {
-          const expressionData: ExpressionData = {};
-          msg.channels.forEach((name: string, index: number) => {
-            if (msg.weights[0] && index < msg.weights[0].length) {
-              expressionData[name] = msg.weights[0][index];
-            }
-          });
-          this.onExpressionUpdate?.(expressionData);
-          console.log('[LAM WebSocket] Expression update from audio2exp');
+          const frameRate = msg.frame_rate || 30;
+          const frameCount = msg.frame_count || msg.weights.length;
+
+          // 複数フレームがある場合はフレームデータとして送信
+          if (msg.weights.length > 1 && this.onExpressionFrames) {
+            const frames: ExpressionData[] = msg.weights.map((frameWeights: number[]) => {
+              const frame: ExpressionData = {};
+              msg.channels.forEach((name: string, index: number) => {
+                if (index < frameWeights.length) {
+                  frame[name] = frameWeights[index];
+                }
+              });
+              return frame;
+            });
+
+            this.onExpressionFrames({
+              frames,
+              frameRate,
+              frameCount
+            });
+            console.log(`[LAM WebSocket] Expression frames received: ${frameCount} frames at ${frameRate}fps`);
+          } else {
+            // 1フレームの場合は従来通り
+            const expressionData: ExpressionData = {};
+            msg.channels.forEach((name: string, index: number) => {
+              if (msg.weights[0] && index < msg.weights[0].length) {
+                expressionData[name] = msg.weights[0][index];
+              }
+            });
+            this.onExpressionUpdate?.(expressionData);
+            console.log('[LAM WebSocket] Expression update from audio2exp (single frame)');
+          }
           return;
         }
 

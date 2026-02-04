@@ -128,39 +128,57 @@ class Audio2ExpressionEngine:
 
         return expression.astype(np.float32), new_context
 
-    def _mock_expression(self, audio: np.ndarray) -> np.ndarray:
-        """Generate mock expression data based on audio amplitude"""
-        # Calculate RMS amplitude (audio is float32 in range -1.0 to 1.0)
-        rms = np.sqrt(np.mean(audio ** 2)) if len(audio) > 0 else 0
+    def _mock_expression(self, audio: np.ndarray, frame_rate: int = 30) -> np.ndarray:
+        """
+        Generate mock expression data based on audio amplitude.
+        Generates multiple frames for proper lip sync animation.
 
-        # Create expression array (52 channels)
-        expression = np.zeros((1, 52), dtype=np.float32)
+        Args:
+            audio: Audio samples (float32, 16kHz)
+            frame_rate: Output frame rate (default 30fps)
 
-        # Scale RMS to reasonable range (0.0 - 0.7 for natural look)
-        # Typical speech RMS is around 0.05-0.3
-        mouth_value = min(rms * 3.0, 0.7)
+        Returns:
+            Expression array with shape (num_frames, 52)
+        """
+        if len(audio) == 0:
+            return np.zeros((1, 52), dtype=np.float32)
 
-        # Get channel indices - based on official LAM demo data analysis
-        # Primary mouth movement channels (most important for visual lip sync!)
+        # Calculate number of frames based on audio duration
+        # Audio is 16kHz, so samples / 16000 = duration in seconds
+        # frames = duration * frame_rate
+        samples_per_frame = self.sample_rate // frame_rate  # 16000 / 30 = ~533 samples
+        num_frames = max(1, len(audio) // samples_per_frame)
+
+        # Get channel indices
         mouth_lower_down_left_idx = ARKIT_CHANNELS.index("mouthLowerDownLeft")
         mouth_lower_down_right_idx = ARKIT_CHANNELS.index("mouthLowerDownRight")
-        # Secondary channels
         mouth_dimple_left_idx = ARKIT_CHANNELS.index("mouthDimpleLeft")
         mouth_dimple_right_idx = ARKIT_CHANNELS.index("mouthDimpleRight")
         jaw_open_idx = ARKIT_CHANNELS.index("jawOpen")
         mouth_funnel_idx = ARKIT_CHANNELS.index("mouthFunnel")
 
-        # Apply expressions for lip sync (values based on official demo analysis)
-        # mouthLowerDownLeft/Right are the PRIMARY drivers of mouth movement!
-        expression[0, mouth_lower_down_left_idx] = mouth_value
-        expression[0, mouth_lower_down_right_idx] = mouth_value
-        # mouthDimple adds width to the mouth opening
-        expression[0, mouth_dimple_left_idx] = mouth_value * 0.5
-        expression[0, mouth_dimple_right_idx] = mouth_value * 0.5
-        # jawOpen is actually quite small in official data
-        expression[0, jaw_open_idx] = mouth_value * 0.15
-        # mouthFunnel for subtle shape
-        expression[0, mouth_funnel_idx] = mouth_value * 0.05
+        # Create expression array for all frames
+        expression = np.zeros((num_frames, 52), dtype=np.float32)
+
+        for frame_idx in range(num_frames):
+            # Get audio window for this frame
+            start_sample = frame_idx * samples_per_frame
+            end_sample = min(start_sample + samples_per_frame, len(audio))
+            audio_window = audio[start_sample:end_sample]
+
+            # Calculate RMS for this window
+            rms = np.sqrt(np.mean(audio_window ** 2)) if len(audio_window) > 0 else 0
+
+            # Scale to mouth value (0.0 - 0.7)
+            mouth_value = min(rms * 3.0, 0.7)
+
+            # Apply expressions for this frame
+            expression[frame_idx, mouth_lower_down_left_idx] = mouth_value
+            expression[frame_idx, mouth_lower_down_right_idx] = mouth_value
+            expression[frame_idx, mouth_dimple_left_idx] = mouth_value * 0.5
+            expression[frame_idx, mouth_dimple_right_idx] = mouth_value * 0.5
+            expression[frame_idx, jaw_open_idx] = mouth_value * 0.15
+            expression[frame_idx, mouth_funnel_idx] = mouth_value * 0.05
 
         return expression
 
@@ -242,18 +260,21 @@ async def process_audio(request: AudioRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def send_expression_to_ws(ws: WebSocket, expression: np.ndarray, session_id: str, is_final: bool):
-    """Send expression data to WebSocket client"""
+async def send_expression_to_ws(ws: WebSocket, expression: np.ndarray, session_id: str, is_final: bool, frame_rate: int = 30):
+    """Send expression data to WebSocket client with frame rate info"""
     try:
         data = {
             "type": "expression",
             "session_id": session_id,
             "channels": ARKIT_CHANNELS,
             "weights": expression.tolist(),
+            "frame_rate": frame_rate,  # Frames per second for playback sync
+            "frame_count": len(expression),  # Total number of frames
             "is_final": is_final,
             "timestamp": time.time()
         }
         await ws.send_json(data)
+        print(f"[WebSocket] Sent {len(expression)} frames at {frame_rate}fps to {session_id}")
     except Exception as e:
         print(f"[WebSocket] Failed to send: {e}")
 
