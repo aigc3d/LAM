@@ -130,15 +130,25 @@ class Audio2ExpressionEngine:
 
     def _mock_expression(self, audio: np.ndarray) -> np.ndarray:
         """Generate mock expression data based on audio amplitude"""
-        # Calculate RMS amplitude
+        # Calculate RMS amplitude (audio is float32 in range -1.0 to 1.0)
         rms = np.sqrt(np.mean(audio ** 2)) if len(audio) > 0 else 0
 
         # Create expression array (52 channels)
         expression = np.zeros((1, 52), dtype=np.float32)
 
-        # Simple jaw movement based on amplitude
+        # Scale RMS to reasonable range (0.0 - 0.7 for natural look)
+        # Typical speech RMS is around 0.05-0.3
+        jaw_value = min(rms * 2.0, 0.7)
+
+        # Get channel indices
         jaw_open_idx = ARKIT_CHANNELS.index("jawOpen")
-        expression[0, jaw_open_idx] = min(rms * 10, 1.0)
+        mouth_funnel_idx = ARKIT_CHANNELS.index("mouthFunnel")
+        mouth_pucker_idx = ARKIT_CHANNELS.index("mouthPucker")
+
+        # Apply expressions for lip sync
+        expression[0, jaw_open_idx] = jaw_value
+        expression[0, mouth_funnel_idx] = jaw_value * 0.3  # Subtle mouth shape
+        expression[0, mouth_pucker_idx] = jaw_value * 0.2  # Slight pucker
 
         return expression
 
