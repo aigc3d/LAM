@@ -174,7 +174,9 @@ class LAMAvatarController {
       setInterval(() => {
         const canvasVisible = this.canvas.classList.contains('ready');
         const jawOpen = this.expressionData['jawOpen'] || 0;
-        console.log(`[LAM Health] canvas=${canvasVisible}, renderer=${!!this.renderer}, state=${this.currentState}, jaw=${jawOpen.toFixed(3)}`);
+        const mouthLowerDownLeft = this.expressionData['mouthLowerDownLeft'] || 0;
+        const mouthLowerDownRight = this.expressionData['mouthLowerDownRight'] || 0;
+        console.log(`[LAM Health] canvas=${canvasVisible}, renderer=${!!this.renderer}, state=${this.currentState}, jaw=${jawOpen.toFixed(3)}, mouthLD_L=${mouthLowerDownLeft.toFixed(3)}, mouthLD_R=${mouthLowerDownRight.toFixed(3)}`);
       }, 2000);
 
       // Auto-connect to WebSocket if configured
@@ -207,6 +209,25 @@ class LAMAvatarController {
       this.isInitialized = true;
       this.showCanvas();
       console.log('LAM Avatar initialized successfully');
+
+      // デバッグ：レンダラーのmorphTargetDictionaryを確認
+      setTimeout(() => {
+        try {
+          const splatMesh = (this.renderer as any)?.viewer?.splatMesh;
+          if (splatMesh?.morphTargetDictionary) {
+            const dict = splatMesh.morphTargetDictionary;
+            const mouthKeys = Object.keys(dict).filter(k => k.toLowerCase().includes('mouth') || k.toLowerCase().includes('jaw'));
+            console.log('[LAM Debug] morphTargetDictionary mouth/jaw keys:', mouthKeys);
+            console.log('[LAM Debug] mouthLowerDownLeft index:', dict['mouthLowerDownLeft']);
+            console.log('[LAM Debug] mouthLowerDownRight index:', dict['mouthLowerDownRight']);
+            console.log('[LAM Debug] jawOpen index:', dict['jawOpen']);
+          } else {
+            console.log('[LAM Debug] No morphTargetDictionary found on splatMesh');
+          }
+        } catch (e) {
+          console.error('[LAM Debug] Error checking morphTargetDictionary:', e);
+        }
+      }, 2000);
     } catch (error) {
       throw new Error(`Failed to load LAM renderer: ${error}`);
     }
@@ -236,10 +257,12 @@ class LAMAvatarController {
     this.wsManager = new LAMWebSocketManager({
       onExpressionUpdate: (data: ExpressionData) => {
         try {
-          // デバッグログ：受信データの詳細
+          // デバッグログ：受信データの詳細（口の主要チャンネル）
           const keys = Object.keys(data);
           const jawOpen = data['jawOpen'] || 0;
-          console.log(`[LAM Expression] Received: ${keys.length} keys, jawOpen=${jawOpen.toFixed(3)}`);
+          const mouthLowerDownLeft = data['mouthLowerDownLeft'] || 0;
+          const mouthLowerDownRight = data['mouthLowerDownRight'] || 0;
+          console.log(`[LAM Expression] Received: ${keys.length} keys, jawOpen=${jawOpen.toFixed(3)}, mouthLD_L=${mouthLowerDownLeft.toFixed(3)}, mouthLD_R=${mouthLowerDownRight.toFixed(3)}`);
 
           // ★ Expression data 受信時は Responding 状態に設定
           // jawOpen > 0 の場合のみ（実際に音声が再生中）
