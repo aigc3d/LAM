@@ -338,7 +338,8 @@ class LAMAvatarController {
   }
 
   public getExpressionData(): ExpressionData {
-    return this.expressionData;
+    // レンダラーがオブジェクトを変更するため、コピーを返す（値の爆発を防止）
+    return { ...this.expressionData };
   }
 
   public setExpressionData(data: ExpressionData) {
