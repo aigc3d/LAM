@@ -181,14 +181,15 @@ export class LAMWebSocketManager {
 
         // audio2exp-service からの表情データ
         if (msg.type === 'expression' && msg.channels && msg.weights) {
-          const expressionData: ExpressionData = {};
-          msg.channels.forEach((name: string, index: number) => {
-            if (msg.weights[0] && index < msg.weights[0].length) {
-              expressionData[name] = msg.weights[0][index];
-            }
-          });
-          this.onExpressionUpdate?.(expressionData);
-          console.log('[LAM WebSocket] Expression update from audio2exp');
+          // ★テスト: 表情データ更新を一時無効化
+          // const expressionData: ExpressionData = {};
+          // msg.channels.forEach((name: string, index: number) => {
+          //   if (msg.weights[0] && index < msg.weights[0].length) {
+          //     expressionData[name] = msg.weights[0][index];
+          //   }
+          // });
+          // this.onExpressionUpdate?.(expressionData);
+          console.log('[LAM WebSocket] Expression update received (disabled for test)');
           return;
         }
 
