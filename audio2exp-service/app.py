@@ -138,17 +138,29 @@ class Audio2ExpressionEngine:
 
         # Scale RMS to reasonable range (0.0 - 0.7 for natural look)
         # Typical speech RMS is around 0.05-0.3
-        jaw_value = min(rms * 2.0, 0.7)
+        mouth_value = min(rms * 3.0, 0.7)
 
-        # Get channel indices
+        # Get channel indices - based on official LAM demo data analysis
+        # Primary mouth movement channels (most important for visual lip sync!)
+        mouth_lower_down_left_idx = ARKIT_CHANNELS.index("mouthLowerDownLeft")
+        mouth_lower_down_right_idx = ARKIT_CHANNELS.index("mouthLowerDownRight")
+        # Secondary channels
+        mouth_dimple_left_idx = ARKIT_CHANNELS.index("mouthDimpleLeft")
+        mouth_dimple_right_idx = ARKIT_CHANNELS.index("mouthDimpleRight")
         jaw_open_idx = ARKIT_CHANNELS.index("jawOpen")
         mouth_funnel_idx = ARKIT_CHANNELS.index("mouthFunnel")
-        mouth_pucker_idx = ARKIT_CHANNELS.index("mouthPucker")
 
-        # Apply expressions for lip sync
-        expression[0, jaw_open_idx] = jaw_value
-        expression[0, mouth_funnel_idx] = jaw_value * 0.3  # Subtle mouth shape
-        expression[0, mouth_pucker_idx] = jaw_value * 0.2  # Slight pucker
+        # Apply expressions for lip sync (values based on official demo analysis)
+        # mouthLowerDownLeft/Right are the PRIMARY drivers of mouth movement!
+        expression[0, mouth_lower_down_left_idx] = mouth_value
+        expression[0, mouth_lower_down_right_idx] = mouth_value
+        # mouthDimple adds width to the mouth opening
+        expression[0, mouth_dimple_left_idx] = mouth_value * 0.5
+        expression[0, mouth_dimple_right_idx] = mouth_value * 0.5
+        # jawOpen is actually quite small in official data
+        expression[0, jaw_open_idx] = mouth_value * 0.15
+        # mouthFunnel for subtle shape
+        expression[0, mouth_funnel_idx] = mouth_value * 0.05
 
         return expression
 
