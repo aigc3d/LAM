@@ -121,10 +121,20 @@ const {
 import {
   LAMWebSocketManager,
   type ExpressionData,
-  type MotionData
+  type MotionData,
+  ARKIT_CHANNEL_NAMES
 } from '../scripts/lam/lam-websocket-manager';
 
 type ChatState = 'Idle' | 'Listening' | 'Thinking' | 'Responding';
+
+// 全52チャンネルを0で初期化
+function createDefaultExpressionData(): ExpressionData {
+  const data: ExpressionData = {};
+  ARKIT_CHANNEL_NAMES.forEach(name => {
+    data[name] = 0;
+  });
+  return data;
+}
 
 class LAMAvatarController {
   private container: HTMLElement;
@@ -137,7 +147,7 @@ class LAMAvatarController {
   private renderer: any = null;
   private wsManager: LAMWebSocketManager | null = null;
   private currentState: ChatState = 'Idle';
-  private expressionData: ExpressionData = {};
+  private expressionData: ExpressionData = createDefaultExpressionData();
   private isInitialized = false;
   private audioContext: AudioContext | null = null;
   private audioQueue: Int16Array[] = [];
