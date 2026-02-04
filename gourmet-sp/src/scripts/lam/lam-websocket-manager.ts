@@ -116,6 +116,8 @@ export class LAMWebSocketManager {
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000;
+  private pingInterval: ReturnType<typeof setInterval> | null = null;
+  private currentWsUrl: string = '';
 
   constructor(options?: {
     onExpressionUpdate?: (data: ExpressionData) => void;
@@ -141,7 +143,9 @@ export class LAMWebSocketManager {
         this.ws.onopen = () => {
           console.log('[LAM WebSocket] Connected');
           this.reconnectAttempts = 0;
+          this.currentWsUrl = wsUrl;
           this.onConnectionChange?.(true);
+          this.startPing();
           resolve();
         };
 
@@ -151,8 +155,9 @@ export class LAMWebSocketManager {
 
         this.ws.onclose = (event) => {
           console.log('[LAM WebSocket] Disconnected', event.code, event.reason);
+          this.stopPing();
           this.onConnectionChange?.(false);
-          this.attemptReconnect(wsUrl);
+          this.attemptReconnect(this.currentWsUrl);
         };
 
         this.ws.onerror = (error) => {
@@ -258,12 +263,35 @@ export class LAMWebSocketManager {
    * 接続を閉じる
    */
   disconnect(): void {
+    this.stopPing();
     if (this.ws) {
       this.ws.close();
       this.ws = null;
     }
     this.definition = null;
     this.channelNames = [];
+  }
+
+  /**
+   * Ping送信を開始（キープアライブ）
+   */
+  private startPing(): void {
+    this.stopPing();
+    this.pingInterval = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify({ type: 'ping' }));
+      }
+    }, 5000); // 5秒間隔でping
+  }
+
+  /**
+   * Ping送信を停止
+   */
+  private stopPing(): void {
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
   }
 
   /**
