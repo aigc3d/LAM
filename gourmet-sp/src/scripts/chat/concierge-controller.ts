@@ -151,15 +151,21 @@ export class ConciergeController extends CoreController {
     if (stopPrevious) {
       this.ttsPlayer.pause();
     }
-    
+
     // アバターアニメーションを開始
     if (this.els.avatarContainer) {
       this.els.avatarContainer.classList.add('speaking');
     }
-    
+
+    // ★ LAMAvatar リップシンク状態を開始
+    const lamController = (window as any).lamAvatarController;
+    if (lamController && typeof lamController.setChatState === 'function') {
+      lamController.setChatState('Responding');
+    }
+
     // 親クラスのTTS処理を実行
     await super.speakTextGCP(text, stopPrevious, autoRestartMic, skipAudio);
-    
+
     // アバターアニメーションを停止
     this.stopAvatarAnimation();
   }
@@ -168,6 +174,12 @@ export class ConciergeController extends CoreController {
   private stopAvatarAnimation() {
     if (this.els.avatarContainer) {
       this.els.avatarContainer.classList.remove('speaking');
+    }
+
+    // ★ LAMAvatar リップシンク状態を終了
+    const lamController = (window as any).lamAvatarController;
+    if (lamController && typeof lamController.setChatState === 'function') {
+      lamController.setChatState('Idle');
     }
   }
 
