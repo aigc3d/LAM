@@ -383,7 +383,9 @@ class LAMAvatarController {
     }
 
     if (this.frameQueue.length === 0) {
-      console.log('[LAM Playback] No frames in queue');
+      // フレームがまだ届いていない場合は、少し待ってリトライ
+      console.log('[LAM Playback] No frames in queue, waiting for frames...');
+      this.waitForFramesAndPlay(3, 200); // 3回リトライ、200ms間隔
       return;
     }
 
@@ -393,6 +395,31 @@ class LAMAvatarController {
     this.waitingForAudio = false;
 
     this.startFramePlayback();
+  }
+
+  // フレームが届くまで待ってから再生
+  private waitForFramesAndPlay(retriesLeft: number, delayMs: number): void {
+    if (retriesLeft <= 0) {
+      console.log('[LAM Playback] Gave up waiting for frames');
+      return;
+    }
+
+    setTimeout(() => {
+      if (this.isPlayingFrames) {
+        return; // 既に再生中
+      }
+
+      if (this.frameQueue.length > 0) {
+        console.log(`[LAM Playback] Frames arrived, starting playback (waited ${(4 - retriesLeft) * delayMs}ms)`);
+        this.frameBuffer = this.frameQueue.flat();
+        this.frameQueue = [];
+        this.waitingForAudio = false;
+        this.startFramePlayback();
+      } else {
+        console.log(`[LAM Playback] Still waiting for frames... (${retriesLeft - 1} retries left)`);
+        this.waitForFramesAndPlay(retriesLeft - 1, delayMs);
+      }
+    }, delayMs);
   }
 
   private startFramePlayback(): void {
