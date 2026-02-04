@@ -174,7 +174,7 @@ class LAMAvatarController {
       setInterval(() => {
         const canvasVisible = this.canvas.classList.contains('ready');
         const jawOpen = this.expressionData['jawOpen'] || 0;
-        console.log(`[LAM Health] canvas=${canvasVisible}, renderer=${!!this.renderer}, jaw=${jawOpen.toFixed(3)}`);
+        console.log(`[LAM Health] canvas=${canvasVisible}, renderer=${!!this.renderer}, state=${this.currentState}, jaw=${jawOpen.toFixed(3)}`);
       }, 2000);
 
       // Auto-connect to WebSocket if configured
@@ -330,6 +330,7 @@ class LAMAvatarController {
   }
 
   public setChatState(state: ChatState) {
+    console.log(`[LAM Avatar] setChatState: ${this.currentState} → ${state}`);
     this.currentState = state;
     // Emit event for other components
     this.container.dispatchEvent(new CustomEvent('lamStateChange', {
