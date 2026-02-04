@@ -83,8 +83,9 @@ export class ConciergeController extends CoreController {
           const ackResponse = await fetch(`${this.apiBase}/api/tts/synthesize`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-              text: text, language_code: langConfig.tts, voice_name: langConfig.voice 
+            body: JSON.stringify({
+              text: text, language_code: langConfig.tts, voice_name: langConfig.voice,
+              session_id: this.sessionId
             })
           });
           const ackData = await ackResponse.json();
@@ -283,7 +284,8 @@ export class ConciergeController extends CoreController {
             body: JSON.stringify({
               text: cleanText,
               language_code: langConfig.tts,
-              voice_name: langConfig.voice
+              voice_name: langConfig.voice,
+              session_id: this.sessionId
             })
           });
           const result = await response.json();
@@ -300,7 +302,8 @@ export class ConciergeController extends CoreController {
               body: JSON.stringify({
                 text: cleanText,
                 language_code: langConfig.tts,
-                voice_name: langConfig.voice
+                voice_name: langConfig.voice,
+                session_id: this.sessionId
               })
             });
             const result = await response.json();
@@ -609,22 +612,24 @@ export class ConciergeController extends CoreController {
                 const response = await fetch(`${this.apiBase}/api/tts/synthesize`, { 
                   method: 'POST', 
                   headers: { 'Content-Type': 'application/json' }, 
-                  body: JSON.stringify({ 
-                    text: cleanText, language_code: shopLangConfig.tts, voice_name: shopLangConfig.voice 
-                  }) 
+                  body: JSON.stringify({
+                    text: cleanText, language_code: shopLangConfig.tts, voice_name: shopLangConfig.voice,
+                    session_id: this.sessionId
+                  })
                 });
                 const result = await response.json();
                 return result.success ? `data:audio/mp3;base64,${result.audio}` : null;
               })();
-              
+
               if (restShops) {
                 remainingAudioPromise = (async () => {
                   const cleanText = this.stripMarkdown(restShops);
-                  const response = await fetch(`${this.apiBase}/api/tts/synthesize`, { 
-                    method: 'POST', 
-                    headers: { 'Content-Type': 'application/json' }, 
-                    body: JSON.stringify({ 
-                      text: cleanText, language_code: shopLangConfig.tts, voice_name: shopLangConfig.voice 
+                  const response = await fetch(`${this.apiBase}/api/tts/synthesize`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      text: cleanText, language_code: shopLangConfig.tts, voice_name: shopLangConfig.voice,
+                      session_id: this.sessionId
                     }) 
                   });
                   const result = await response.json();
