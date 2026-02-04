@@ -267,7 +267,7 @@ def chat():
             session.add_message('model', result['summary'], 'summary')
 
         # ショップデータ処理
-        shops = result.get('shops', [])
+        shops = result.get('shops') or []  # None対策
         response_text = result['response']
         is_followup = result.get('is_followup', False)
 
