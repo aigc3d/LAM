@@ -170,9 +170,28 @@ export class LAMWebSocketManager {
    */
   private handleMessage(event: MessageEvent): void {
     if (!(event.data instanceof ArrayBuffer)) {
-      // JSON形式のメッセージ（サーバーからの制御メッセージ）
+      // JSON形式のメッセージ
       try {
         const msg = JSON.parse(event.data);
+
+        // audio2exp-service からの表情データ
+        if (msg.type === 'expression' && msg.channels && msg.weights) {
+          const expressionData: ExpressionData = {};
+          msg.channels.forEach((name: string, index: number) => {
+            if (msg.weights[0] && index < msg.weights[0].length) {
+              expressionData[name] = msg.weights[0][index];
+            }
+          });
+          this.onExpressionUpdate?.(expressionData);
+          console.log('[LAM WebSocket] Expression update from audio2exp');
+          return;
+        }
+
+        // pong応答
+        if (msg.type === 'pong') {
+          return;
+        }
+
         console.log('[LAM WebSocket] JSON message:', msg);
       } catch (e) {
         console.warn('[LAM WebSocket] Unknown text message:', event.data);

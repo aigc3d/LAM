@@ -7,13 +7,15 @@ import { AudioManager } from './audio-manager';
 declare const io: any;
 
 export class ConciergeController extends CoreController {
-  
+  // Audio2Expression WebSocket URL (Cloud Run)
+  private audio2expWsUrl = 'wss://audio2exp-service-6s2ds5mdba-uc.a.run.app/ws';
+
   constructor(container: HTMLElement, apiBase: string) {
     super(container, apiBase);
-    
+
     // ★コンシェルジュモード用のAudioManagerを6.5秒設定で再初期化２
     this.audioManager = new AudioManager(8000);
-    
+
     // コンシェルジュモードに設定
     this.currentMode = 'concierge';
     this.init();
@@ -67,6 +69,9 @@ export class ConciergeController extends CoreController {
       });
       const data = await res.json();
       this.sessionId = data.session_id;
+
+      // ★ LAMAvatar を audio2exp-service WebSocket に接続（リップシンク用）
+      this.connectLAMAvatarWebSocket();
 
       // ✅ バックエンドからの初回メッセージを使用（長期記憶対応）
       const greetingText = data.initial_message || this.t('initialGreetingConcierge');
@@ -163,6 +168,19 @@ export class ConciergeController extends CoreController {
   private stopAvatarAnimation() {
     if (this.els.avatarContainer) {
       this.els.avatarContainer.classList.remove('speaking');
+    }
+  }
+
+  // ★ LAMAvatar を audio2exp-service WebSocket に接続
+  private connectLAMAvatarWebSocket() {
+    if (!this.sessionId) return;
+
+    const lamController = (window as any).lamAvatarController;
+    if (lamController && typeof lamController.connectWebSocket === 'function') {
+      const wsUrl = `${this.audio2expWsUrl}/${this.sessionId}`;
+      lamController.connectWebSocket(wsUrl)
+        .then(() => console.log('[Concierge] LAMAvatar WebSocket connected:', wsUrl))
+        .catch((e: any) => console.warn('[Concierge] LAMAvatar WebSocket connection failed:', e));
     }
   }
 
