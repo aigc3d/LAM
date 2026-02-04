@@ -299,7 +299,7 @@ def chat():
             logger.info(f"[Chat] 抽出エリア: '{area}' from '{user_message}'")
 
             # Places APIで写真を取得
-            shops = enrich_shops_with_photos(shops, area, language)
+            shops = enrich_shops_with_photos(shops, area, language) or []
 
             if shops:
                 shop_list = []
