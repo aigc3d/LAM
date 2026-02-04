@@ -168,7 +168,9 @@ class ExpressionResponse(BaseModel):
 @app.on_event("startup")
 async def startup():
     """Initialize engine on startup"""
-    engine.initialize()
+    # Skip initialization on Cloud Run (will use mock mode)
+    # engine.initialize()
+    print("[Audio2Expression] Starting in mock mode (Cloud Run)")
 
 
 @app.get("/health")

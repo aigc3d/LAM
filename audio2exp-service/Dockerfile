@@ -11,7 +11,6 @@ COPY app.py .
 
 # Cloud Run uses PORT environment variable
 ENV PORT=8080
-ENV HOST=0.0.0.0
 
-# Run the application
-CMD ["sh", "-c", "python app.py --host ${HOST} --port ${PORT}"]
+# Run the application using uvicorn directly
+CMD uvicorn app:app --host 0.0.0.0 --port $PORT
