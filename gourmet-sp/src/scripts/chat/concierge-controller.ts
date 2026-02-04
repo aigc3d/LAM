@@ -42,9 +42,15 @@ export class ConciergeController extends CoreController {
     // ★ LAMAvatar リップシンク: ttsPlayer の再生イベントに直接フック
     this.ttsPlayer.addEventListener('play', () => {
       const lamController = (window as any).lamAvatarController;
-      if (lamController && typeof lamController.setChatState === 'function') {
-        console.log('[Concierge] TTS play event - setChatState(Responding)');
-        lamController.setChatState('Responding');
+      if (lamController) {
+        console.log('[Concierge] TTS play event - starting frame playback');
+        // フレーム再生を開始（キューにあるフレームを再生）
+        if (typeof lamController.startFramePlaybackFromQueue === 'function') {
+          lamController.startFramePlaybackFromQueue();
+        }
+        if (typeof lamController.setChatState === 'function') {
+          lamController.setChatState('Responding');
+        }
       }
     });
 

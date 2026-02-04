@@ -156,10 +156,12 @@ class LAMAvatarController {
 
   // Frame buffer for lip sync
   private frameBuffer: ExpressionData[] = [];
+  private frameQueue: ExpressionData[][] = [];  // Queue of frame buffers
   private frameIndex: number = 0;
   private frameRate: number = 30;
   private framePlaybackTimer: number | null = null;
   private isPlayingFrames: boolean = false;
+  private waitingForAudio: boolean = false;  // Flag to wait for TTS play event
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -280,23 +282,15 @@ class LAMAvatarController {
       },
       onExpressionFrames: (data: ExpressionFrameData) => {
         try {
-          // ★ 複数フレームをバッファに保存
-          this.frameBuffer = data.frames;
+          // ★ フレームをキューに追加（TTS再生開始まで待機）
+          this.frameQueue.push(data.frames);
           this.frameRate = data.frameRate;
-          this.frameIndex = 0;
+          this.waitingForAudio = true;
 
           const firstFrame = data.frames[0];
           const jawOpen = firstFrame['jawOpen'] || 0;
           const mouthLD = firstFrame['mouthLowerDownLeft'] || 0;
-          console.log(`[LAM Expression] Buffered ${data.frameCount} frames at ${data.frameRate}fps, first: jaw=${jawOpen.toFixed(3)}, mouthLD=${mouthLD.toFixed(3)}`);
-
-          // 状態をRespondingに設定
-          if (this.currentState !== 'Responding') {
-            this.setChatState('Responding');
-          }
-
-          // すぐにフレーム再生を開始（TTS再生と同期）
-          this.startFramePlayback();
+          console.log(`[LAM Expression] Queued ${data.frameCount} frames at ${data.frameRate}fps (queue size: ${this.frameQueue.length}), first: jaw=${jawOpen.toFixed(3)}, mouthLD=${mouthLD.toFixed(3)}`);
         } catch (e) {
           console.error('[LAM Expression] Frame buffer error:', e);
         }
@@ -381,6 +375,26 @@ class LAMAvatarController {
   // Frame playback for lip sync
   // ========================================
 
+  // ★ TTS再生開始時に外部から呼び出される
+  public startFramePlaybackFromQueue(): void {
+    if (this.isPlayingFrames) {
+      console.log('[LAM Playback] Already playing, skipping');
+      return;
+    }
+
+    if (this.frameQueue.length === 0) {
+      console.log('[LAM Playback] No frames in queue');
+      return;
+    }
+
+    // キューからフレームを取り出して結合
+    this.frameBuffer = this.frameQueue.flat();
+    this.frameQueue = [];  // キューをクリア
+    this.waitingForAudio = false;
+
+    this.startFramePlayback();
+  }
+
   private startFramePlayback(): void {
     if (this.isPlayingFrames || this.frameBuffer.length === 0) {
       return;
@@ -391,6 +405,11 @@ class LAMAvatarController {
     const frameInterval = 1000 / this.frameRate; // ms per frame
 
     console.log(`[LAM Playback] Starting frame playback: ${this.frameBuffer.length} frames at ${this.frameRate}fps (${frameInterval.toFixed(1)}ms/frame)`);
+
+    // 状態をRespondingに設定
+    if (this.currentState !== 'Responding') {
+      this.setChatState('Responding');
+    }
 
     // Apply first frame immediately
     this.applyFrame(0);
