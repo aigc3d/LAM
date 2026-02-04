@@ -224,6 +224,8 @@ class LAMAvatarController {
     this.fallback.classList.remove('hidden');
   }
 
+  private expressionTimeoutId: number | null = null;
+
   // WebSocket connection management
 
   public async connectWebSocket(url: string): Promise<void> {
@@ -238,6 +240,25 @@ class LAMAvatarController {
           const keys = Object.keys(data);
           const jawOpen = data['jawOpen'] || 0;
           console.log(`[LAM Expression] Received: ${keys.length} keys, jawOpen=${jawOpen.toFixed(3)}`);
+
+          // ★ Expression data 受信時は Responding 状態に設定
+          // jawOpen > 0 の場合のみ（実際に音声が再生中）
+          if (jawOpen > 0.01) {
+            if (this.currentState !== 'Responding') {
+              console.log('[LAM Expression] Setting state to Responding (expression data received)');
+              this.setChatState('Responding');
+            }
+
+            // 500ms後にIdleに戻すタイマーをリセット
+            if (this.expressionTimeoutId) {
+              clearTimeout(this.expressionTimeoutId);
+            }
+            this.expressionTimeoutId = window.setTimeout(() => {
+              console.log('[LAM Expression] No data for 500ms, setting state to Idle');
+              this.setChatState('Idle');
+              this.expressionTimeoutId = null;
+            }, 500);
+          }
 
           // オブジェクト参照を維持して値のみ更新（rendererの安定性のため）
           Object.keys(data).forEach(key => {
