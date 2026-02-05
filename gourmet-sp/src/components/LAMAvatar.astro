@@ -605,8 +605,12 @@ class LAMAvatarController {
     }));
   }
 
-  // ★ 公式と同じ: 現在の表情データを返すだけ
-  public getExpressionData(): ExpressionData {
+  // ★ 公式と同じ: 再生中のみ表情データを返す、それ以外はundefined
+  public getExpressionData(): ExpressionData | undefined {
+    // 再生中でない場合はundefinedを返す（公式のprocessor?.getArkitFaceFrame().arkitFaceと同じ）
+    if (!this.isPlayingFrames) {
+      return undefined;
+    }
     return this.expressionData;
   }
 
