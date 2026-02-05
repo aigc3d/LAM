@@ -643,6 +643,24 @@ class LAMAvatarController {
     this.wsManager?.sendEndSpeech();
   }
 
+  /**
+   * Queue expression frames from external source (REST API)
+   * Use this when expression data comes from a REST API instead of WebSocket
+   * @param frames - Array of expression frames
+   * @param frameRate - Frame rate (default 30fps)
+   */
+  public queueExpressionFrames(frames: ExpressionData[], frameRate: number = 30): void {
+    if (!frames || frames.length === 0) {
+      console.warn('[LAM Avatar] queueExpressionFrames called with no frames');
+      return;
+    }
+
+    this.frameQueue.push(frames);
+    this.frameRate = frameRate;
+    this.waitingForAudio = true;
+    console.log(`[LAM Avatar] Queued ${frames.length} expression frames at ${frameRate}fps`);
+  }
+
   // Get WebSocket manager for advanced usage
   public getWebSocketManager(): LAMWebSocketManager | null {
     return this.wsManager;

@@ -292,7 +292,7 @@ export class ConciergeController extends CoreController {
 
   /**
    * 公式リップシンク: TTS音声をaudio2exp-serviceに送信
-   * WebSocket経由で表情データが返され、LAMAvatarに適用される
+   * 表情データを受け取り、LAMAvatarのキューに追加
    */
   private async sendAudioToExpression(audioBase64: string, isStart: boolean = false, isFinal: boolean = false): Promise<void> {
     if (!this.sessionId) return;
@@ -314,7 +314,31 @@ export class ConciergeController extends CoreController {
         console.warn('[Concierge] audio2exp API failed:', response.status);
       } else {
         const result = await response.json();
-        console.log(`[Concierge] Expression generated: ${result.weights?.length || 0} frames, batch=${result.batch_id}`);
+        const frameCount = result.weights?.length || 0;
+        console.log(`[Concierge] Expression generated: ${frameCount} frames, batch=${result.batch_id}`);
+
+        // ★ 表情データをLAMAvatarに送信
+        if (frameCount > 0 && result.channels && result.weights) {
+          const lamController = (window as any).lamAvatarController;
+          if (lamController && typeof lamController.queueExpressionFrames === 'function') {
+            // Convert API response to ExpressionData[] format
+            const frames = result.weights.map((frameWeights: number[]) => {
+              const frame: { [key: string]: number } = {};
+              result.channels.forEach((name: string, index: number) => {
+                if (index < frameWeights.length) {
+                  frame[name] = frameWeights[index];
+                }
+              });
+              return frame;
+            });
+
+            const frameRate = result.frame_rate || 30;
+            lamController.queueExpressionFrames(frames, frameRate);
+            console.log(`[Concierge] Queued ${frames.length} frames to LAMAvatar at ${frameRate}fps`);
+          } else {
+            console.warn('[Concierge] LAMAvatar queueExpressionFrames not available');
+          }
+        }
       }
     } catch (error) {
       console.warn('[Concierge] audio2exp API error:', error);
