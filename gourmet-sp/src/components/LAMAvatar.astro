@@ -573,47 +573,32 @@ class LAMAvatarController {
     }));
   }
 
-  // ★ 公式と同じ: 経過時間からフレームインデックスを計算して返す
-  // レンダラーが毎フレームこのメソッドを呼び出す
-  public getExpressionData(): ExpressionData | undefined {
-    // 再生中でない場合はundefinedを返す（公式のprocessor?.getArkitFaceFrame().arkitFaceと同じ）
-    if (!this.isPlayingFrames || this.playbackStartTime === 0) {
-      return undefined;
+  // ★ 公式 gaussianAvatar.ts の getArkitFaceFrame() を正確にコピー
+  public getExpressionData() {
+    // 再生中でない場合はデフォルト表情を返す
+    if (!this.isPlayingFrames || this.frameBuffer.length === 0) {
+      return this.expressionData;
     }
 
-    // ★ 公式と同じ: 経過時間からフレームインデックスを計算
-    const elapsedMs = performance.now() - this.playbackStartTime;
-    const elapsedSec = elapsedMs / 1000;
-    const frameIndex = Math.floor(elapsedSec * this.frameRate);
+    const length = this.frameBuffer.length;
+    const frameInfoInternal = 1.0 / this.frameRate;
+    const currentTime = performance.now() / 1000;
+    const calcDelta = currentTime - (this.playbackStartTime / 1000);
 
-    // 再生終了チェック
-    if (frameIndex >= this.frameBuffer.length) {
-      // 再生完了
-      console.log(`[LAM Playback] Completed at frame ${frameIndex}, elapsed ${elapsedMs.toFixed(0)}ms`);
+    // 再生終了チェック（公式はループだが、こちらは1回再生）
+    if (calcDelta >= length * frameInfoInternal) {
+      console.log(`[LAM Playback] Completed`);
       this.stopFramePlayback();
-      return undefined;
+      return this.expressionData;
     }
 
-    // フレームを取得
+    const frameIndex = Math.floor(calcDelta / frameInfoInternal);
+
+    // ★ 公式と同じ: 毎回新しいオブジェクトを作成
+    this.expressionData = {};
     const frame = this.frameBuffer[frameIndex];
-    if (!frame) {
-      return undefined;
-    }
-
-    // デバッグログ（10フレームごと）
-    if (frameIndex !== this.frameIndex) {
-      this.frameIndex = frameIndex;
-      if (frameIndex % 10 === 0) {
-        const jawOpen = frame['jawOpen'] || 0;
-        const mouthLD = frame['mouthLowerDownLeft'] || 0;
-        console.log(`[LAM GetExp] Frame ${frameIndex}/${this.frameBuffer.length}: jaw=${jawOpen.toFixed(3)}, mouthLD=${mouthLD.toFixed(3)}`);
-      }
-    }
-
-    // ★ 全52チャンネルを含む完全な表情データを返す（レンダラーが全チャンネルを期待する）
-    // フレームデータをthis.expressionDataにマージ
-    Object.keys(frame).forEach(key => {
-      this.expressionData[key] = frame[key];
+    Object.keys(frame).forEach((name: string) => {
+      this.expressionData[name] = frame[name];
     });
 
     return this.expressionData;
