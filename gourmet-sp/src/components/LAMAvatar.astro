@@ -610,7 +610,13 @@ class LAMAvatarController {
       }
     }
 
-    return frame;
+    // ★ 全52チャンネルを含む完全な表情データを返す（レンダラーが全チャンネルを期待する）
+    // フレームデータをthis.expressionDataにマージ
+    Object.keys(frame).forEach(key => {
+      this.expressionData[key] = frame[key];
+    });
+
+    return this.expressionData;
   }
 
   public setExpressionData(data: ExpressionData) {
