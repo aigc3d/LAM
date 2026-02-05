@@ -5,6 +5,8 @@
  * - Audio and expression data are bundled together from server
  * - This player plays audio and tracks playback position
  * - Expression frames are indexed based on audio playback time
+ *
+ * @module audio-sync-player
  */
 
 export interface AudioSample {

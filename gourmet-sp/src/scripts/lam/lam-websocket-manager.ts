@@ -7,7 +7,8 @@
  * - Client plays audio and syncs expression based on playback position
  */
 
-import { AudioSyncPlayer, AudioSample } from './audio-sync-player';
+import { AudioSyncPlayer } from './audio-sync-player';
+import type { AudioSample } from './audio-sync-player';
 
 // JBIN形式のバイナリデータをパース
 export interface MotionDataDescription {
