@@ -739,9 +739,21 @@ class LAMAvatarController {
     }));
   }
 
+  private getExpressionCallCount = 0;
+
   public getExpressionData(): ExpressionData {
     // レンダラーがオブジェクトを変更するため、コピーを返す（値の爆発を防止）
-    return { ...this.expressionData };
+    const data = { ...this.expressionData };
+
+    // Debug: Count and log calls from renderer (every 30 calls = ~1 second at 30fps)
+    this.getExpressionCallCount++;
+    if (this.getExpressionCallCount % 30 === 0) {
+      const jaw = data['jawOpen'] || 0;
+      const mouthLD = data['mouthLowerDownLeft'] || 0;
+      console.log(`[LAM getExpressionData] Renderer poll #${this.getExpressionCallCount}: jaw=${jaw.toFixed(3)}, mouthLD=${mouthLD.toFixed(3)}, playing=${this.isPlayingFrames}`);
+    }
+
+    return data;
   }
 
   public setExpressionData(data: ExpressionData) {
