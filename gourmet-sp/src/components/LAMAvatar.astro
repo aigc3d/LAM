@@ -590,6 +590,9 @@ class LAMAvatarController {
       this.expressionData[key] = frame[key];
     });
 
+    // ★ FLAMEモードでもsplatMeshに直接表情を適用
+    this.applyExpressionToMesh();
+
     // Debug log every 10 frames
     if (index % 10 === 0) {
       const jawOpen = frame['jawOpen'] || 0;
@@ -598,11 +601,29 @@ class LAMAvatarController {
     }
   }
 
+  /**
+   * Apply expression data directly to splatMesh.bsWeight
+   * This is needed because the renderer's setExpression() is not called in FLAME mode
+   */
+  private applyExpressionToMesh(): void {
+    try {
+      const renderer = this.renderer as any;
+      if (renderer?.viewer?.splatMesh) {
+        // Directly set bsWeight on splatMesh (bypasses FLAME animation)
+        renderer.viewer.splatMesh.bsWeight = { ...this.expressionData };
+      }
+    } catch (e) {
+      // Silently ignore if renderer structure is different
+    }
+  }
+
   private resetExpression(): void {
     // Reset all expression channels to 0
     ARKIT_CHANNEL_NAMES.forEach(name => {
       this.expressionData[name] = 0;
     });
+    // Apply reset to mesh
+    this.applyExpressionToMesh();
   }
 
   // Public API for external control
