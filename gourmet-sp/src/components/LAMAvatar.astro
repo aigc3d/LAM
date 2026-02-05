@@ -362,7 +362,11 @@ class LAMAvatarController {
           console.log('[LAM Debug] renderer.useFlame:', renderer?.useFlame);
           console.log('[LAM Debug] viewer.useFlame:', viewer?.useFlame);
 
-          // 2. Check flame_params structure
+          // 2. Check if renderer has setExpression method
+          console.log('[LAM Debug] renderer.setExpression:', typeof renderer?.setExpression);
+          console.log('[LAM Debug] viewer.setExpression:', typeof viewer?.setExpression);
+
+          // 3. Check flame_params structure
           if (viewer?.flame_params) {
             console.log('[LAM Debug] flame_params exists');
             console.log('[LAM Debug] flame_params.expr length:', viewer.flame_params.expr?.length);
@@ -380,27 +384,28 @@ class LAMAvatarController {
             console.log('[LAM Debug] flame_params does NOT exist - getExpressionData callback should be used');
           }
 
-          // 3. Check current frame
+          // 4. Check current frame
           console.log('[LAM Debug] viewer.frame:', viewer?.frame);
 
-          // 4. Check splatMesh.bsWeight
-          if (viewer?.splatMesh?.bsWeight) {
-            const bsWeight = viewer.splatMesh.bsWeight;
-            console.log('[LAM Debug] splatMesh.bsWeight type:', typeof bsWeight);
-            console.log('[LAM Debug] splatMesh.bsWeight isArray:', Array.isArray(bsWeight));
-            if (typeof bsWeight === 'object' && !Array.isArray(bsWeight)) {
-              console.log('[LAM Debug] bsWeight keys sample:', Object.keys(bsWeight).slice(0, 5));
-              console.log('[LAM Debug] bsWeight.jawOpen:', bsWeight.jawOpen);
+          // 5. Check splatMesh.bsWeight and morphTargetInfluences
+          if (viewer?.splatMesh) {
+            const splatMesh = viewer.splatMesh;
+            console.log('[LAM Debug] splatMesh.bsWeight type:', typeof splatMesh.bsWeight);
+            console.log('[LAM Debug] splatMesh.morphTargetInfluences:', splatMesh.morphTargetInfluences);
+
+            if (splatMesh.morphTargetDictionary) {
+              const dict = splatMesh.morphTargetDictionary;
+              const mouthKeys = Object.keys(dict).filter(k => k.toLowerCase().includes('mouth') || k.toLowerCase().includes('jaw'));
+              console.log('[LAM Debug] morphTargetDictionary mouth/jaw keys:', mouthKeys);
+              console.log('[LAM Debug] jawOpen index:', dict['jawOpen']);
+              console.log('[LAM Debug] mouthLowerDownLeft index:', dict['mouthLowerDownLeft']);
             }
           }
 
-          // 5. Check morphTargetDictionary
-          const splatMesh = viewer?.splatMesh;
-          if (splatMesh?.morphTargetDictionary) {
-            const dict = splatMesh.morphTargetDictionary;
-            const mouthKeys = Object.keys(dict).filter(k => k.toLowerCase().includes('mouth') || k.toLowerCase().includes('jaw'));
-            console.log('[LAM Debug] morphTargetDictionary mouth/jaw keys:', mouthKeys);
-          }
+          // 6. List all methods on renderer and viewer
+          console.log('[LAM Debug] renderer methods:', Object.keys(renderer || {}).filter(k => typeof renderer[k] === 'function'));
+          console.log('[LAM Debug] viewer methods:', Object.keys(viewer || {}).filter(k => typeof viewer[k] === 'function'));
+
         } catch (e) {
           console.error('[LAM Debug] Error checking renderer state:', e);
         }
