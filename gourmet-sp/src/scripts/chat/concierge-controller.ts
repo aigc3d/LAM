@@ -489,7 +489,12 @@ export class ConciergeController extends CoreController {
             })
           });
           const result = await response.json();
-          return result.success ? `data:audio/mp3;base64,${result.audio}` : null;
+          if (result.success && result.audio) {
+            // ★ 表情データ生成（最初のセンテンス）
+            this.sendAudioToExpression(result.audio, true, false);
+            return `data:audio/mp3;base64,${result.audio}`;
+          }
+          return null;
         })();
 
         // 残りのセンテンスのTTS生成（並行開始）
@@ -507,7 +512,12 @@ export class ConciergeController extends CoreController {
               })
             });
             const result = await response.json();
-            return result.success ? `data:audio/mp3;base64,${result.audio}` : null;
+            if (result.success && result.audio) {
+              // ★ 表情データ生成（残りのセンテンス）
+              this.sendAudioToExpression(result.audio, false, true);
+              return `data:audio/mp3;base64,${result.audio}`;
+            }
+            return null;
           })();
         }
 
