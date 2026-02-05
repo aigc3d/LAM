@@ -137,6 +137,15 @@ function createDefaultExpressionData(): ExpressionData {
   return data;
 }
 
+/**
+ * LAM Avatar Controller with Official OpenAvatarChat Sync Approach
+ *
+ * Synchronization mechanism:
+ * - Server bundles audio + expression data in JBIN format
+ * - AudioSyncPlayer plays audio and tracks playback position
+ * - Expression frames are synced based on audio playback time
+ * - No need for separate TTS event hooks
+ */
 class LAMAvatarController {
   private container: HTMLElement;
   private canvas: HTMLElement;
@@ -150,18 +159,26 @@ class LAMAvatarController {
   private currentState: ChatState = 'Idle';
   private expressionData: ExpressionData = createDefaultExpressionData();
   private isInitialized = false;
-  private audioContext: AudioContext | null = null;
-  private audioQueue: Int16Array[] = [];
-  private isPlayingAudio = false;
 
-  // Frame buffer for lip sync
+  // Sync modes:
+  // - 'bundled': Official approach - audio + expression bundled from WebSocket
+  // - 'external': Hybrid approach - external TTS player + expression from WebSocket
+  private expressionUpdateInterval: number | null = null;
+  private syncMode: 'bundled' | 'external' = 'external';  // Default to external for gourmet-sp compatibility
+
+  // External TTS sync: Reference to external audio player and timing
+  private externalTtsPlayer: HTMLAudioElement | null = null;
+  private externalTtsStartTime: number = 0;
+  private externalTtsDuration: number = 0;
+
+  // Frame buffer for expression (used in external sync mode)
   private frameBuffer: ExpressionData[] = [];
-  private frameQueue: ExpressionData[][] = [];  // Queue of frame buffers
+  private frameQueue: ExpressionData[][] = [];
   private frameIndex: number = 0;
   private frameRate: number = 30;
   private framePlaybackTimer: number | null = null;
   private isPlayingFrames: boolean = false;
-  private waitingForAudio: boolean = false;  // Flag to wait for TTS play event
+  private waitingForAudio: boolean = false;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -180,13 +197,17 @@ class LAMAvatarController {
       // Try to load the LAM WebGL renderer
       await this.loadRenderer();
 
+      // Start expression sync timer (for bundled audio+expression sync)
+      this.startExpressionSyncTimer();
+
       // デバッグ：レンダラー状態を定期的にチェック
       setInterval(() => {
         const canvasVisible = this.canvas.classList.contains('ready');
         const jawOpen = this.expressionData['jawOpen'] || 0;
         const mouthLowerDownLeft = this.expressionData['mouthLowerDownLeft'] || 0;
         const mouthLowerDownRight = this.expressionData['mouthLowerDownRight'] || 0;
-        console.log(`[LAM Health] canvas=${canvasVisible}, renderer=${!!this.renderer}, state=${this.currentState}, jaw=${jawOpen.toFixed(3)}, mouthLD_L=${mouthLowerDownLeft.toFixed(3)}, mouthLD_R=${mouthLowerDownRight.toFixed(3)}`);
+        const isAudioPlaying = this.wsManager?.isAudioPlaying() || false;
+        console.log(`[LAM Health] canvas=${canvasVisible}, renderer=${!!this.renderer}, state=${this.currentState}, audioPlaying=${isAudioPlaying}, jaw=${jawOpen.toFixed(3)}, mouthLD_L=${mouthLowerDownLeft.toFixed(3)}, mouthLD_R=${mouthLowerDownRight.toFixed(3)}`);
       }, 2000);
 
       // Auto-connect to WebSocket if configured
@@ -197,6 +218,115 @@ class LAMAvatarController {
       console.warn('LAM WebGL renderer not available, using fallback image:', error);
       this.showFallback();
     }
+  }
+
+  /**
+   * Start the expression sync timer
+   * Supports two modes:
+   * - 'bundled': Get expression based on AudioSyncPlayer position (official approach)
+   * - 'external': Get expression based on external TTS player position (gourmet-sp compatible)
+   */
+  private startExpressionSyncTimer(): void {
+    if (this.expressionUpdateInterval) {
+      clearInterval(this.expressionUpdateInterval);
+    }
+
+    // Update expression at 30fps
+    this.expressionUpdateInterval = window.setInterval(() => {
+      if (this.syncMode === 'bundled') {
+        // Bundled mode: Get expression from WebSocket manager based on its AudioSyncPlayer
+        if (!this.wsManager) return;
+
+        const frame = this.wsManager.getCurrentExpressionFrame();
+        if (frame) {
+          Object.keys(frame).forEach(key => {
+            this.expressionData[key] = frame[key];
+          });
+          if (this.currentState !== 'Responding') {
+            this.setChatState('Responding');
+          }
+        } else if (this.currentState === 'Responding' && !this.wsManager.isAudioPlaying()) {
+          this.resetExpression();
+          this.setChatState('Idle');
+        }
+      } else {
+        // External mode: Get expression based on external TTS player position
+        this.syncExpressionWithExternalPlayer();
+      }
+    }, 1000 / 30);  // 30fps
+  }
+
+  /**
+   * Sync expression with external TTS player position
+   * Used in 'external' sync mode for gourmet-sp compatibility
+   */
+  private syncExpressionWithExternalPlayer(): void {
+    // Check if we have frames and an external player
+    if (this.frameBuffer.length === 0 || !this.isPlayingFrames) {
+      return;
+    }
+
+    // Calculate frame index based on external player position or elapsed time
+    let currentTimeMs: number;
+    if (this.externalTtsPlayer && !this.externalTtsPlayer.paused) {
+      currentTimeMs = this.externalTtsPlayer.currentTime * 1000;
+    } else if (this.externalTtsStartTime > 0) {
+      currentTimeMs = Date.now() - this.externalTtsStartTime;
+    } else {
+      return;
+    }
+
+    // Calculate frame index
+    const frameIndex = Math.floor((currentTimeMs / 1000) * this.frameRate);
+
+    if (frameIndex >= this.frameBuffer.length) {
+      // Playback complete
+      return;
+    }
+
+    // Apply frame
+    const frame = this.frameBuffer[frameIndex];
+    if (frame) {
+      Object.keys(frame).forEach(key => {
+        this.expressionData[key] = frame[key];
+      });
+    }
+  }
+
+  /**
+   * Set the external TTS player for sync
+   * Call this to link the LAMAvatar with an external audio element
+   */
+  public setExternalTtsPlayer(player: HTMLAudioElement): void {
+    this.externalTtsPlayer = player;
+    this.syncMode = 'external';
+
+    // Listen for play/pause/ended events
+    player.addEventListener('play', () => {
+      console.log('[LAM External] TTS play event');
+      this.externalTtsStartTime = Date.now() - (player.currentTime * 1000);
+      this.startFramePlaybackFromQueue();
+    });
+
+    player.addEventListener('pause', () => {
+      console.log('[LAM External] TTS pause event');
+      // Don't stop playback on pause - may resume
+    });
+
+    player.addEventListener('ended', () => {
+      console.log('[LAM External] TTS ended event');
+      this.stopFramePlayback();
+    });
+
+    console.log('[LAM Avatar] External TTS player linked');
+  }
+
+  /**
+   * Switch sync mode
+   */
+  public setSyncMode(mode: 'bundled' | 'external'): void {
+    this.syncMode = mode;
+    console.log(`[LAM Avatar] Sync mode set to: ${mode}`);
   }
 
   private async loadRenderer() {
@@ -261,18 +391,17 @@ class LAMAvatarController {
 
   public async connectWebSocket(url: string): Promise<void> {
     if (this.wsManager) {
-      this.wsManager.disconnect();
+      this.wsManager.destroy();
     }
 
     this.wsManager = new LAMWebSocketManager({
+      // Legacy callbacks for backward compatibility (fallback mode)
       onExpressionUpdate: (data: ExpressionData) => {
+        if (this.useBundledSync) return;  // Ignore in bundled mode
         try {
-          // 単一フレームの場合は直接適用（フォールバック）
           const jawOpen = data['jawOpen'] || 0;
           const mouthLowerDownLeft = data['mouthLowerDownLeft'] || 0;
-          console.log(`[LAM Expression] Single frame: jawOpen=${jawOpen.toFixed(3)}, mouthLD_L=${mouthLowerDownLeft.toFixed(3)}`);
-
-          // 即座に適用
+          console.log(`[LAM Expression] Single frame (legacy): jawOpen=${jawOpen.toFixed(3)}, mouthLD_L=${mouthLowerDownLeft.toFixed(3)}`);
           Object.keys(data).forEach(key => {
             this.expressionData[key] = data[key];
           });
@@ -281,22 +410,19 @@ class LAMAvatarController {
         }
       },
       onExpressionFrames: (data: ExpressionFrameData) => {
+        if (this.useBundledSync) return;  // Ignore in bundled mode
         try {
-          // ★ フレームをキューに追加（TTS再生開始まで待機）
           this.frameQueue.push(data.frames);
           this.frameRate = data.frameRate;
           this.waitingForAudio = true;
-
-          const firstFrame = data.frames[0];
-          const jawOpen = firstFrame['jawOpen'] || 0;
-          const mouthLD = firstFrame['mouthLowerDownLeft'] || 0;
-          console.log(`[LAM Expression] Queued ${data.frameCount} frames at ${data.frameRate}fps (queue size: ${this.frameQueue.length}), first: jaw=${jawOpen.toFixed(3)}, mouthLD=${mouthLD.toFixed(3)}`);
+          console.log(`[LAM Expression] Queued ${data.frameCount} frames (legacy mode)`);
         } catch (e) {
           console.error('[LAM Expression] Frame buffer error:', e);
         }
       },
       onAudioData: (audio: Int16Array) => {
-        this.queueAudio(audio);
+        // Audio is now handled by AudioSyncPlayer in bundled mode
+        console.log(`[LAM Audio] Received ${audio.length} samples`);
       },
       onConnectionChange: (connected: boolean) => {
         this.container.dispatchEvent(new CustomEvent('lamConnectionChange', {
@@ -305,16 +431,34 @@ class LAMAvatarController {
         if (connected) {
           this.setChatState('Idle');
         }
+      },
+      // Official sync callbacks
+      onBatchStarted: (batchId: number) => {
+        console.log(`[LAM Avatar] Batch ${batchId} started - audio playing`);
+        this.setChatState('Responding');
+        this.container.dispatchEvent(new CustomEvent('lamSpeechStart', {
+          detail: { batchId }
+        }));
+      },
+      onBatchEnded: (batchId: number) => {
+        console.log(`[LAM Avatar] Batch ${batchId} ended - audio finished`);
+        this.resetExpression();
+        this.setChatState('Idle');
+        this.container.dispatchEvent(new CustomEvent('lamSpeechEnd', {
+          detail: { batchId }
+        }));
       }
     });
 
+    // Initialize the audio player (requires user interaction first)
+    await this.wsManager.initializeAudio();
     await this.wsManager.connect(url);
-    console.log('[LAM Avatar] WebSocket connected to:', url);
+    console.log('[LAM Avatar] WebSocket connected with bundled sync:', url);
   }
 
   public disconnectWebSocket(): void {
     if (this.wsManager) {
-      this.wsManager.disconnect();
+      this.wsManager.destroy();
       this.wsManager = null;
     }
   }
@@ -323,52 +467,18 @@ class LAMAvatarController {
     return this.wsManager?.isConnected() ?? false;
   }
 
-  // Audio playback
-
-  private async initAudioContext(): Promise<void> {
-    if (!this.audioContext) {
-      this.audioContext = new AudioContext({ sampleRate: 16000 });
-    }
-    if (this.audioContext.state === 'suspended') {
-      await this.audioContext.resume();
-    }
-  }
-
-  private queueAudio(audio: Int16Array): void {
-    this.audioQueue.push(audio);
-    if (!this.isPlayingAudio) {
-      this.playNextAudio();
-    }
-  }
-
-  private async playNextAudio(): Promise<void> {
-    if (this.audioQueue.length === 0) {
-      this.isPlayingAudio = false;
-      return;
-    }
-
-    this.isPlayingAudio = true;
-    await this.initAudioContext();
-
-    const audio = this.audioQueue.shift()!;
-    const audioBuffer = this.audioContext!.createBuffer(1, audio.length, 16000);
-    const channelData = audioBuffer.getChannelData(0);
-
-    // Convert Int16 to Float32 (-1.0 to 1.0)
-    for (let i = 0; i < audio.length; i++) {
-      channelData[i] = audio[i] / 32768.0;
-    }
-
-    const source = this.audioContext!.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(this.audioContext!.destination);
-    source.onended = () => this.playNextAudio();
-    source.start();
-  }
+  // Audio control (delegated to WebSocket manager's AudioSyncPlayer)
 
   public stopAudio(): void {
-    this.audioQueue = [];
-    this.isPlayingAudio = false;
+    this.wsManager?.stopAudio();
+  }
+
+  public setAudioMute(muted: boolean): void {
+    this.wsManager?.setAudioMute(muted);
+  }
+
+  public isAudioPlaying(): boolean {
+    return this.wsManager?.isAudioPlaying() ?? false;
   }
 
   // ========================================

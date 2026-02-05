@@ -39,48 +39,64 @@ export class ConciergeController extends CoreController {
       });
     }
 
-    // ★ LAMAvatar リップシンク: ttsPlayer の再生イベントに直接フック
-    this.ttsPlayer.addEventListener('play', () => {
-      const lamController = (window as any).lamAvatarController;
-      if (lamController) {
-        console.log('[Concierge] TTS play event - starting frame playback');
-        // フレーム再生を開始（キューにあるフレームを再生）
-        if (typeof lamController.startFramePlaybackFromQueue === 'function') {
-          lamController.startFramePlaybackFromQueue();
-        }
-        if (typeof lamController.setChatState === 'function') {
-          lamController.setChatState('Responding');
-        }
-      }
-    });
+    // ★ LAMAvatar との統合: 外部TTSプレーヤーをリンク
+    const lamController = (window as any).lamAvatarController;
+    if (lamController && typeof lamController.setExternalTtsPlayer === 'function') {
+      // 新しい公式同期アプローチ: 外部TTSプレーヤーをLAMAvatarにリンク
+      lamController.setExternalTtsPlayer(this.ttsPlayer);
+      console.log('[Concierge] Linked external TTS player with LAMAvatar');
+    } else {
+      // フォールバック: 旧来のイベントフック
+      console.log('[Concierge] Using legacy TTS event hooks (LAMAvatar not ready yet)');
 
-    this.ttsPlayer.addEventListener('ended', () => {
-      const lamController = (window as any).lamAvatarController;
-      if (lamController) {
-        console.log('[Concierge] TTS ended event - stopping frame playback');
-        // フレーム再生を停止
-        if (typeof lamController.stopFramePlayback === 'function') {
-          lamController.stopFramePlayback();
+      this.ttsPlayer.addEventListener('play', () => {
+        const lam = (window as any).lamAvatarController;
+        if (lam) {
+          console.log('[Concierge] TTS play event - starting frame playback');
+          if (typeof lam.startFramePlaybackFromQueue === 'function') {
+            lam.startFramePlaybackFromQueue();
+          }
+          if (typeof lam.setChatState === 'function') {
+            lam.setChatState('Responding');
+          }
         }
-        if (typeof lamController.setChatState === 'function') {
-          lamController.setChatState('Idle');
-        }
-      }
-    });
+      });
 
-    this.ttsPlayer.addEventListener('pause', () => {
-      const lamController = (window as any).lamAvatarController;
-      if (lamController) {
-        console.log('[Concierge] TTS pause event - stopping frame playback');
-        // フレーム再生を停止
-        if (typeof lamController.stopFramePlayback === 'function') {
-          lamController.stopFramePlayback();
+      this.ttsPlayer.addEventListener('ended', () => {
+        const lam = (window as any).lamAvatarController;
+        if (lam) {
+          console.log('[Concierge] TTS ended event - stopping frame playback');
+          if (typeof lam.stopFramePlayback === 'function') {
+            lam.stopFramePlayback();
+          }
+          if (typeof lam.setChatState === 'function') {
+            lam.setChatState('Idle');
+          }
         }
-        if (typeof lamController.setChatState === 'function') {
-          lamController.setChatState('Idle');
+      });
+
+      this.ttsPlayer.addEventListener('pause', () => {
+        const lam = (window as any).lamAvatarController;
+        if (lam) {
+          console.log('[Concierge] TTS pause event - stopping frame playback');
+          if (typeof lam.stopFramePlayback === 'function') {
+            lam.stopFramePlayback();
+          }
+          if (typeof lam.setChatState === 'function') {
+            lam.setChatState('Idle');
+          }
         }
+      });
+    }
+
+    // ★ LAMAvatar が後から初期化された場合に再リンク
+    setTimeout(() => {
+      const lamLate = (window as any).lamAvatarController;
+      if (lamLate && typeof lamLate.setExternalTtsPlayer === 'function') {
+        lamLate.setExternalTtsPlayer(this.ttsPlayer);
+        console.log('[Concierge] Late-linked external TTS player with LAMAvatar');
       }
-    });
+    }, 2000);
   }
 
   // ========================================
@@ -187,7 +203,10 @@ export class ConciergeController extends CoreController {
     });
   }
 
-  // コンシェルジュモード固有: アバターアニメーション制御
+  // Audio2Expression REST API URL (Cloud Run)
+  private audio2expApiUrl = 'https://audio2exp-service-6s2ds5mdba-uc.a.run.app';
+
+  // コンシェルジュモード固有: アバターアニメーション制御 + 公式リップシンク
   protected async speakTextGCP(text: string, stopPrevious: boolean = true, autoRestartMic: boolean = false, skipAudio: boolean = false) {
     if (skipAudio || !this.isTTSEnabled || !text) return Promise.resolve();
 
@@ -200,12 +219,106 @@ export class ConciergeController extends CoreController {
       this.els.avatarContainer.classList.add('speaking');
     }
 
-    // 親クラスのTTS処理を実行
-    // ※ LAMAvatar の状態は ttsPlayer イベントで管理（init で設定済み）
-    await super.speakTextGCP(text, stopPrevious, autoRestartMic, skipAudio);
+    // ★ 公式同期: TTS音声をaudio2exp-serviceに送信して表情を生成
+    const cleanText = this.stripMarkdown(text);
+    try {
+      this.isAISpeaking = true;
+      if (this.isRecording && (this.isIOS || this.isAndroid)) {
+        this.stopStreamingSTT();
+      }
 
-    // アバターアニメーションを停止
-    this.stopAvatarAnimation();
+      this.els.voiceStatus.innerHTML = this.t('voiceStatusSynthesizing');
+      this.els.voiceStatus.className = 'voice-status speaking';
+      const langConfig = this.LANGUAGE_CODE_MAP[this.currentLanguage];
+
+      // TTS音声を取得
+      const response = await fetch(`${this.apiBase}/api/tts/synthesize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: cleanText, language_code: langConfig.tts, voice_name: langConfig.voice,
+          session_id: this.sessionId
+        })
+      });
+      const data = await response.json();
+
+      if (data.success && data.audio) {
+        // ★ 公式同期: TTS音声をaudio2exp-serviceに送信（非同期で実行）
+        this.sendAudioToExpression(data.audio, true, true);
+
+        this.ttsPlayer.src = `data:audio/mp3;base64,${data.audio}`;
+        const playPromise = new Promise<void>((resolve) => {
+          this.ttsPlayer.onended = async () => {
+            this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
+            this.els.voiceStatus.className = 'voice-status stopped';
+            this.isAISpeaking = false;
+            this.stopAvatarAnimation();
+            if (autoRestartMic) {
+              if (!this.isRecording) {
+                try { await this.toggleRecording(); } catch (_error) { this.showMicPrompt(); }
+              }
+            }
+            resolve();
+          };
+          this.ttsPlayer.onerror = () => {
+            this.isAISpeaking = false;
+            this.stopAvatarAnimation();
+            resolve();
+          };
+        });
+
+        if (this.isUserInteracted) {
+          this.lastAISpeech = this.normalizeText(cleanText);
+          await this.ttsPlayer.play();
+          await playPromise;
+        } else {
+          this.showClickPrompt();
+          this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
+          this.els.voiceStatus.className = 'voice-status stopped';
+          this.isAISpeaking = false;
+          this.stopAvatarAnimation();
+        }
+      } else {
+        this.isAISpeaking = false;
+        this.stopAvatarAnimation();
+      }
+    } catch (_error) {
+      this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
+      this.els.voiceStatus.className = 'voice-status stopped';
+      this.isAISpeaking = false;
+      this.stopAvatarAnimation();
+    }
+  }
+
+  /**
+   * 公式リップシンク: TTS音声をaudio2exp-serviceに送信
+   * WebSocket経由で表情データが返され、LAMAvatarに適用される
+   */
+  private async sendAudioToExpression(audioBase64: string, isStart: boolean = false, isFinal: boolean = false): Promise<void> {
+    if (!this.sessionId) return;
+
+    try {
+      const response = await fetch(`${this.audio2expApiUrl}/api/audio2expression`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          audio_base64: audioBase64,
+          session_id: this.sessionId,
+          is_start: isStart,
+          is_final: isFinal,
+          audio_format: 'mp3'  // Google Cloud TTSはMP3を返す
+        })
+      });
+
+      if (!response.ok) {
+        console.warn('[Concierge] audio2exp API failed:', response.status);
+      } else {
+        const result = await response.json();
+        console.log(`[Concierge] Expression generated: ${result.weights?.length || 0} frames, batch=${result.batch_id}`);
+      }
+    } catch (error) {
+      console.warn('[Concierge] audio2exp API error:', error);
+    }
   }
 
   // アバターアニメーション停止

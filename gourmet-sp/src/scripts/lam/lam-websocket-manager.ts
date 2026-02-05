@@ -1,7 +1,13 @@
 /**
  * LAM WebSocket Manager
  * OpenAvatarChatのバックエンドと通信してリップシンクデータを受信
+ *
+ * Official synchronization approach:
+ * - Server sends BUNDLED audio+expression in JBIN format
+ * - Client plays audio and syncs expression based on playback position
  */
+
+import { AudioSyncPlayer, AudioSample } from './audio-sync-player';
 
 // JBIN形式のバイナリデータをパース
 export interface MotionDataDescription {
@@ -40,6 +46,15 @@ export interface ExpressionFrameData {
   frames: ExpressionData[];  // All frames for this audio chunk
   frameRate: number;         // Frames per second
   frameCount: number;        // Total number of frames
+}
+
+// Bundled motion data group (official sync approach)
+export interface MotionDataGroup {
+  batchId: number;
+  arkitFaceArrays: Float32Array[];  // Expression frames for each audio chunk
+  channelNames: string[];
+  sampleRate: number;  // Expression frame rate
+  arkitFaceShape: number;  // Number of channels per frame (52)
 }
 
 /**
@@ -111,6 +126,7 @@ export function convertToExpressionData(
 
 /**
  * LAM WebSocket Manager
+ * Handles bundled audio+expression data with official sync approach
  */
 export class LAMWebSocketManager {
   private ws: WebSocket | null = null;
@@ -120,24 +136,52 @@ export class LAMWebSocketManager {
   private onExpressionFrames: ((data: ExpressionFrameData) => void) | null = null;
   private onAudioData: ((audio: Int16Array) => void) | null = null;
   private onConnectionChange: ((connected: boolean) => void) | null = null;
+  private onBatchStarted: ((batchId: number) => void) | null = null;
+  private onBatchEnded: ((batchId: number) => void) | null = null;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000;
   private pingInterval: ReturnType<typeof setInterval> | null = null;
   private currentWsUrl: string = '';
 
+  // Official sync: AudioSyncPlayer + motion data groups
+  private audioPlayer: AudioSyncPlayer;
+  private motionDataGroups: MotionDataGroup[] = [];
+  private currentBatchId: number = -1;
+  private arkitFaceShape: number = 52;
+  private arkitFaceSampleRate: number = 30;
+
   constructor(options?: {
     onExpressionUpdate?: (data: ExpressionData) => void;
     onExpressionFrames?: (data: ExpressionFrameData) => void;
     onAudioData?: (audio: Int16Array) => void;
     onConnectionChange?: (connected: boolean) => void;
+    onBatchStarted?: (batchId: number) => void;
+    onBatchEnded?: (batchId: number) => void;
   }) {
     if (options) {
       this.onExpressionUpdate = options.onExpressionUpdate || null;
       this.onExpressionFrames = options.onExpressionFrames || null;
       this.onAudioData = options.onAudioData || null;
       this.onConnectionChange = options.onConnectionChange || null;
+      this.onBatchStarted = options.onBatchStarted || null;
+      this.onBatchEnded = options.onBatchEnded || null;
     }
+
+    // Initialize AudioSyncPlayer
+    this.audioPlayer = new AudioSyncPlayer({
+      sampleRate: 16000,
+      onStarted: (batchId) => {
+        console.log(`[LAM WebSocket] Audio playback started for batch ${batchId}`);
+        this.onBatchStarted?.(batchId);
+      },
+      onEnded: (batchId) => {
+        console.log(`[LAM WebSocket] Audio playback ended for batch ${batchId}`);
+        this.onBatchEnded?.(batchId);
+        // Clean up old motion data groups
+        this.motionDataGroups = this.motionDataGroups.filter(g => g.batchId > batchId);
+      }
+    });
   }
 
   /**
@@ -184,11 +228,11 @@ export class LAMWebSocketManager {
    */
   private handleMessage(event: MessageEvent): void {
     if (!(event.data instanceof ArrayBuffer)) {
-      // JSON形式のメッセージ
+      // JSON形式のメッセージ（レガシー対応）
       try {
         const msg = JSON.parse(event.data);
 
-        // audio2exp-service からの表情データ（複数フレーム対応）
+        // audio2exp-service からの表情データ（複数フレーム対応）- レガシーJSON形式
         if (msg.type === 'expression' && msg.channels && msg.weights) {
           const frameRate = msg.frame_rate || 30;
           const frameCount = msg.frame_count || msg.weights.length;
@@ -210,7 +254,7 @@ export class LAMWebSocketManager {
               frameRate,
               frameCount
             });
-            console.log(`[LAM WebSocket] Expression frames received: ${frameCount} frames at ${frameRate}fps`);
+            console.log(`[LAM WebSocket] Expression frames received (legacy): ${frameCount} frames at ${frameRate}fps`);
           } else {
             // 1フレームの場合は従来通り
             const expressionData: ExpressionData = {};
@@ -220,7 +264,6 @@ export class LAMWebSocketManager {
               }
             });
             this.onExpressionUpdate?.(expressionData);
-            console.log('[LAM WebSocket] Expression update from audio2exp (single frame)');
           }
           return;
         }
@@ -237,30 +280,143 @@ export class LAMWebSocketManager {
       return;
     }
 
+    // JBIN形式のバンドルデータを処理（公式同期アプローチ）
     try {
       const motionData = parseMotionData(event.data);
+      const desc = motionData.description;
 
-      // 最初のメッセージは定義情報
-      if (!this.definition && motionData.description.data_records.arkit_face) {
-        this.definition = motionData.description;
-        this.channelNames = motionData.description.data_records.arkit_face.channel_names || [];
-        console.log('[LAM WebSocket] Definition received:', this.channelNames.length, 'channels');
-        return;
+      // チャンネル名を保存
+      if (desc.data_records.arkit_face?.channel_names) {
+        this.channelNames = desc.data_records.arkit_face.channel_names;
+        this.arkitFaceSampleRate = desc.data_records.arkit_face.sample_rate || 30;
+        this.arkitFaceShape = desc.data_records.arkit_face.shape?.[1] || 52;
       }
 
-      // 表情データの処理
-      if (motionData.arkitFace && this.channelNames.length > 0) {
-        const expressionData = convertToExpressionData(motionData.arkitFace, this.channelNames);
-        this.onExpressionUpdate?.(expressionData);
+      const batchId = desc.batch_id || 0;
+
+      // 新しいバッチの場合はmotion data groupをリセット
+      if (desc.start_of_batch || batchId !== this.currentBatchId) {
+        this.currentBatchId = batchId;
+        // 新しいグループを作成
+        this.motionDataGroups = this.motionDataGroups.filter(g => g.batchId !== batchId);
+        this.motionDataGroups.push({
+          batchId,
+          arkitFaceArrays: [],
+          channelNames: this.channelNames,
+          sampleRate: this.arkitFaceSampleRate,
+          arkitFaceShape: this.arkitFaceShape
+        });
       }
 
-      // オーディオデータの処理
+      // 表情データを保存
+      if (motionData.arkitFace) {
+        const group = this.motionDataGroups.find(g => g.batchId === batchId);
+        if (group) {
+          group.arkitFaceArrays.push(motionData.arkitFace);
+        }
+      }
+
+      // オーディオデータをプレーヤーに送信
       if (motionData.audio) {
+        const audioSample: AudioSample = {
+          audioData: motionData.audio,
+          sampleRate: desc.data_records.avatar_audio?.sample_rate || 16000,
+          batchId,
+          endOfBatch: desc.end_of_batch
+        };
+        this.audioPlayer.feed(audioSample);
+
+        // レガシーコールバックも呼び出し
         this.onAudioData?.(motionData.audio);
       }
+
+      console.log(`[LAM WebSocket] JBIN bundle received: batch=${batchId}, start=${desc.start_of_batch}, end=${desc.end_of_batch}`);
+
     } catch (error) {
-      console.error('[LAM WebSocket] Parse error:', error);
+      console.error('[LAM WebSocket] JBIN parse error:', error);
     }
+  }
+
+  /**
+   * Get current expression frame based on audio playback position
+   * This is the official OpenAvatarChat synchronization method
+   */
+  getCurrentExpressionFrame(): ExpressionData | null {
+    const offsetMs = this.audioPlayer.getCurrentPlaybackOffset();
+    if (offsetMs < 0) {
+      return null;
+    }
+
+    // Find the motion data group for current batch
+    const group = this.motionDataGroups.find(g => g.batchId === this.audioPlayer.currentBatchId);
+    if (!group || group.arkitFaceArrays.length === 0) {
+      return null;
+    }
+
+    // Get the sample index based on playback position
+    const { sampleIndex, subOffsetMs } = this.audioPlayer.getSampleIndexForOffset(offsetMs);
+    if (sampleIndex < 0 || sampleIndex >= group.arkitFaceArrays.length) {
+      return null;
+    }
+
+    // Calculate frame index within the sample
+    const frameOffset = Math.floor((subOffsetMs / 1000) * group.sampleRate);
+    const arkitFaceArray = group.arkitFaceArrays[sampleIndex];
+
+    // Extract frame data
+    const startIdx = frameOffset * group.arkitFaceShape;
+    const endIdx = startIdx + group.arkitFaceShape;
+
+    if (startIdx >= arkitFaceArray.length) {
+      // Use last frame if we're past the end
+      const lastFrameStart = Math.max(0, arkitFaceArray.length - group.arkitFaceShape);
+      const frameData = arkitFaceArray.slice(lastFrameStart, lastFrameStart + group.arkitFaceShape);
+      return this.arrayToExpressionData(frameData, group.channelNames);
+    }
+
+    const frameData = arkitFaceArray.slice(startIdx, endIdx);
+    return this.arrayToExpressionData(frameData, group.channelNames);
+  }
+
+  /**
+   * Convert Float32Array to ExpressionData object
+   */
+  private arrayToExpressionData(frameData: Float32Array, channelNames: string[]): ExpressionData {
+    const result: ExpressionData = {};
+    channelNames.forEach((name, index) => {
+      if (index < frameData.length) {
+        result[name] = frameData[index];
+      }
+    });
+    return result;
+  }
+
+  /**
+   * Check if audio is currently playing
+   */
+  isAudioPlaying(): boolean {
+    return this.audioPlayer.isPlaying;
+  }
+
+  /**
+   * Stop audio playback
+   */
+  stopAudio(): void {
+    this.audioPlayer.stop();
+  }
+
+  /**
+   * Set audio mute state
+   */
+  setAudioMute(muted: boolean): void {
+    this.audioPlayer.setMute(muted);
+  }
+
+  /**
+   * Initialize audio player (call after user interaction)
+   */
+  async initializeAudio(): Promise<void> {
+    await this.audioPlayer.initialize();
   }
 
   /**
@@ -303,6 +459,16 @@ export class LAMWebSocketManager {
     }
     this.definition = null;
     this.channelNames = [];
+    this.audioPlayer.stop();
+    this.motionDataGroups = [];
+  }
+
+  /**
+   * Destroy the manager and clean up resources
+   */
+  destroy(): void {
+    this.disconnect();
+    this.audioPlayer.destroy();
   }
 
   /**

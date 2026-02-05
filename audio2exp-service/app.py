@@ -2,16 +2,20 @@
 Audio2Expression Service for LAM Lip Sync
 
 Receives audio data from gourmet-sp TTS, processes with Audio2Expression,
-and sends expression data to browser via WebSocket.
+and sends BUNDLED audio+expression data to browser via WebSocket.
 
-Architecture:
-  gourmet-sp (TTS audio) → REST API → Audio2Expression → WebSocket → Browser (LAMAvatar)
+Architecture (Official OpenAvatarChat approach):
+  gourmet-sp (TTS audio) → REST API → Audio2Expression → Bundle(audio+expression) → WebSocket → Browser
+
+Key: Audio and expression are bundled together in JBIN format for guaranteed sync.
+The client uses audio playback position to determine which expression frame to show.
 """
 
 import asyncio
 import base64
 import json
 import os
+import struct
 import sys
 import time
 from typing import Dict, Optional, List
@@ -57,6 +61,98 @@ ARKIT_CHANNELS = [
     "noseSneerLeft", "noseSneerRight",
     "tongueOut"
 ]
+
+
+def create_jbin_bundle(
+    expression: np.ndarray,
+    audio: np.ndarray,
+    expression_sample_rate: int = 30,
+    audio_sample_rate: int = 16000,
+    batch_id: int = 0,
+    start_of_batch: bool = False,
+    end_of_batch: bool = False
+) -> bytes:
+    """
+    Create JBIN format bundle with audio and expression data.
+
+    JBIN Format:
+    - 4 bytes: "JBIN" magic
+    - 4 bytes: JSON size (little endian)
+    - 4 bytes: Binary size (little endian)
+    - N bytes: JSON descriptor
+    - M bytes: Binary data (arkit_face + avatar_audio)
+
+    Args:
+        expression: Expression data (num_frames, 52)
+        audio: Audio data (int16 or float32)
+        expression_sample_rate: Expression frames per second
+        audio_sample_rate: Audio samples per second
+        batch_id: Batch ID for tracking speech segments
+        start_of_batch: True if this is the first chunk of a speech
+        end_of_batch: True if this is the last chunk of a speech
+
+    Returns:
+        JBIN formatted bytes
+    """
+    # Convert audio to int16 if float32
+    if audio.dtype == np.float32:
+        audio_int16 = (audio * 32767).astype(np.int16)
+    else:
+        audio_int16 = audio.astype(np.int16)
+
+    # Ensure expression is float32 and contiguous
+    expression_f32 = np.ascontiguousarray(expression.astype(np.float32))
+
+    # Calculate binary offsets and sizes
+    expression_bytes = expression_f32.tobytes()
+    audio_bytes = audio_int16.tobytes()
+
+    expression_offset = 0
+    audio_offset = len(expression_bytes)
+
+    # Create descriptor JSON
+    descriptor = {
+        "data_records": {
+            "arkit_face": {
+                "data_type": "float32",
+                "data_offset": expression_offset,
+                "shape": list(expression_f32.shape),
+                "channel_names": ARKIT_CHANNELS,
+                "sample_rate": expression_sample_rate,
+                "data_id": 0,
+                "timeline_axis": 0,
+                "channel_axis": 1
+            },
+            "avatar_audio": {
+                "data_type": "int16",
+                "data_offset": audio_offset,
+                "shape": [1, len(audio_int16)],
+                "sample_rate": audio_sample_rate,
+                "data_id": 1,
+                "timeline_axis": 1
+            }
+        },
+        "metadata": {},
+        "events": [],
+        "batch_id": batch_id,
+        "batch_name": f"speech_{batch_id}",
+        "start_of_batch": start_of_batch,
+        "end_of_batch": end_of_batch
+    }
+
+    # Encode JSON
+    json_bytes = json.dumps(descriptor).encode('utf-8')
+
+    # Calculate sizes
+    json_size = len(json_bytes)
+    bin_size = len(expression_bytes) + len(audio_bytes)
+
+    # Build JBIN
+    header = b'JBIN'
+    header += struct.pack('<I', json_size)  # Little endian uint32
+    header += struct.pack('<I', bin_size)   # Little endian uint32
+
+    return header + json_bytes + expression_bytes + audio_bytes
 
 
 class Audio2ExpressionEngine:
@@ -207,12 +303,19 @@ engine = Audio2ExpressionEngine()
 # WebSocket connections
 active_connections: Dict[str, WebSocket] = {}
 
+# Batch tracking per session (for speech segment sync)
+session_batch_ids: Dict[str, int] = {}
+session_chunk_counts: Dict[str, int] = {}
+
 
 class AudioRequest(BaseModel):
     """Request model for audio processing"""
-    audio_base64: str  # Base64 encoded audio (PCM 16-bit, 16kHz)
+    audio_base64: str  # Base64 encoded audio (PCM 16-bit, 16kHz or MP3)
     session_id: str
-    is_final: bool = False
+    is_start: bool = False  # True for first chunk of a speech
+    is_final: bool = False  # True for last chunk of a speech
+    audio_format: str = "pcm"  # "pcm" or "mp3"
+    sample_rate: int = 16000  # Audio sample rate
 
 
 class ExpressionResponse(BaseModel):
@@ -221,6 +324,7 @@ class ExpressionResponse(BaseModel):
     channels: List[str]
     weights: List[List[float]]  # List of frames, each frame has 52 weights
     timestamp: float
+    batch_id: int = 0
 
 
 @app.on_event("startup")
@@ -246,9 +350,10 @@ async def health_check():
 
 
 @app.post("/api/audio2expression", response_model=ExpressionResponse)
-async def process_audio(request: AudioRequest):
+async def process_audio_endpoint(request: AudioRequest):
     """
-    Process audio and return expression data
+    Process audio and return expression data.
+    Also sends BUNDLED audio+expression to WebSocket for guaranteed sync.
 
     This endpoint is called by gourmet-sp backend after TTS synthesis.
     """
@@ -256,42 +361,119 @@ async def process_audio(request: AudioRequest):
         # Decode base64 audio
         audio_bytes = base64.b64decode(request.audio_base64)
 
-        # Convert to numpy array (assuming PCM 16-bit)
-        audio_int16 = np.frombuffer(audio_bytes, dtype=np.int16)
+        # Handle different audio formats
+        if request.audio_format == "mp3":
+            # MP3 needs to be decoded - try using pydub if available
+            try:
+                from pydub import AudioSegment
+                import io
+                audio_segment = AudioSegment.from_mp3(io.BytesIO(audio_bytes))
+                audio_segment = audio_segment.set_frame_rate(16000).set_channels(1)
+                audio_int16 = np.array(audio_segment.get_array_of_samples(), dtype=np.int16)
+            except ImportError:
+                # Fallback: assume it's already PCM
+                audio_int16 = np.frombuffer(audio_bytes, dtype=np.int16)
+        else:
+            # PCM 16-bit
+            audio_int16 = np.frombuffer(audio_bytes, dtype=np.int16)
+
         audio_float = audio_int16.astype(np.float32) / 32768.0
 
-        # Process audio
+        # Manage batch IDs for this session
+        session_id = request.session_id
+        if request.is_start or session_id not in session_batch_ids:
+            session_batch_ids[session_id] = session_batch_ids.get(session_id, 0) + 1
+            session_chunk_counts[session_id] = 0
+
+        batch_id = session_batch_ids[session_id]
+        session_chunk_counts[session_id] += 1
+        is_start = session_chunk_counts[session_id] == 1
+
+        # Process audio to get expression
         expression, _ = engine.process_audio(audio_float)
 
         if expression is None:
             raise HTTPException(status_code=500, detail="Failed to process audio")
 
-        # Send to WebSocket if connected
-        if request.session_id in active_connections:
-            ws = active_connections[request.session_id]
-            await send_expression_to_ws(ws, expression, request.session_id, request.is_final)
+        # Send BUNDLED data to WebSocket if connected
+        if session_id in active_connections:
+            ws = active_connections[session_id]
+            await send_bundled_to_ws(
+                ws,
+                expression,
+                audio_int16,
+                session_id,
+                batch_id=batch_id,
+                start_of_batch=is_start,
+                end_of_batch=request.is_final,
+                audio_sample_rate=request.sample_rate
+            )
 
         return ExpressionResponse(
-            session_id=request.session_id,
+            session_id=session_id,
             channels=ARKIT_CHANNELS,
             weights=expression.tolist(),
-            timestamp=time.time()
+            timestamp=time.time(),
+            batch_id=batch_id
         )
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def send_bundled_to_ws(
+    ws: WebSocket,
+    expression: np.ndarray,
+    audio: np.ndarray,
+    session_id: str,
+    batch_id: int,
+    start_of_batch: bool,
+    end_of_batch: bool,
+    expression_sample_rate: int = 30,
+    audio_sample_rate: int = 16000
+):
+    """
+    Send BUNDLED audio+expression in JBIN format to WebSocket client.
+
+    This is the official OpenAvatarChat synchronization approach:
+    - Audio and expression are bundled together
+    - Client plays audio and syncs expression based on playback position
+    """
+    try:
+        # Create JBIN bundle
+        jbin_data = create_jbin_bundle(
+            expression=expression,
+            audio=audio,
+            expression_sample_rate=expression_sample_rate,
+            audio_sample_rate=audio_sample_rate,
+            batch_id=batch_id,
+            start_of_batch=start_of_batch,
+            end_of_batch=end_of_batch
+        )
+
+        # Send as binary
+        await ws.send_bytes(jbin_data)
+
+        audio_duration = len(audio) / audio_sample_rate
+        print(f"[WebSocket] Sent JBIN bundle: {len(expression)} frames, {audio_duration:.2f}s audio, batch={batch_id}, start={start_of_batch}, end={end_of_batch}")
+
+    except Exception as e:
+        print(f"[WebSocket] Failed to send bundle: {e}")
+
+
+# Legacy JSON-only send (for backward compatibility)
 async def send_expression_to_ws(ws: WebSocket, expression: np.ndarray, session_id: str, is_final: bool, frame_rate: int = 30):
-    """Send expression data to WebSocket client with frame rate info"""
+    """Send expression data to WebSocket client with frame rate info (legacy JSON format)"""
     try:
         data = {
             "type": "expression",
             "session_id": session_id,
             "channels": ARKIT_CHANNELS,
             "weights": expression.tolist(),
-            "frame_rate": frame_rate,  # Frames per second for playback sync
-            "frame_count": len(expression),  # Total number of frames
+            "frame_rate": frame_rate,
+            "frame_count": len(expression),
             "is_final": is_final,
             "timestamp": time.time()
         }
@@ -303,42 +485,70 @@ async def send_expression_to_ws(ws: WebSocket, expression: np.ndarray, session_i
 
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
-    """WebSocket endpoint for real-time expression data streaming"""
+    """WebSocket endpoint for real-time bundled audio+expression streaming"""
     await websocket.accept()
     active_connections[session_id] = websocket
     print(f"[WebSocket] Client connected: {session_id}")
 
     try:
         while True:
-            # Receive messages from client (e.g., for streaming audio)
+            # Receive messages from client
             data = await websocket.receive_text()
             message = json.loads(data)
 
             if message.get("type") == "audio":
-                # Process streaming audio
+                # Process streaming audio and send bundled response
                 audio_base64 = message.get("audio")
                 if audio_base64:
                     audio_bytes = base64.b64decode(audio_base64)
                     audio_int16 = np.frombuffer(audio_bytes, dtype=np.int16)
                     audio_float = audio_int16.astype(np.float32) / 32768.0
 
+                    # Manage batch IDs
+                    is_start = message.get("is_start", False)
+                    is_final = message.get("is_final", False)
+
+                    if is_start or session_id not in session_batch_ids:
+                        session_batch_ids[session_id] = session_batch_ids.get(session_id, 0) + 1
+                        session_chunk_counts[session_id] = 0
+
+                    batch_id = session_batch_ids[session_id]
+                    session_chunk_counts[session_id] += 1
+                    chunk_is_start = session_chunk_counts[session_id] == 1
+
                     expression, _ = engine.process_audio(audio_float)
                     if expression is not None:
-                        await send_expression_to_ws(
+                        await send_bundled_to_ws(
                             websocket,
                             expression,
+                            audio_int16,
                             session_id,
-                            message.get("is_final", False)
+                            batch_id=batch_id,
+                            start_of_batch=chunk_is_start,
+                            end_of_batch=is_final
                         )
 
             elif message.get("type") == "ping":
                 await websocket.send_json({"type": "pong"})
+
+            elif message.get("type") == "reset":
+                # Reset batch tracking for this session
+                if session_id in session_batch_ids:
+                    del session_batch_ids[session_id]
+                if session_id in session_chunk_counts:
+                    del session_chunk_counts[session_id]
+                print(f"[WebSocket] Session reset: {session_id}")
 
     except WebSocketDisconnect:
         print(f"[WebSocket] Client disconnected: {session_id}")
     finally:
         if session_id in active_connections:
             del active_connections[session_id]
+        # Clean up session state
+        if session_id in session_batch_ids:
+            del session_batch_ids[session_id]
+        if session_id in session_chunk_counts:
+            del session_chunk_counts[session_id]
 
 
 if __name__ == "__main__":
