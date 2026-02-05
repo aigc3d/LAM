@@ -251,6 +251,11 @@ class LAMAvatarController {
   private ttsPauseHandler: (() => void) | null = null;
   private ttsEndedHandler: (() => void) | null = null;
 
+  // ★ TTS状態を自分で追跡（pausedプロパティは信頼できない）
+  // pauseイベントがplayの直後に発火することがあるため
+  private ttsActive: boolean = false;
+  private ttsLastCurrentTime: number = 0;
+
   /**
    * Set the external TTS player for sync
    * Call this to link the LAMAvatar with an external audio element
@@ -275,17 +280,22 @@ class LAMAvatarController {
     // Create bound handlers
     this.ttsPlayHandler = () => {
       console.log('[LAM External] TTS play event');
+      this.ttsActive = true;  // ★ 自分で追跡
+      this.ttsLastCurrentTime = player.currentTime;
       this.externalTtsStartTime = Date.now() - (player.currentTime * 1000);
       this.startFramePlaybackFromQueue();
     };
 
     this.ttsPauseHandler = () => {
-      console.log('[LAM External] TTS pause event');
-      // Don't stop playback on pause - may resume
+      console.log('[LAM External] TTS pause event, currentTime=' + player.currentTime.toFixed(3));
+      // ★ pauseイベントではttsActiveをfalseにしない
+      // バッファリングやブラウザの挙動で一時的なpauseが発生するため
+      // 明示的にstopTtsSync()を呼ぶか、endedイベントで終了する
     };
 
     this.ttsEndedHandler = () => {
       console.log('[LAM External] TTS ended event');
+      this.ttsActive = false;  // ★ 終了時のみfalseにする
       this.stopFramePlayback();
     };
 
@@ -600,10 +610,20 @@ class LAMAvatarController {
 
     // ★★★ TTS同期モード: 外部プレーヤーの再生位置に基づいてフレームを取得 ★★★
     if (this.syncMode === 'external' && this.externalTtsPlayer && this.frameBuffer.length > 0) {
-      // プレーヤーが再生中かチェック
-      if (!this.externalTtsPlayer.paused && !this.externalTtsPlayer.ended) {
-        const currentTimeMs = this.externalTtsPlayer.currentTime * 1000;
-        const frameIndex = Math.floor((currentTimeMs / 1000) * this.frameRate);
+      // ★ 修正: pausedプロパティではなく、自分で追跡したttsActiveフラグを使用
+      // pauseイベントがplayの直後に発火することがあるため、pausedは信頼できない
+      const currentTimeMs = this.externalTtsPlayer.currentTime * 1000;
+
+      // TTS同期が有効な条件:
+      // 1. ttsActiveがtrue（playイベント後、endedイベント前）
+      // 2. OR currentTimeが進んでいる（実際に音声が再生されている）
+      // ★ ttsActiveがtrueならcurrentTimeが0でも同期開始（再生直後）
+      const isSyncActive = this.ttsActive || (currentTimeMs > 0 && !this.externalTtsPlayer.ended);
+
+      if (isSyncActive) {
+        // currentTimeがまだ0でもframe 0を使用
+        const effectiveTimeMs = Math.max(0, currentTimeMs);
+        const frameIndex = Math.floor((effectiveTimeMs / 1000) * this.frameRate);
 
         if (frameIndex >= 0 && frameIndex < this.frameBuffer.length) {
           // ★ 公式と同じ: 毎回新しいオブジェクトを作成
@@ -618,13 +638,17 @@ class LAMAvatarController {
             this.lastLoggedFrameIndex = frameIndex;
             const jaw = this.expressionData['jawOpen'] || 0;
             const mouth = this.expressionData['mouthLowerDownLeft'] || 0;
-            console.log(`[LAM TTS-Sync] Frame ${frameIndex}/${this.frameBuffer.length}: jaw=${jaw.toFixed(3)}, mouth=${mouth.toFixed(3)}, ttsTime=${currentTimeMs.toFixed(0)}ms`);
+            const paused = this.externalTtsPlayer.paused;
+            console.log(`[LAM TTS-Sync] Frame ${frameIndex}/${this.frameBuffer.length}: jaw=${jaw.toFixed(3)}, mouth=${mouth.toFixed(3)}, ttsTime=${effectiveTimeMs.toFixed(0)}ms, ttsActive=${this.ttsActive}, paused=${paused}`);
           }
 
           // 状態をRespondingに設定
           if (this.currentState !== 'Responding') {
             this.setChatState('Responding');
           }
+
+          // currentTimeの進行を追跡
+          this.ttsLastCurrentTime = this.externalTtsPlayer.currentTime;
 
           return this.expressionData;
         } else if (frameIndex >= this.frameBuffer.length) {
@@ -637,9 +661,12 @@ class LAMAvatarController {
             });
           }
         }
-      } else if (this.externalTtsPlayer.ended && this.frameBuffer.length > 0) {
-        // TTS終了 - フレームバッファをクリアしてIdleに戻る
+      }
+
+      // TTS終了検出
+      if (this.externalTtsPlayer.ended && this.frameBuffer.length > 0) {
         console.log('[LAM TTS-Sync] TTS ended, resetting expression');
+        this.ttsActive = false;
         this.frameBuffer = [];
         this.resetExpression();
         if (this.currentState !== 'Idle') {
@@ -687,8 +714,8 @@ class LAMAvatarController {
     // デフォルト: 何も再生していない場合
     if (this.getExpCallCount % 100 === 0) {
       const hasBuffer = this.frameBuffer.length > 0;
-      const ttsPlaying = this.externalTtsPlayer ? !this.externalTtsPlayer.paused : false;
-      console.log(`[LAM getExpressionData] Called ${this.getExpCallCount}x, buffer=${hasBuffer}, ttsPlaying=${ttsPlaying}, isPlaying=${this.isPlayingFrames}`);
+      const ttsTime = this.externalTtsPlayer ? this.externalTtsPlayer.currentTime.toFixed(2) : 'N/A';
+      console.log(`[LAM getExpressionData] Called ${this.getExpCallCount}x, buffer=${hasBuffer}, ttsActive=${this.ttsActive}, ttsTime=${ttsTime}s, isPlaying=${this.isPlayingFrames}`);
     }
 
     return this.expressionData;
@@ -748,7 +775,18 @@ class LAMAvatarController {
     this.frameBuffer = [];
     this.frameQueue = [];
     this.lastLoggedFrameIndex = -1;
+    this.ttsActive = false;  // ★ リセット
+    this.ttsLastCurrentTime = 0;
     console.log('[LAM Avatar] Frame buffer cleared');
+  }
+
+  /**
+   * Stop TTS sync manually (call when TTS is interrupted)
+   */
+  public stopTtsSync(): void {
+    console.log('[LAM Avatar] stopTtsSync called');
+    this.ttsActive = false;
+    this.stopFramePlayback();
   }
 
   // Get WebSocket manager for advanced usage
