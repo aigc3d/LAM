@@ -244,7 +244,7 @@ class Audio2ExpressionEngine:
 
     def _mock_expression(self, audio: np.ndarray, frame_rate: int = 30) -> np.ndarray:
         """
-        Generate mock expression data based on audio amplitude.
+        Generate mock expression data based on audio amplitude with dynamic variation.
         Generates multiple frames for proper lip sync animation.
 
         Args:
@@ -258,8 +258,6 @@ class Audio2ExpressionEngine:
             return np.zeros((1, 52), dtype=np.float32)
 
         # Calculate number of frames based on audio duration
-        # Audio is 16kHz, so samples / 16000 = duration in seconds
-        # frames = duration * frame_rate
         samples_per_frame = self.sample_rate // frame_rate  # 16000 / 30 = ~533 samples
         num_frames = max(1, len(audio) // samples_per_frame)
 
@@ -270,29 +268,58 @@ class Audio2ExpressionEngine:
         mouth_dimple_right_idx = ARKIT_CHANNELS.index("mouthDimpleRight")
         jaw_open_idx = ARKIT_CHANNELS.index("jawOpen")
         mouth_funnel_idx = ARKIT_CHANNELS.index("mouthFunnel")
+        mouth_pucker_idx = ARKIT_CHANNELS.index("mouthPucker")
+        mouth_smile_left_idx = ARKIT_CHANNELS.index("mouthSmileLeft")
+        mouth_smile_right_idx = ARKIT_CHANNELS.index("mouthSmileRight")
 
         # Create expression array for all frames
         expression = np.zeros((num_frames, 52), dtype=np.float32)
 
+        # Collect RMS values for normalization
+        rms_values = []
         for frame_idx in range(num_frames):
-            # Get audio window for this frame
             start_sample = frame_idx * samples_per_frame
             end_sample = min(start_sample + samples_per_frame, len(audio))
             audio_window = audio[start_sample:end_sample]
-
-            # Calculate RMS for this window
             rms = np.sqrt(np.mean(audio_window ** 2)) if len(audio_window) > 0 else 0
+            rms_values.append(rms)
 
-            # Scale to mouth value (0.0 - 0.7)
-            mouth_value = min(rms * 3.0, 0.7)
+        # Normalize RMS to use full dynamic range
+        rms_array = np.array(rms_values)
+        rms_min = rms_array.min()
+        rms_max = rms_array.max()
+        rms_range = rms_max - rms_min if rms_max > rms_min else 1.0
+
+        for frame_idx in range(num_frames):
+            # Normalize RMS to 0-1 range for this audio clip
+            normalized_rms = (rms_values[frame_idx] - rms_min) / rms_range
+
+            # Add speech-like variation using sine waves at different frequencies
+            time_factor = frame_idx / frame_rate
+            variation1 = 0.3 * np.sin(2 * np.pi * 3.5 * time_factor)  # ~3.5 Hz syllable rate
+            variation2 = 0.2 * np.sin(2 * np.pi * 7.0 * time_factor)  # Higher frequency detail
+            variation3 = 0.1 * np.sin(2 * np.pi * 1.5 * time_factor)  # Slower breathing pattern
+
+            # Combine normalized amplitude with speech variation
+            base_value = normalized_rms * 0.5 + 0.1  # Base range 0.1-0.6
+            mouth_value = base_value + variation1 * normalized_rms
+            mouth_value = np.clip(mouth_value, 0.0, 0.7)
+
+            # Jaw has different timing (slightly delayed, lower frequency)
+            jaw_variation = 0.15 * np.sin(2 * np.pi * 2.5 * time_factor + 0.3)
+            jaw_value = normalized_rms * 0.25 + jaw_variation * normalized_rms
+            jaw_value = np.clip(jaw_value, 0.0, 0.4)
 
             # Apply expressions for this frame
             expression[frame_idx, mouth_lower_down_left_idx] = mouth_value
             expression[frame_idx, mouth_lower_down_right_idx] = mouth_value
-            expression[frame_idx, mouth_dimple_left_idx] = mouth_value * 0.5
-            expression[frame_idx, mouth_dimple_right_idx] = mouth_value * 0.5
-            expression[frame_idx, jaw_open_idx] = mouth_value * 0.15
-            expression[frame_idx, mouth_funnel_idx] = mouth_value * 0.05
+            expression[frame_idx, mouth_dimple_left_idx] = mouth_value * 0.3
+            expression[frame_idx, mouth_dimple_right_idx] = mouth_value * 0.3
+            expression[frame_idx, jaw_open_idx] = jaw_value
+            expression[frame_idx, mouth_funnel_idx] = mouth_value * 0.2 + variation2 * 0.1
+            expression[frame_idx, mouth_pucker_idx] = max(0, variation3 * 0.15)
+            expression[frame_idx, mouth_smile_left_idx] = max(0, variation1 * 0.1)
+            expression[frame_idx, mouth_smile_right_idx] = max(0, variation1 * 0.1)
 
         return expression
 
