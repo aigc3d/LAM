@@ -4,7 +4,9 @@ websockets>=11.0
 numpy>=1.24.0
 pydantic>=2.0.0
 
-# For Audio2Expression (optional - will run in mock mode without these)
-# torch>=2.0.0
-# librosa>=0.10.0
-# onnxruntime>=1.15.0
+# For Audio2Expression (required for real lip sync)
+torch>=2.0.0
+transformers>=4.36.0
+librosa>=0.10.0
+omegaconf>=2.3.0
+addict>=2.4.0

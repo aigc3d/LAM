@@ -27,10 +27,25 @@ import uvicorn
 
 # Add LAM_Audio2Expression to path
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-LAM_A2E_PATH = os.path.join(SCRIPT_DIR, "..", "LAM_Audio2Expression")
-if os.path.exists(LAM_A2E_PATH):
+
+# Check multiple possible locations for LAM_Audio2Expression
+LAM_A2E_CANDIDATES = [
+    os.environ.get("LAM_A2E_PATH"),  # Environment variable takes priority
+    os.path.join(SCRIPT_DIR, "..", "LAM_Audio2Expression"),  # Original location
+    os.path.join(SCRIPT_DIR, "..", "OpenAvatarChat", "src", "handlers", "avatar", "lam", "LAM_Audio2Expression"),  # OpenAvatarChat submodule
+]
+
+LAM_A2E_PATH = None
+for candidate in LAM_A2E_CANDIDATES:
+    if candidate and os.path.exists(candidate):
+        LAM_A2E_PATH = os.path.abspath(candidate)
+        break
+
+if LAM_A2E_PATH:
     sys.path.insert(0, LAM_A2E_PATH)
     print(f"[Audio2Expression] Added LAM_Audio2Expression to path: {LAM_A2E_PATH}")
+else:
+    print("[Audio2Expression] LAM_Audio2Expression not found in any of the expected locations")
 
 app = FastAPI(title="Audio2Expression Service")
 
@@ -163,9 +178,13 @@ class Audio2ExpressionEngine:
         self.initialized = False
         self.sample_rate = 16000
 
-    def initialize(self, model_path: str = None):
+    def initialize(self, model_path: str = None, wav2vec_path: str = None):
         """Initialize the Audio2Expression model"""
         if self.initialized:
+            return
+
+        if LAM_A2E_PATH is None:
+            print("[Audio2Expression] LAM_Audio2Expression not found, cannot initialize")
             return
 
         try:
@@ -174,25 +193,58 @@ class Audio2ExpressionEngine:
 
             config_file = os.path.join(LAM_A2E_PATH, "configs", "lam_audio2exp_config_streaming.py")
 
-            # Default weight path in cloned repo
-            default_weight_path = os.path.join(LAM_A2E_PATH, "pretrained_models", "lam_audio2exp_flow")
-            weight_path = model_path or default_weight_path
+            # Model paths - check multiple locations
+            weight_candidates = [
+                model_path,  # Explicit path
+                os.environ.get("LAM_WEIGHT_PATH"),  # Environment variable
+                os.path.join(SCRIPT_DIR, "..", "OpenAvatarChat", "models", "LAM_audio2exp", "pretrained_models", "lam_audio2exp_streaming.tar"),
+                os.path.join(LAM_A2E_PATH, "pretrained_models", "lam_audio2exp_streaming.tar"),
+            ]
+            weight_path = None
+            for candidate in weight_candidates:
+                if candidate and os.path.exists(candidate):
+                    weight_path = os.path.abspath(candidate)
+                    break
+
+            if not weight_path:
+                print("[Audio2Expression] Model weights not found")
+                return
+
+            # wav2vec2 path - check multiple locations
+            wav2vec_candidates = [
+                wav2vec_path,  # Explicit path
+                os.environ.get("WAV2VEC_PATH"),  # Environment variable
+                os.path.join(SCRIPT_DIR, "..", "OpenAvatarChat", "models", "wav2vec2-base-960h"),
+            ]
+            wav2vec_model_path = None
+            for candidate in wav2vec_candidates:
+                if candidate and os.path.exists(candidate):
+                    wav2vec_model_path = os.path.abspath(candidate)
+                    break
 
             # wav2vec config path
             wav2vec_config = os.path.join(LAM_A2E_PATH, "configs", "wav2vec2_config.json")
 
             print(f"[Audio2Expression] Config file: {config_file}")
             print(f"[Audio2Expression] Weight path: {weight_path}")
+            print(f"[Audio2Expression] Wav2Vec2 path: {wav2vec_model_path}")
+            print(f"[Audio2Expression] Wav2Vec2 config: {wav2vec_config}")
 
-            # Use default config with weight path
-            cfg = default_config_parser(config_file, {
+            # Build config with model paths
+            cfg_options = {
                 "weight": weight_path,
                 "model": {
                     "backbone": {
                         "wav2vec2_config_path": wav2vec_config,
                     }
                 }
-            })
+            }
+
+            # If we have a local wav2vec2 model, use it
+            if wav2vec_model_path:
+                cfg_options["model"]["backbone"]["pretrained_encoder_path"] = wav2vec_model_path
+
+            cfg = default_config_parser(config_file, cfg_options)
 
             cfg = default_setup(cfg)
             self.infer = INFER.build(dict(type=cfg.infer.type, cfg=cfg))
