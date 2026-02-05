@@ -1,0 +1,356 @@
+---
+// GourmetChat.astro - チャットモード(モード切替機能付き)
+export interface Props {
+  apiBaseUrl?: string;
+}
+
+const { apiBaseUrl = '' } = Astro.props;
+---
+
+<div class="gourmet-chat-container" data-api-base={apiBaseUrl}>
+  <div class="splash-overlay" id="splashOverlay">
+    <video id="splashVideo" class="splash-video" autoplay muted playsinline loop>
+      <source src="/splash.mp4" type="video/mp4">
+    </video>
+    <div class="splash-loading"><div class="spinner"></div><p>Loading...</p></div>
+  </div>
+
+  <div class="wait-overlay hidden" id="waitOverlay">
+    <div class="wait-content">
+      <video id="waitVideo" class="wait-video" muted playsinline loop>
+        <source src="/wait.mp4" type="video/mp4">
+      </video>
+      <p class="wait-text">Thinking...</p>
+    </div>
+  </div>
+
+  <!-- ヘッダーエリア: モード切替 + 言語選択 -->
+  <div class="chat-header-controls">
+    <div class="mode-toggle-wrapper">
+      <label class="switch-label">
+        <span class="label-text">Concierge</span>
+        <div class="toggle-switch">
+          <input type="checkbox" id="modeSwitch">
+          <span class="slider"></span>
+        </div>
+      </label>
+    </div>
+
+    <div class="language-selector">
+      <select id="languageSelect" class="language-dropdown">
+        <option value="ja">日本語</option>
+        <option value="en">English</option>
+        <option value="zh">中文</option>
+        <option value="ko">한국어</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="voice-status stopped" id="voiceStatus">🎤 Ready</div>
+  <div class="chat-area" id="chatArea"></div>
+
+  <div class="input-area">
+    <div class="input-group">
+      <input type="text" id="userInput" placeholder="..." disabled />
+      <button class="btn btn-send-expanded" id="sendBtn">Send</button>
+    </div>
+  </div>
+  
+  <div class="floating-buttons">
+    <button class="btn-floating btn-reservation-float" id="reservationBtnFloat" title="Reservation">
+      📞 予約依頼
+    </button>
+
+    <button class="btn-floating btn-speaker-float" id="speakerBtnFloat" title="Speaker">
+      <span class="speaker-icon"></span>
+    </button>
+
+    <button class="btn-floating btn-stop" id="stopBtn" title="Stop">
+      <img src="/mic-off.svg" alt="Stop" />
+    </button>
+
+    <button class="btn-floating btn-mic-float" id="micBtnFloat" title="Mic">
+      <img src="/mic-on.svg" alt="Mic On" class="icon-mic" />
+      <img src="/mic-off.svg" alt="Mic Off" class="icon-stop" />
+    </button>
+  </div>
+</div>
+
+<style>
+/* 全体レイアウト */
+.gourmet-chat-container { 
+  background: white; 
+  border-radius: 16px; 
+  box-shadow: 0 20px 60px rgba(0,0,0,0.15); 
+  width: 100%; 
+  max-width: 800px; 
+  max-height: 600px; 
+  display: flex; 
+  flex-direction: column; 
+  overflow: hidden; 
+  margin: 0 auto; 
+  position: relative;
+  transition: all 0.5s ease;
+}
+
+/* コンシェルジュモード時のボーダー */
+.gourmet-chat-container.mode-concierge {
+  border: 2px solid #06b6d4;
+}
+
+/* ヘッダーエリア */
+.chat-header-controls {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  transition: background 0.5s ease;
+}
+
+.gourmet-chat-container.mode-concierge .chat-header-controls {
+  background: linear-gradient(135deg, #0891b2 0%, #06b6d4 100%);
+}
+
+.mode-toggle-wrapper { display: flex; align-items: center; }
+.language-selector { display: flex; align-items: center; }
+.language-dropdown { 
+  padding: 6px 12px; 
+  border: 2px solid white; 
+  border-radius: 20px; 
+  background: rgba(255,255,255,0.95); 
+  color: #444; 
+  font-size: 13px; 
+  font-weight: 600; 
+  cursor: pointer; 
+  outline: none; 
+}
+
+/* トグルスイッチ */
+.switch-label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.label-text { color: white; font-size: 12px; font-weight: 600; text-shadow: 0 1px 2px rgba(0,0,0,0.2); }
+.toggle-switch { position: relative; width: 44px; height: 24px; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.slider { 
+  position: absolute; 
+  cursor: pointer; 
+  top: 0; left: 0; right: 0; bottom: 0; 
+  background-color: rgba(0,0,0,0.3); 
+  transition: .4s; 
+  border-radius: 24px; 
+  border: 1px solid rgba(255,255,255,0.4); 
+}
+.slider:before { 
+  position: absolute; 
+  content: ""; 
+  height: 18px; 
+  width: 18px; 
+  left: 2px; 
+  bottom: 2px; 
+  background-color: white; 
+  transition: .4s; 
+  border-radius: 50%; 
+}
+input:checked + .slider { background-color: #06b6d4; }
+input:checked + .slider:before { transform: translateX(20px); }
+
+.voice-status { padding: 10px 15px; text-align: center; font-size: 12px; border-bottom: 1px solid #e0e0e0; font-weight: 500; }
+.voice-status.listening { background: #e8f5e9; color: #2e7d32; animation: pulse 2s infinite; }
+.voice-status.stopped { background: #ffebee; color: #c62828; }
+.voice-status.speaking { background: #e1f5fe; color: #0277bd; animation: pulse 2s infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.8; } }
+
+.chat-area { flex: 1; overflow-y: auto; padding: 20px; background: #f7f9fc; min-height: 300px; }
+:global(.message) { margin-bottom: 16px; display: flex; gap: 10px; }
+:global(.message.assistant) { flex-direction: row; }
+:global(.message.user) { flex-direction: row-reverse; }
+:global(.message-avatar) { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+:global(.message.assistant .message-avatar) { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+:global(.gourmet-chat-container.mode-concierge .message.assistant .message-avatar) {
+  background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%) !important;
+}
+:global(.message.user .message-avatar) { background: #e0e7ff; color: #667eea; }
+:global(.message-content) { max-width: 70%; padding: 10px 14px; border-radius: 12px; line-height: 1.5; font-size: 14px; white-space: pre-wrap; }
+:global(.message.assistant .message-content) { background: white; border: 1px solid #e5e7eb; color: #1f2937; }
+:global(.message.user .message-content) { background: #667eea; color: white; }
+
+.input-area { padding: 16px; background: white; border-top: 1px solid #e5e7eb; }
+.input-group { display: flex; gap: 10px; align-items: center; }
+#userInput { flex: 1; padding: 10px 14px; border: 2px solid #e5e7eb; border-radius: 20px; font-size: 14px; outline: none; transition: border-color 0.2s; }
+#userInput:focus { border-color: #667eea; }
+.btn { padding: 10px 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 20px; font-size: 14px; font-weight: 600; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+.btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-send-expanded { padding: 10px 24px; min-width: 100px; }
+
+.error-message { background: #fee2e2; color: #b91c1c; padding: 10px; border-radius: 8px; margin: 10px 0; font-size: 13px; text-align: center; }
+.splash-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 9999; border-radius: 16px; overflow: hidden; transition: opacity 0.8s ease-out; pointer-events: all; }
+.splash-overlay.fade-out { opacity: 0; pointer-events: none; }
+.splash-overlay.hidden { display: none; }
+.splash-video { width: 100%; height: 100%; object-fit: contain; position: absolute; top: 0; left: 0; transform: scale(0.5); }
+.splash-loading { position: absolute; bottom: 60px; display: flex; flex-direction: column; align-items: center; gap: 12px; z-index: 1; }
+.splash-loading .spinner { width: 40px; height: 40px; border: 4px solid rgba(102, 126, 234, 0.3); border-top-color: #667eea; border-radius: 50%; animation: spin 1s linear infinite; }
+.wait-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255, 255, 255, 0.95); z-index: 500; display: flex; align-items: center; justify-content: center; border-radius: 16px; opacity: 1; transition: opacity 0.5s ease-out, visibility 0.5s; }
+.wait-overlay.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+.wait-content { text-align: center; width: 80%; max-width: 400px; }
+.wait-video { width: 100%; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.1); margin-bottom: 16px; }
+
+/* フローティングボタンの配置 */
+.floating-buttons { 
+  position: fixed; 
+  bottom: 20px; 
+  right: 20px; 
+  display: flex; 
+  gap: 12px; 
+  z-index: 10000;
+  pointer-events: none;
+}
+.floating-buttons > * { pointer-events: auto; }
+
+.btn-floating { 
+  width: 56px; 
+  height: 56px; 
+  border-radius: 50%; 
+  border: none; 
+  font-size: 24px; 
+  cursor: pointer; 
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); 
+  transition: transform 0.2s, box-shadow 0.2s; 
+  display: flex; 
+  align-items: center; 
+  justify-content: center; 
+}
+.btn-floating:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4); }
+
+.btn-reservation-float {
+  width: auto;
+  min-width: 120px;
+  height: 56px;
+  padding: 0 20px;
+  border-radius: 28px;
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+.btn-reservation-float.visible { opacity: 1; pointer-events: auto; }
+.btn-reservation-float:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(245, 158, 11, 0.4); }
+
+.btn-speaker-float { 
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%); 
+  color: white; 
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+  transition: all 0.2s ease;
+}
+.btn-speaker-float .speaker-icon {
+  width: 24px;
+  height: 24px;
+  display: block;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  transition: all 0.3s ease;
+}
+.btn-speaker-float:not(.disabled) .speaker-icon {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z'/%3E%3C/svg%3E");
+}
+.btn-speaker-float.disabled { 
+  background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%); 
+  box-shadow: 0 4px 12px rgba(107, 114, 128, 0.3);
+  opacity: 0.7;
+}
+.btn-speaker-float.disabled .speaker-icon {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73 4.27 3zM12 4L9.91 6.09 12 8.18V4z'/%3E%3C/svg%3E");
+}
+
+.btn-stop { 
+  background: linear-gradient(135deg, #ff3b30 0%, #d32f2f 100%); 
+  color: white;
+  position: relative;
+}
+.btn-stop img { width: 24px; height: 24px; display: none; }
+.btn-stop::before {
+  content: '';
+  width: 20px;
+  height: 20px;
+  background: white;
+  border-radius: 3px;
+  display: block;
+}
+
+.btn-mic-float { 
+  background: linear-gradient(135deg, #e8eef7 0%, #d4dce9 100%); 
+  color: white; 
+  position: relative; 
+  overflow: visible;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15), inset 0 -2px 4px rgba(0, 0, 0, 0.1);
+}
+.btn-mic-float:disabled { cursor: not-allowed; opacity: 0.6; }
+.btn-mic-float img { 
+  width: 56px; 
+  height: 56px; 
+  transition: opacity 0.3s;
+  filter: brightness(0) saturate(100%) invert(68%) sepia(8%) saturate(438%) hue-rotate(182deg) brightness(93%) contrast(88%);
+}
+.btn-mic-float .icon-mic { display: block; }
+.btn-mic-float .icon-stop { display: none; }
+.btn-mic-float.recording { 
+  background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%);
+  box-shadow: 0 4px 20px rgba(74, 144, 226, 0.4), inset 0 -2px 4px rgba(0, 0, 0, 0.2);
+}
+.btn-mic-float.recording img {
+  filter: brightness(0) saturate(100%) invert(100%) sepia(0%) saturate(0%) hue-rotate(0deg) brightness(100%) contrast(100%);
+}
+.btn-mic-float.recording .icon-mic { display: none; }
+.btn-mic-float.recording .icon-stop { display: block; }
+.btn-mic-float.recording::before,
+.btn-mic-float.recording::after { 
+  content: ''; 
+  position: absolute; 
+  width: 100%; 
+  height: 100%; 
+  border-radius: 50%; 
+  border: 3px solid rgba(74, 144, 226, 0.6); 
+  opacity: 0; 
+  top: 0; 
+  left: 0; 
+  box-sizing: border-box;
+  pointer-events: none;
+}
+.btn-mic-float.recording::before { animation: ripple 2s ease-out infinite; }
+.btn-mic-float.recording::after { animation: ripple 2s ease-out infinite 0.6s; }
+@keyframes ripple { 
+  0% { transform: scale(1); opacity: 0.6; border-width: 3px; } 
+  50% { opacity: 0.3; border-width: 2px; }
+  100% { transform: scale(2.2); opacity: 0; border-width: 1px; } 
+}
+
+@media (max-width: 768px) { 
+  .floating-buttons { bottom: 80px; right: 16px; gap: 8px; }
+  .btn-floating { width: 52px; height: 52px; }
+  .btn-reservation-float { min-width: 100px; height: 52px; padding: 0 16px; font-size: 13px; }
+  .btn-speaker-float .speaker-icon { width: 22px; height: 22px; }
+  .btn-mic-float img { width: 52px; height: 52px; }
+}
+
+@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+</style>
+
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+<script>
+  import { ChatController } from '../scripts/chat/chat-controller';
+  document.addEventListener('DOMContentLoaded', () => {
+    const container = document.querySelector('.gourmet-chat-container') as HTMLElement;
+    if (container) {
+      const apiBase = container.dataset.apiBase || '';
+      new ChatController(container, apiBase);
+    }
+  });
+</script>
