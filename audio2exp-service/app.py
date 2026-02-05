@@ -82,7 +82,7 @@ def create_jbin_bundle(
     expression: np.ndarray,
     audio: np.ndarray,
     expression_sample_rate: int = 30,
-    audio_sample_rate: int = 16000,
+    audio_sample_rate: int = 24000,  # Official default from AvatarLAMConfig
     batch_id: int = 0,
     start_of_batch: bool = False,
     end_of_batch: bool = False
@@ -176,7 +176,11 @@ class Audio2ExpressionEngine:
     def __init__(self):
         self.infer = None
         self.initialized = False
-        self.sample_rate = 16000
+        # Internal model sample rate (from lam_audio2exp_config_streaming.py: audio_sr = 16000)
+        self.model_sample_rate = 16000
+        # API input sample rate (from official AvatarLAMConfig: audio_sample_rate = 24000)
+        # The model's infer_streaming_audio handles resampling internally
+        self.input_sample_rate = 24000
 
     def initialize(self, model_path: str = None, wav2vec_path: str = None):
         """Initialize the Audio2Expression model"""
@@ -250,11 +254,11 @@ class Audio2ExpressionEngine:
             self.infer = INFER.build(dict(type=cfg.infer.type, cfg=cfg))
             self.infer.model.eval()
 
-            # Warmup
+            # Warmup with input_sample_rate (model handles resampling internally)
             print("[Audio2Expression] Running warmup inference...")
             self.infer.infer_streaming_audio(
-                audio=np.zeros([self.sample_rate], dtype=np.float32),
-                ssr=self.sample_rate,
+                audio=np.zeros([self.input_sample_rate], dtype=np.float32),
+                ssr=self.input_sample_rate,
                 context=None
             )
 
@@ -267,24 +271,29 @@ class Audio2ExpressionEngine:
             traceback.print_exc()
             print("[Audio2Expression] Running in mock mode")
 
-    def process_audio(self, audio: np.ndarray, context: Optional[Dict] = None) -> tuple:
+    def process_audio(self, audio: np.ndarray, context: Optional[Dict] = None, ssr: int = None) -> tuple:
         """
         Process audio chunk and return expression data
 
         Args:
-            audio: Audio samples (float32, 16kHz)
-            context: Previous inference context for streaming
+            audio: Audio samples (float32)
+            context: Previous inference context for streaming (DEFAULT_CONTEXT structure)
+            ssr: Source sample rate of the audio (default: self.input_sample_rate)
+                 The model will resample internally to model_sample_rate if needed
 
         Returns:
             (expression_data, new_context)
         """
+        if ssr is None:
+            ssr = self.input_sample_rate
+
         if not self.initialized or self.infer is None:
             # Mock mode: generate simple lip movement
             return self._mock_expression(audio), context
 
         result, new_context = self.infer.infer_streaming_audio(
             audio=audio,
-            ssr=self.sample_rate,
+            ssr=ssr,
             context=context
         )
 
@@ -294,34 +303,40 @@ class Audio2ExpressionEngine:
 
         return expression.astype(np.float32), new_context
 
-    def process_full_audio(self, audio: np.ndarray, frame_rate: int = 30) -> np.ndarray:
+    def process_full_audio(self, audio: np.ndarray, sample_rate: int = None, frame_rate: int = 30) -> np.ndarray:
         """
         Process full audio by splitting into chunks for proper streaming inference.
 
-        The LAM Audio2Expression model can only process ~64 frames (~2 seconds) at a time.
-        For longer audio, we need to call the streaming inference multiple times with context.
+        Following official OpenAvatarChat pattern:
+        - Audio is sliced into 1-second chunks (slice_size = sample_rate * 1.0)
+        - Each chunk is processed with streaming context maintained
+        - Model handles resampling internally (ssr -> audio_sr)
 
         Args:
-            audio: Full audio samples (float32, 16kHz)
+            audio: Full audio samples (float32)
+            sample_rate: Audio sample rate (default: self.input_sample_rate = 24000)
             frame_rate: Output frame rate (default 30fps)
 
         Returns:
             Expression array with shape (num_frames, 52)
         """
+        if sample_rate is None:
+            sample_rate = self.input_sample_rate
+
         if not self.initialized or self.infer is None:
             # Mock mode: generate simple lip movement
-            return self._mock_expression(audio, frame_rate)
+            return self._mock_expression(audio, frame_rate, sample_rate)
 
         # Calculate expected output frames
-        audio_duration = len(audio) / self.sample_rate
+        audio_duration = len(audio) / sample_rate
         expected_frames = int(audio_duration * frame_rate)
 
         if expected_frames <= 0:
             return np.zeros((1, 52), dtype=np.float32)
 
-        # Process in chunks of ~1 second (16000 samples at 16kHz)
-        # This allows for proper streaming context to be maintained
-        chunk_samples = self.sample_rate  # 1 second chunks
+        # Process in chunks of 1 second (official: slice_size = audio_sample_rate * 1.0)
+        # This maintains proper streaming context across chunks
+        chunk_samples = sample_rate  # 1 second chunks at input sample rate
 
         all_expressions = []
         context = None
@@ -330,11 +345,12 @@ class Audio2ExpressionEngine:
             end = min(start + chunk_samples, len(audio))
             chunk = audio[start:end]
 
-            # Skip very short chunks
-            if len(chunk) < self.sample_rate // 10:  # Less than 0.1 seconds
+            # Skip very short chunks (less than 0.1 seconds)
+            if len(chunk) < sample_rate // 10:
                 continue
 
-            expression, context = self.process_audio(chunk, context)
+            # Pass sample rate to process_audio for proper resampling
+            expression, context = self.process_audio(chunk, context, ssr=sample_rate)
 
             if expression is not None and len(expression) > 0:
                 all_expressions.append(expression)
@@ -349,23 +365,27 @@ class Audio2ExpressionEngine:
 
         return full_expression.astype(np.float32)
 
-    def _mock_expression(self, audio: np.ndarray, frame_rate: int = 30) -> np.ndarray:
+    def _mock_expression(self, audio: np.ndarray, frame_rate: int = 30, sample_rate: int = None) -> np.ndarray:
         """
         Generate mock expression data based on audio amplitude with dynamic variation.
         Generates multiple frames for proper lip sync animation.
 
         Args:
-            audio: Audio samples (float32, 16kHz)
+            audio: Audio samples (float32)
             frame_rate: Output frame rate (default 30fps)
+            sample_rate: Audio sample rate (default: self.input_sample_rate)
 
         Returns:
             Expression array with shape (num_frames, 52)
         """
+        if sample_rate is None:
+            sample_rate = self.input_sample_rate
+
         if len(audio) == 0:
             return np.zeros((1, 52), dtype=np.float32)
 
         # Calculate number of frames based on audio duration
-        samples_per_frame = self.sample_rate // frame_rate  # 16000 / 30 = ~533 samples
+        samples_per_frame = sample_rate // frame_rate
         num_frames = max(1, len(audio) // samples_per_frame)
 
         # Get channel indices
@@ -444,12 +464,12 @@ session_chunk_counts: Dict[str, int] = {}
 
 class AudioRequest(BaseModel):
     """Request model for audio processing"""
-    audio_base64: str  # Base64 encoded audio (PCM 16-bit, 16kHz or MP3)
+    audio_base64: str  # Base64 encoded audio (PCM 16-bit or MP3)
     session_id: str
     is_start: bool = False  # True for first chunk of a speech
     is_final: bool = False  # True for last chunk of a speech
     audio_format: str = "pcm"  # "pcm" or "mp3"
-    sample_rate: int = 16000  # Audio sample rate
+    sample_rate: int = 24000  # Audio sample rate (official default from AvatarLAMConfig)
 
 
 class ExpressionResponse(BaseModel):
@@ -497,14 +517,18 @@ async def process_audio_endpoint(request: AudioRequest):
         audio_bytes = base64.b64decode(request.audio_base64)
 
         # Handle different audio formats
+        actual_sample_rate = request.sample_rate
         if request.audio_format == "mp3":
             # MP3 needs to be decoded - try using pydub if available
             try:
                 from pydub import AudioSegment
                 import io
                 audio_segment = AudioSegment.from_mp3(io.BytesIO(audio_bytes))
-                audio_segment = audio_segment.set_frame_rate(16000).set_channels(1)
+                # Use the MP3's native sample rate (model handles resampling internally)
+                actual_sample_rate = audio_segment.frame_rate
+                audio_segment = audio_segment.set_channels(1)  # Convert to mono
                 audio_int16 = np.array(audio_segment.get_array_of_samples(), dtype=np.int16)
+                print(f"[Audio2Expression] Decoded MP3: {actual_sample_rate}Hz, {len(audio_int16)} samples")
             except ImportError:
                 # Fallback: assume it's already PCM
                 audio_int16 = np.frombuffer(audio_bytes, dtype=np.int16)
@@ -525,7 +549,8 @@ async def process_audio_endpoint(request: AudioRequest):
         is_start = session_chunk_counts[session_id] == 1
 
         # Process full audio to get expression (handles long audio by chunking)
-        expression = engine.process_full_audio(audio_float)
+        # Pass the actual sample rate so the model can resample internally if needed
+        expression = engine.process_full_audio(audio_float, sample_rate=actual_sample_rate)
 
         if expression is None or len(expression) == 0:
             raise HTTPException(status_code=500, detail="Failed to process audio")
@@ -541,7 +566,7 @@ async def process_audio_endpoint(request: AudioRequest):
                 batch_id=batch_id,
                 start_of_batch=is_start,
                 end_of_batch=request.is_final,
-                audio_sample_rate=request.sample_rate
+                audio_sample_rate=actual_sample_rate
             )
 
         # 公式形式に変換: frames = [{"weights": [...]}, ...]
@@ -571,7 +596,7 @@ async def send_bundled_to_ws(
     start_of_batch: bool,
     end_of_batch: bool,
     expression_sample_rate: int = 30,
-    audio_sample_rate: int = 16000
+    audio_sample_rate: int = 24000  # Official default from AvatarLAMConfig
 ):
     """
     Send BUNDLED audio+expression in JBIN format to WebSocket client.
@@ -643,6 +668,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     audio_int16 = np.frombuffer(audio_bytes, dtype=np.int16)
                     audio_float = audio_int16.astype(np.float32) / 32768.0
 
+                    # Get sample rate from message (default to engine's input rate)
+                    sample_rate = message.get("sample_rate", engine.input_sample_rate)
+
                     # Manage batch IDs
                     is_start = message.get("is_start", False)
                     is_final = message.get("is_final", False)
@@ -655,7 +683,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     session_chunk_counts[session_id] += 1
                     chunk_is_start = session_chunk_counts[session_id] == 1
 
-                    expression, _ = engine.process_audio(audio_float)
+                    # Pass sample rate to process_audio
+                    expression, _ = engine.process_audio(audio_float, ssr=sample_rate)
                     if expression is not None:
                         await send_bundled_to_ws(
                             websocket,
@@ -664,7 +693,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                             session_id,
                             batch_id=batch_id,
                             start_of_batch=chunk_is_start,
-                            end_of_batch=is_final
+                            end_of_batch=is_final,
+                            audio_sample_rate=sample_rate
                         )
 
             elif message.get("type") == "ping":
