@@ -335,81 +335,21 @@ class LAMAvatarController {
     try {
       const GaussianSplats3D = await import('gaussian-splat-renderer-for-lam');
 
+      // ★ 公式と同じ初期化パラメータのみ
       this.renderer = await GaussianSplats3D.GaussianSplatRenderer.getInstance(
         this.canvas,
         this.avatarPath,
         {
           getChatState: () => this.getChatState(),
           getExpressionData: () => this.getExpressionData(),
-          backgroundColor: '0xbae6fd', // Light blue background
-          alpha: 0.0, // Transparent background
-          useFlame: false // ★ Disable FLAME mode to use getExpressionData callback
+          backgroundColor: '0xbae6fd',
+          alpha: 0.0
         }
       );
 
       this.isInitialized = true;
       this.showCanvas();
       console.log('LAM Avatar initialized successfully');
-
-      // デバッグ：レンダラーの状態を詳しく確認
-      setTimeout(() => {
-        try {
-          const renderer = this.renderer as any;
-          const viewer = renderer?.viewer;
-
-          // 1. Check FLAME mode status
-          console.log('[LAM Debug] === Renderer State ===');
-          console.log('[LAM Debug] renderer.useFlame:', renderer?.useFlame);
-          console.log('[LAM Debug] viewer.useFlame:', viewer?.useFlame);
-
-          // 2. Check if renderer has setExpression method
-          console.log('[LAM Debug] renderer.setExpression:', typeof renderer?.setExpression);
-          console.log('[LAM Debug] viewer.setExpression:', typeof viewer?.setExpression);
-
-          // 3. Check flame_params structure
-          if (viewer?.flame_params) {
-            console.log('[LAM Debug] flame_params exists');
-            console.log('[LAM Debug] flame_params.expr length:', viewer.flame_params.expr?.length);
-            if (viewer.flame_params.expr?.[0]) {
-              const firstFrame = viewer.flame_params.expr[0];
-              console.log('[LAM Debug] flame_params.expr[0] type:', typeof firstFrame);
-              console.log('[LAM Debug] flame_params.expr[0] isArray:', Array.isArray(firstFrame));
-              if (typeof firstFrame === 'object' && !Array.isArray(firstFrame)) {
-                console.log('[LAM Debug] flame_params.expr[0] keys sample:', Object.keys(firstFrame).slice(0, 5));
-              } else if (Array.isArray(firstFrame)) {
-                console.log('[LAM Debug] flame_params.expr[0] array length:', firstFrame.length);
-              }
-            }
-          } else {
-            console.log('[LAM Debug] flame_params does NOT exist - getExpressionData callback should be used');
-          }
-
-          // 4. Check current frame
-          console.log('[LAM Debug] viewer.frame:', viewer?.frame);
-
-          // 5. Check splatMesh.bsWeight and morphTargetInfluences
-          if (viewer?.splatMesh) {
-            const splatMesh = viewer.splatMesh;
-            console.log('[LAM Debug] splatMesh.bsWeight type:', typeof splatMesh.bsWeight);
-            console.log('[LAM Debug] splatMesh.morphTargetInfluences:', splatMesh.morphTargetInfluences);
-
-            if (splatMesh.morphTargetDictionary) {
-              const dict = splatMesh.morphTargetDictionary;
-              const mouthKeys = Object.keys(dict).filter(k => k.toLowerCase().includes('mouth') || k.toLowerCase().includes('jaw'));
-              console.log('[LAM Debug] morphTargetDictionary mouth/jaw keys:', mouthKeys);
-              console.log('[LAM Debug] jawOpen index:', dict['jawOpen']);
-              console.log('[LAM Debug] mouthLowerDownLeft index:', dict['mouthLowerDownLeft']);
-            }
-          }
-
-          // 6. List all methods on renderer and viewer
-          console.log('[LAM Debug] renderer methods:', Object.keys(renderer || {}).filter(k => typeof renderer[k] === 'function'));
-          console.log('[LAM Debug] viewer methods:', Object.keys(viewer || {}).filter(k => typeof viewer[k] === 'function'));
-
-        } catch (e) {
-          console.error('[LAM Debug] Error checking renderer state:', e);
-        }
-      }, 2000);
     } catch (error) {
       throw new Error(`Failed to load LAM renderer: ${error}`);
     }
@@ -624,24 +564,8 @@ class LAMAvatarController {
     }, 200);
   }
 
-  /**
-   * Toggle FLAME mode in the renderer
-   * When disabled, the renderer uses our expression data via setExpression()
-   * When enabled, the renderer uses pre-recorded FLAME animation
-   */
-  private setFlameMode(enabled: boolean): void {
-    try {
-      const renderer = this.renderer as any;
-      if (renderer?.viewer) {
-        renderer.viewer.useFlame = enabled;
-        renderer.useFlame = enabled;
-        console.log(`[LAM Avatar] FLAME mode ${enabled ? 'enabled' : 'disabled'}`);
-      }
-    } catch (e) {
-      // Silently ignore
-    }
-  }
-
+  // ★ 公式と同じ: expressionDataを更新するだけ
+  // レンダラーがgetExpressionData()コールバックで自動的に取得する
   private applyFrame(index: number): void {
     if (index >= this.frameBuffer.length) return;
 
@@ -649,9 +573,6 @@ class LAMAvatarController {
     Object.keys(frame).forEach(key => {
       this.expressionData[key] = frame[key];
     });
-
-    // ★ FLAMEモードでもsplatMeshに直接表情を適用
-    this.applyExpressionToMesh();
 
     // Debug log every 10 frames
     if (index % 10 === 0) {
@@ -661,66 +582,11 @@ class LAMAvatarController {
     }
   }
 
-  /**
-   * Apply expression data to the mesh
-   * Try multiple approaches: setExpression(), bsWeight, morphTargetInfluences
-   */
-  private applyExpressionToMesh(): void {
-    try {
-      const renderer = this.renderer as any;
-      if (!renderer?.viewer) return;
-
-      const viewer = renderer.viewer;
-      const splatMesh = viewer.splatMesh;
-
-      // ★ Method 1: Try renderer.setExpression() if it exists
-      if (typeof renderer.setExpression === 'function') {
-        renderer.setExpression(this.expressionData);
-        return; // If this works, no need for other methods
-      }
-
-      // ★ Method 2: Try viewer.setExpression() if it exists
-      if (typeof viewer.setExpression === 'function') {
-        viewer.setExpression(this.expressionData);
-        return;
-      }
-
-      // ★ Method 3: Set bsWeight on splatMesh
-      if (splatMesh) {
-        splatMesh.bsWeight = { ...this.expressionData };
-
-        // ★ Method 4: Also try morphTargetInfluences if it exists (Three.js standard)
-        if (splatMesh.morphTargetInfluences && splatMesh.morphTargetDictionary) {
-          const dict = splatMesh.morphTargetDictionary;
-          Object.keys(this.expressionData).forEach(key => {
-            const index = dict[key];
-            if (index !== undefined && index < splatMesh.morphTargetInfluences.length) {
-              splatMesh.morphTargetInfluences[index] = this.expressionData[key];
-            }
-          });
-        }
-      }
-
-      // ★ Method 5: Set on renderer's expressionData for callback consistency
-      if (renderer.expressionData) {
-        Object.assign(renderer.expressionData, this.expressionData);
-      }
-
-    } catch (e) {
-      console.error('[LAM Apply] Error:', e);
-    }
-  }
-
   private resetExpression(): void {
     // Reset all expression channels to 0
     ARKIT_CHANNEL_NAMES.forEach(name => {
       this.expressionData[name] = 0;
     });
-    // Apply reset to mesh (this will inject zeros into flame_params['expr'])
-    this.applyExpressionToMesh();
-
-    // Also try to restore original flame animation data
-    // The next frame from the animation loop will continue normally
     console.log('[LAM Avatar] Expression reset to neutral');
   }
 
@@ -739,21 +605,9 @@ class LAMAvatarController {
     }));
   }
 
-  private getExpressionCallCount = 0;
-
+  // ★ 公式と同じ: 現在の表情データを返すだけ
   public getExpressionData(): ExpressionData {
-    // レンダラーがオブジェクトを変更するため、コピーを返す（値の爆発を防止）
-    const data = { ...this.expressionData };
-
-    // Debug: Count and log calls from renderer (every 30 calls = ~1 second at 30fps)
-    this.getExpressionCallCount++;
-    if (this.getExpressionCallCount % 30 === 0) {
-      const jaw = data['jawOpen'] || 0;
-      const mouthLD = data['mouthLowerDownLeft'] || 0;
-      console.log(`[LAM getExpressionData] Renderer poll #${this.getExpressionCallCount}: jaw=${jaw.toFixed(3)}, mouthLD=${mouthLD.toFixed(3)}, playing=${this.isPlayingFrames}`);
-    }
-
-    return data;
+    return this.expressionData;
   }
 
   public setExpressionData(data: ExpressionData) {
