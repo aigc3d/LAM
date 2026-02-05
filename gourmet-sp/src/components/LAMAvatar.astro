@@ -160,6 +160,11 @@ class LAMAvatarController {
   private expressionData: ExpressionData = createDefaultExpressionData();
   private isInitialized = false;
 
+  // ★ 公式テストモード: test_expression_1s.json でループ再生
+  private testMode: boolean = true;  // true でテストモード有効
+  private testBsData: any = null;
+  private testStartTime: number = 0;
+
   // Sync modes:
   // - 'bundled': Official approach - audio + expression bundled from WebSocket
   // - 'external': Hybrid approach - external TTS player + expression from WebSocket
@@ -336,6 +341,18 @@ class LAMAvatarController {
     try {
       const GaussianSplats3D = await import('gaussian-splat-renderer-for-lam');
 
+      // ★ テストモード: 公式test_expression_1s.jsonを読み込む
+      if (this.testMode) {
+        try {
+          const response = await fetch('/avatar/test_expression_1s.json');
+          this.testBsData = await response.json();
+          console.log(`[LAM TEST] Loaded test_expression_1s.json: ${this.testBsData.frames.length} frames`);
+        } catch (e) {
+          console.error('[LAM TEST] Failed to load test data:', e);
+          this.testMode = false;
+        }
+      }
+
       // ★ 公式と同じ: .bind(this) 形式
       this.renderer = await GaussianSplats3D.GaussianSplatRenderer.getInstance(
         this.canvas,
@@ -348,9 +365,16 @@ class LAMAvatarController {
         }
       );
 
+      // ★ 公式と同じ: レンダラー初期化直後にstartTime設定
+      this.testStartTime = performance.now() / 1000;
+
       this.isInitialized = true;
       this.showCanvas();
       console.log('LAM Avatar initialized successfully');
+
+      if (this.testMode) {
+        console.log('[LAM TEST] Test mode enabled - looping test_expression_1s.json');
+      }
     } catch (error) {
       throw new Error(`Failed to load LAM renderer: ${error}`);
     }
@@ -578,9 +602,31 @@ class LAMAvatarController {
   public getExpressionData() {
     this.getExpCallCount++;
 
-    // 再生中でない場合はデフォルト表情を返す
+    // ★★★ テストモード: 公式と完全に同じループ再生 ★★★
+    if (this.testMode && this.testBsData) {
+      const length = this.testBsData.frames.length;
+      const frameInfoInternal = 1.0 / 30.0;
+      const currentTime = performance.now() / 1000;
+      const calcDelta = (currentTime - this.testStartTime) % (length * frameInfoInternal);
+      const frameIndex = Math.floor(calcDelta / frameInfoInternal);
+
+      this.expressionData = {};
+      this.testBsData.names.forEach((name: string, index: number) => {
+        this.expressionData[name] = this.testBsData.frames[frameIndex].weights[index];
+      });
+
+      // 30フレームごとにログ（1秒に1回）
+      if (this.getExpCallCount % 30 === 0) {
+        const jaw = this.expressionData['jawOpen'] || 0;
+        const mouth = this.expressionData['mouthLowerDownLeft'] || 0;
+        console.log(`[LAM TEST] Frame ${frameIndex}/${length}: jaw=${jaw.toFixed(3)}, mouth=${mouth.toFixed(3)}`);
+      }
+
+      return this.expressionData;
+    }
+
+    // 通常モード: 再生中でない場合はデフォルト表情を返す
     if (!this.isPlayingFrames || this.frameBuffer.length === 0) {
-      // 100回に1回ログ出力（呼ばれているか確認）
       if (this.getExpCallCount % 100 === 0) {
         console.log(`[LAM getExpressionData] Called ${this.getExpCallCount}x, not playing`);
       }
