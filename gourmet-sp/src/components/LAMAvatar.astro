@@ -672,13 +672,15 @@ class LAMAvatarController {
         }
       }
 
-      // TTS終了検出
-      if (this.externalTtsPlayer.ended && this.frameBuffer.length > 0) {
-        console.log('[LAM TTS-Sync] TTS ended, resetting expression');
-        this.ttsActive = false;
-        this.frameBuffer = [];
-        this.resetExpression();
-        if (this.currentState !== 'Idle') {
+      // ★ TTS終了検出（バッファはクリアしない - 複数セグメント対応）
+      // バッファのクリアは concierge-controller が新しいスピーチ開始時に行う
+      // ここではフレームバッファが使い切られた場合のみリセット
+      if (this.externalTtsPlayer.ended && !this.ttsActive) {
+        // ttsActiveがfalse（endedイベントで設定）かつendedの場合
+        // 次のセグメントがなければニュートラルに戻す
+        if (this.currentState === 'Responding') {
+          console.log('[LAM TTS-Sync] TTS ended and no active playback, resetting to idle');
+          this.resetExpression();
           this.setChatState('Idle');
         }
       }

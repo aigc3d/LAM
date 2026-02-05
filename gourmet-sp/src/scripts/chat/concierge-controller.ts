@@ -294,14 +294,15 @@ export class ConciergeController extends CoreController {
    * 公式リップシンク: TTS音声をaudio2exp-serviceに送信
    * 表情データを受け取り、LAMAvatarのキューに追加
    *
-   * ★ 修正: isStart時にframeBufferをクリアして新しいスピーチに備える
+   * ★ isStart=true の場合のみバッファをクリア（新しいスピーチの開始）
+   * 残りのセグメントは呼び出し元で明示的にクリアする
    */
   private async sendAudioToExpression(audioBase64: string, isStart: boolean = false, isFinal: boolean = false): Promise<void> {
     if (!this.sessionId) return;
 
     const lamController = (window as any).lamAvatarController;
 
-    // ★ 新しいスピーチの開始時はframeBufferをクリア
+    // ★ 新しいスピーチの開始時のみバッファをクリア
     if (isStart && lamController && typeof lamController.clearFrameBuffer === 'function') {
       lamController.clearFrameBuffer();
       console.log('[Concierge] Cleared frame buffer for new speech');
@@ -505,6 +506,8 @@ export class ConciergeController extends CoreController {
         })();
 
         // 残りのセンテンスのTTS生成（並行開始）
+        // ★ 表情APIは並列呼び出しせず、再生直前に呼び出す（フレームバッファ競合防止）
+        let remainingAudioBase64: string | null = null;
         if (remainingSentences.trim().length > 0) {
           remainingAudioPromise = (async () => {
             const cleanText = this.stripMarkdown(remainingSentences);
@@ -520,8 +523,8 @@ export class ConciergeController extends CoreController {
             });
             const result = await response.json();
             if (result.success && result.audio) {
-              // ★ 表情データを先に取得（同期のため）
-              await this.sendAudioToExpression(result.audio, false, true);
+              // ★ 表情APIはここでは呼ばず、audio_base64を保存
+              remainingAudioBase64 = result.audio;
               return `data:audio/mp3;base64,${result.audio}`;
             }
             return null;
@@ -534,6 +537,9 @@ export class ConciergeController extends CoreController {
           if (firstSentenceAudio) {
             const firstSentenceText = this.stripMarkdown(firstSentence);
             this.lastAISpeech = this.normalizeText(firstSentenceText);
+
+            // ★ 最初のセンテンスのフレームはsendAudioToExpression内で既に追加済み
+            // 残りのセンテンスは再生直前に表情APIを呼ぶため、ここではクリア不要
 
             this.stopCurrentAudio();
             this.ttsPlayer.src = firstSentenceAudio;
@@ -552,11 +558,18 @@ export class ConciergeController extends CoreController {
             // ★残りのセンテンスの音声が完成したら続けて再生
             if (remainingAudioPromise) {
               const remainingAudio = await remainingAudioPromise;
-              if (remainingAudio) {
+              if (remainingAudio && remainingAudioBase64) {
                 const remainingText = this.stripMarkdown(remainingSentences);
                 this.lastAISpeech = this.normalizeText(remainingText);
 
                 await new Promise(r => setTimeout(r, 300)); // 短い間隔
+
+                // ★ 再生直前に表情APIを呼び出す（フレームバッファをこのセグメント用にクリア＆セット）
+                const lamController = (window as any).lamAvatarController;
+                if (lamController && typeof lamController.clearFrameBuffer === 'function') {
+                  lamController.clearFrameBuffer();
+                }
+                await this.sendAudioToExpression(remainingAudioBase64, false, true);
 
                 this.stopCurrentAudio();
                 this.ttsPlayer.src = remainingAudio;
