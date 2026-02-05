@@ -336,13 +336,13 @@ class LAMAvatarController {
     try {
       const GaussianSplats3D = await import('gaussian-splat-renderer-for-lam');
 
-      // ★ 公式と同じ初期化パラメータのみ
+      // ★ 公式と同じ: .bind(this) 形式
       this.renderer = await GaussianSplats3D.GaussianSplatRenderer.getInstance(
         this.canvas,
         this.avatarPath,
         {
-          getChatState: () => this.getChatState(),
-          getExpressionData: () => this.getExpressionData(),
+          getChatState: this.getChatState.bind(this),
+          getExpressionData: this.getExpressionData.bind(this),
           backgroundColor: '0xbae6fd',
           alpha: 0.0
         }
@@ -574,9 +574,16 @@ class LAMAvatarController {
   }
 
   // ★ 公式 gaussianAvatar.ts の getArkitFaceFrame() を正確にコピー
+  private getExpCallCount = 0;
   public getExpressionData() {
+    this.getExpCallCount++;
+
     // 再生中でない場合はデフォルト表情を返す
     if (!this.isPlayingFrames || this.frameBuffer.length === 0) {
+      // 100回に1回ログ出力（呼ばれているか確認）
+      if (this.getExpCallCount % 100 === 0) {
+        console.log(`[LAM getExpressionData] Called ${this.getExpCallCount}x, not playing`);
+      }
       return this.expressionData;
     }
 
@@ -600,6 +607,14 @@ class LAMAvatarController {
     Object.keys(frame).forEach((name: string) => {
       this.expressionData[name] = frame[name];
     });
+
+    // 10フレームごとにログ
+    if (frameIndex % 10 === 0 && frameIndex !== this.frameIndex) {
+      this.frameIndex = frameIndex;
+      const jaw = this.expressionData['jawOpen'] || 0;
+      const mouth = this.expressionData['mouthLowerDownLeft'] || 0;
+      console.log(`[LAM getExpressionData] Frame ${frameIndex}/${length}: jaw=${jaw.toFixed(3)}, mouth=${mouth.toFixed(3)}`);
+    }
 
     return this.expressionData;
   }
