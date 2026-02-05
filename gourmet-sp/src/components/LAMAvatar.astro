@@ -342,7 +342,8 @@ class LAMAvatarController {
           getChatState: () => this.getChatState(),
           getExpressionData: () => this.getExpressionData(),
           backgroundColor: '0xbae6fd', // Light blue background
-          alpha: 0.0 // Transparent background
+          alpha: 0.0, // Transparent background
+          useFlame: false // ★ Disable FLAME mode to use getExpressionData callback
         }
       );
 
@@ -350,22 +351,58 @@ class LAMAvatarController {
       this.showCanvas();
       console.log('LAM Avatar initialized successfully');
 
-      // デバッグ：レンダラーのmorphTargetDictionaryを確認
+      // デバッグ：レンダラーの状態を詳しく確認
       setTimeout(() => {
         try {
-          const splatMesh = (this.renderer as any)?.viewer?.splatMesh;
+          const renderer = this.renderer as any;
+          const viewer = renderer?.viewer;
+
+          // 1. Check FLAME mode status
+          console.log('[LAM Debug] === Renderer State ===');
+          console.log('[LAM Debug] renderer.useFlame:', renderer?.useFlame);
+          console.log('[LAM Debug] viewer.useFlame:', viewer?.useFlame);
+
+          // 2. Check flame_params structure
+          if (viewer?.flame_params) {
+            console.log('[LAM Debug] flame_params exists');
+            console.log('[LAM Debug] flame_params.expr length:', viewer.flame_params.expr?.length);
+            if (viewer.flame_params.expr?.[0]) {
+              const firstFrame = viewer.flame_params.expr[0];
+              console.log('[LAM Debug] flame_params.expr[0] type:', typeof firstFrame);
+              console.log('[LAM Debug] flame_params.expr[0] isArray:', Array.isArray(firstFrame));
+              if (typeof firstFrame === 'object' && !Array.isArray(firstFrame)) {
+                console.log('[LAM Debug] flame_params.expr[0] keys sample:', Object.keys(firstFrame).slice(0, 5));
+              } else if (Array.isArray(firstFrame)) {
+                console.log('[LAM Debug] flame_params.expr[0] array length:', firstFrame.length);
+              }
+            }
+          } else {
+            console.log('[LAM Debug] flame_params does NOT exist - getExpressionData callback should be used');
+          }
+
+          // 3. Check current frame
+          console.log('[LAM Debug] viewer.frame:', viewer?.frame);
+
+          // 4. Check splatMesh.bsWeight
+          if (viewer?.splatMesh?.bsWeight) {
+            const bsWeight = viewer.splatMesh.bsWeight;
+            console.log('[LAM Debug] splatMesh.bsWeight type:', typeof bsWeight);
+            console.log('[LAM Debug] splatMesh.bsWeight isArray:', Array.isArray(bsWeight));
+            if (typeof bsWeight === 'object' && !Array.isArray(bsWeight)) {
+              console.log('[LAM Debug] bsWeight keys sample:', Object.keys(bsWeight).slice(0, 5));
+              console.log('[LAM Debug] bsWeight.jawOpen:', bsWeight.jawOpen);
+            }
+          }
+
+          // 5. Check morphTargetDictionary
+          const splatMesh = viewer?.splatMesh;
           if (splatMesh?.morphTargetDictionary) {
             const dict = splatMesh.morphTargetDictionary;
             const mouthKeys = Object.keys(dict).filter(k => k.toLowerCase().includes('mouth') || k.toLowerCase().includes('jaw'));
             console.log('[LAM Debug] morphTargetDictionary mouth/jaw keys:', mouthKeys);
-            console.log('[LAM Debug] mouthLowerDownLeft index:', dict['mouthLowerDownLeft']);
-            console.log('[LAM Debug] mouthLowerDownRight index:', dict['mouthLowerDownRight']);
-            console.log('[LAM Debug] jawOpen index:', dict['jawOpen']);
-          } else {
-            console.log('[LAM Debug] No morphTargetDictionary found on splatMesh');
           }
         } catch (e) {
-          console.error('[LAM Debug] Error checking morphTargetDictionary:', e);
+          console.error('[LAM Debug] Error checking renderer state:', e);
         }
       }, 2000);
     } catch (error) {
@@ -631,20 +668,36 @@ class LAMAvatarController {
       const viewer = renderer.viewer;
       const currentFrame = viewer.frame ?? 0;
 
+      // Check if FLAME mode is being used
+      const useFlame = viewer.useFlame;
+
       // ★ Inject our expression data into flame_params['expr'] at current and next frames
       // This ensures updateFlameBones() reads our lip sync data
-      if (viewer.flame_params?.expr) {
+      if (useFlame && viewer.flame_params?.expr) {
         const totalFrames = viewer.flame_params.expr.length;
-        // Override current frame and a few nearby frames for safety
-        for (let offset = 0; offset < 5; offset++) {
-          const frameIdx = (currentFrame + offset) % totalFrames;
-          if (frameIdx < totalFrames) {
-            viewer.flame_params.expr[frameIdx] = { ...this.expressionData };
+        const originalFrame = viewer.flame_params.expr[currentFrame];
+
+        // Check the format of flame_params.expr - is it object or array?
+        if (originalFrame && Array.isArray(originalFrame)) {
+          // flame_params.expr[frame] is an array of values, not an object
+          // We need to find the mapping from channel names to indices
+          console.log('[LAM Apply] flame_params uses ARRAY format, cannot inject object directly');
+          // Just set bsWeight directly instead
+          if (viewer.splatMesh) {
+            viewer.splatMesh.bsWeight = { ...this.expressionData };
+          }
+        } else {
+          // flame_params.expr[frame] is an object with channel names
+          for (let offset = 0; offset < 5; offset++) {
+            const frameIdx = (currentFrame + offset) % totalFrames;
+            if (frameIdx < totalFrames) {
+              viewer.flame_params.expr[frameIdx] = { ...this.expressionData };
+            }
           }
         }
       }
 
-      // Also directly set bsWeight on splatMesh as backup
+      // Also directly set bsWeight on splatMesh
       if (viewer.splatMesh) {
         viewer.splatMesh.bsWeight = { ...this.expressionData };
       }
@@ -654,7 +707,7 @@ class LAMAvatarController {
         Object.assign(renderer.expressionData, this.expressionData);
       }
     } catch (e) {
-      // Silently ignore if renderer structure is different
+      console.error('[LAM Apply] Error:', e);
     }
   }
 
