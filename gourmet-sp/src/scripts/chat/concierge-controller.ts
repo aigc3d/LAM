@@ -314,20 +314,18 @@ export class ConciergeController extends CoreController {
         console.warn('[Concierge] audio2exp API failed:', response.status);
       } else {
         const result = await response.json();
-        const frameCount = result.weights?.length || 0;
+        const frameCount = result.frames?.length || 0;
         console.log(`[Concierge] Expression generated: ${frameCount} frames, batch=${result.batch_id}`);
 
-        // ★ 表情データをLAMAvatarに送信
-        if (frameCount > 0 && result.channels && result.weights) {
+        // ★ 公式形式: names + frames[{weights}] を変換
+        if (frameCount > 0 && result.names && result.frames) {
           const lamController = (window as any).lamAvatarController;
           if (lamController && typeof lamController.queueExpressionFrames === 'function') {
-            // Convert API response to ExpressionData[] format
-            const frames = result.weights.map((frameWeights: number[]) => {
+            // 公式 gaussianAvatar.ts と同じ変換ロジック
+            const frames = result.frames.map((frameData: { weights: number[] }) => {
               const frame: { [key: string]: number } = {};
-              result.channels.forEach((name: string, index: number) => {
-                if (index < frameWeights.length) {
-                  frame[name] = frameWeights[index];
-                }
+              result.names.forEach((name: string, index: number) => {
+                frame[name] = frameData.weights[index];
               });
               return frame;
             });

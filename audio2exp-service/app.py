@@ -319,10 +319,11 @@ class AudioRequest(BaseModel):
 
 
 class ExpressionResponse(BaseModel):
-    """Response model for expression data"""
+    """Response model for expression data - 公式形式に準拠"""
     session_id: str
-    channels: List[str]
-    weights: List[List[float]]  # List of frames, each frame has 52 weights
+    names: List[str]  # チャンネル名配列（公式と同じ）
+    frames: List[dict]  # 各フレームは {"weights": [...]} 形式（公式と同じ）
+    frame_rate: int = 30
     timestamp: float
     batch_id: int = 0
 
@@ -409,10 +410,14 @@ async def process_audio_endpoint(request: AudioRequest):
                 audio_sample_rate=request.sample_rate
             )
 
+        # 公式形式に変換: frames = [{"weights": [...]}, ...]
+        frames = [{"weights": row} for row in expression.tolist()]
+
         return ExpressionResponse(
             session_id=session_id,
-            channels=ARKIT_CHANNELS,
-            weights=expression.tolist(),
+            names=ARKIT_CHANNELS,
+            frames=frames,
+            frame_rate=30,
             timestamp=time.time(),
             batch_id=batch_id
         )
