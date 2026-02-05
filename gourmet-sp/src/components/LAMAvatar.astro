@@ -283,7 +283,10 @@ class LAMAvatarController {
       this.ttsActive = true;  // ★ 自分で追跡
       this.ttsLastCurrentTime = player.currentTime;
       this.externalTtsStartTime = Date.now() - (player.currentTime * 1000);
-      this.startFramePlaybackFromQueue();
+      // ★ 修正: startFramePlaybackFromQueue()は呼ばない
+      // TTS-Syncモードでは getExpressionData() が frameBuffer と currentTime で直接同期する
+      // startFramePlaybackFromQueue() は frameQueue をクリアするため、複数TTS再生時に問題を起こす
+      console.log(`[LAM External] TTS play - frameBuffer has ${this.frameBuffer.length} frames`);
     };
 
     this.ttsPauseHandler = () => {
@@ -296,7 +299,9 @@ class LAMAvatarController {
     this.ttsEndedHandler = () => {
       console.log('[LAM External] TTS ended event');
       this.ttsActive = false;  // ★ 終了時のみfalseにする
-      this.stopFramePlayback();
+      // ★ 修正: stopFramePlayback()は呼ばない
+      // TTS-Syncモードでは getExpressionData() が ended を検出してリセットする
+      // stopFramePlayback() を呼ぶと次のTTS再生に影響する
     };
 
     // Listen for play/pause/ended events
