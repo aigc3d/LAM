@@ -31,6 +31,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Check multiple possible locations for LAM_Audio2Expression
 LAM_A2E_CANDIDATES = [
     os.environ.get("LAM_A2E_PATH"),  # Environment variable takes priority
+    os.path.join(SCRIPT_DIR, "LAM_Audio2Expression"),  # Docker container: /app/LAM_Audio2Expression
     os.path.join(SCRIPT_DIR, "..", "LAM_Audio2Expression"),  # Original location
     os.path.join(SCRIPT_DIR, "..", "OpenAvatarChat", "src", "handlers", "avatar", "lam", "LAM_Audio2Expression"),  # OpenAvatarChat submodule
 ]
@@ -201,6 +202,7 @@ class Audio2ExpressionEngine:
             weight_candidates = [
                 model_path,  # Explicit path
                 os.environ.get("LAM_WEIGHT_PATH"),  # Environment variable
+                os.path.join(SCRIPT_DIR, "models", "lam_audio2exp_streaming.tar"),  # Docker: /app/models/
                 os.path.join(SCRIPT_DIR, "..", "OpenAvatarChat", "models", "LAM_audio2exp", "pretrained_models", "lam_audio2exp_streaming.tar"),
                 os.path.join(LAM_A2E_PATH, "pretrained_models", "lam_audio2exp_streaming.tar"),
             ]
@@ -218,6 +220,7 @@ class Audio2ExpressionEngine:
             wav2vec_candidates = [
                 wav2vec_path,  # Explicit path
                 os.environ.get("WAV2VEC_PATH"),  # Environment variable
+                os.path.join(SCRIPT_DIR, "models", "wav2vec2-base-960h"),  # Docker: /app/models/
                 os.path.join(SCRIPT_DIR, "..", "OpenAvatarChat", "models", "wav2vec2-base-960h"),
             ]
             wav2vec_model_path = None
