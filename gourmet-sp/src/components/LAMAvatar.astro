@@ -176,9 +176,10 @@ class LAMAvatarController {
   private frameQueue: ExpressionData[][] = [];
   private frameIndex: number = 0;
   private frameRate: number = 30;
-  private framePlaybackTimer: number | null = null;
   private isPlayingFrames: boolean = false;
   private waitingForAudio: boolean = false;
+  // ★ 公式と同じ: 再生開始時刻を記録し、経過時間からフレームを計算
+  private playbackStartTime: number = 0;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -379,7 +380,7 @@ class LAMAvatarController {
     this.wsManager = new LAMWebSocketManager({
       // Legacy callbacks for backward compatibility (fallback mode)
       onExpressionUpdate: (data: ExpressionData) => {
-        if (this.useBundledSync) return;  // Ignore in bundled mode
+        if (this.syncMode === 'bundled') return;  // Ignore in bundled mode
         try {
           const jawOpen = data['jawOpen'] || 0;
           const mouthLowerDownLeft = data['mouthLowerDownLeft'] || 0;
@@ -392,7 +393,7 @@ class LAMAvatarController {
         }
       },
       onExpressionFrames: (data: ExpressionFrameData) => {
-        if (this.useBundledSync) return;  // Ignore in bundled mode
+        if (this.syncMode === 'bundled') return;  // Ignore in bundled mode
         try {
           this.frameQueue.push(data.frames);
           this.frameRate = data.frameRate;
@@ -514,46 +515,31 @@ class LAMAvatarController {
     }, delayMs);
   }
 
+  // ★ 公式と同じ: 再生開始時刻を記録するだけ（タイマー不要）
+  // フレームの取得はgetExpressionData()で経過時間から計算する
   private startFramePlayback(): void {
     if (this.isPlayingFrames || this.frameBuffer.length === 0) {
       return;
     }
 
     this.isPlayingFrames = true;
+    this.playbackStartTime = performance.now();
     this.frameIndex = 0;
-    const frameInterval = 1000 / this.frameRate; // ms per frame
 
-    console.log(`[LAM Playback] Starting frame playback: ${this.frameBuffer.length} frames at ${this.frameRate}fps (${frameInterval.toFixed(1)}ms/frame)`);
+    const durationMs = (this.frameBuffer.length / this.frameRate) * 1000;
+    console.log(`[LAM Playback] Starting frame playback: ${this.frameBuffer.length} frames at ${this.frameRate}fps (duration: ${durationMs.toFixed(0)}ms)`);
 
     // 状態をRespondingに設定
     if (this.currentState !== 'Responding') {
       this.setChatState('Responding');
     }
-
-    // Apply first frame immediately
-    this.applyFrame(0);
-
-    // Start playback timer
-    this.framePlaybackTimer = window.setInterval(() => {
-      this.frameIndex++;
-
-      if (this.frameIndex >= this.frameBuffer.length) {
-        // All frames played
-        this.stopFramePlayback();
-        console.log('[LAM Playback] Frame playback completed');
-        return;
-      }
-
-      this.applyFrame(this.frameIndex);
-    }, frameInterval);
+    // ★ タイマー不要 - getExpressionData()でリアルタイムにフレームを計算
   }
 
   public stopFramePlayback(): void {
-    if (this.framePlaybackTimer) {
-      clearInterval(this.framePlaybackTimer);
-      this.framePlaybackTimer = null;
-    }
+    console.log('[LAM Playback] Stopping frame playback');
     this.isPlayingFrames = false;
+    this.playbackStartTime = 0;
 
     // Reset to idle expression after a short delay
     setTimeout(() => {
@@ -562,24 +548,6 @@ class LAMAvatarController {
         this.setChatState('Idle');
       }
     }, 200);
-  }
-
-  // ★ 公式と同じ: expressionDataを更新するだけ
-  // レンダラーがgetExpressionData()コールバックで自動的に取得する
-  private applyFrame(index: number): void {
-    if (index >= this.frameBuffer.length) return;
-
-    const frame = this.frameBuffer[index];
-    Object.keys(frame).forEach(key => {
-      this.expressionData[key] = frame[key];
-    });
-
-    // Debug log every 10 frames
-    if (index % 10 === 0) {
-      const jawOpen = frame['jawOpen'] || 0;
-      const mouthLD = frame['mouthLowerDownLeft'] || 0;
-      console.log(`[LAM Playback] Frame ${index}/${this.frameBuffer.length}: jaw=${jawOpen.toFixed(3)}, mouthLD=${mouthLD.toFixed(3)}`);
-    }
   }
 
   private resetExpression(): void {
@@ -605,13 +573,44 @@ class LAMAvatarController {
     }));
   }
 
-  // ★ 公式と同じ: 再生中のみ表情データを返す、それ以外はundefined
+  // ★ 公式と同じ: 経過時間からフレームインデックスを計算して返す
+  // レンダラーが毎フレームこのメソッドを呼び出す
   public getExpressionData(): ExpressionData | undefined {
     // 再生中でない場合はundefinedを返す（公式のprocessor?.getArkitFaceFrame().arkitFaceと同じ）
-    if (!this.isPlayingFrames) {
+    if (!this.isPlayingFrames || this.playbackStartTime === 0) {
       return undefined;
     }
-    return this.expressionData;
+
+    // ★ 公式と同じ: 経過時間からフレームインデックスを計算
+    const elapsedMs = performance.now() - this.playbackStartTime;
+    const elapsedSec = elapsedMs / 1000;
+    const frameIndex = Math.floor(elapsedSec * this.frameRate);
+
+    // 再生終了チェック
+    if (frameIndex >= this.frameBuffer.length) {
+      // 再生完了
+      console.log(`[LAM Playback] Completed at frame ${frameIndex}, elapsed ${elapsedMs.toFixed(0)}ms`);
+      this.stopFramePlayback();
+      return undefined;
+    }
+
+    // フレームを取得
+    const frame = this.frameBuffer[frameIndex];
+    if (!frame) {
+      return undefined;
+    }
+
+    // デバッグログ（10フレームごと）
+    if (frameIndex !== this.frameIndex) {
+      this.frameIndex = frameIndex;
+      if (frameIndex % 10 === 0) {
+        const jawOpen = frame['jawOpen'] || 0;
+        const mouthLD = frame['mouthLowerDownLeft'] || 0;
+        console.log(`[LAM GetExp] Frame ${frameIndex}/${this.frameBuffer.length}: jaw=${jawOpen.toFixed(3)}, mouthLD=${mouthLD.toFixed(3)}`);
+      }
+    }
+
+    return frame;
   }
 
   public setExpressionData(data: ExpressionData) {
