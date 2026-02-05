@@ -299,31 +299,56 @@ class LAMAvatarController {
     }
   }
 
+  // Track if external player is already linked to prevent duplicate listeners
+  private externalTtsLinked: boolean = false;
+  private ttsPlayHandler: (() => void) | null = null;
+  private ttsPauseHandler: (() => void) | null = null;
+  private ttsEndedHandler: (() => void) | null = null;
+
   /**
    * Set the external TTS player for sync
    * Call this to link the LAMAvatar with an external audio element
    */
   public setExternalTtsPlayer(player: HTMLAudioElement): void {
+    // Prevent duplicate linking
+    if (this.externalTtsLinked && this.externalTtsPlayer === player) {
+      console.log('[LAM Avatar] External TTS player already linked, skipping');
+      return;
+    }
+
+    // Remove old listeners if switching players
+    if (this.externalTtsPlayer && this.externalTtsPlayer !== player) {
+      if (this.ttsPlayHandler) this.externalTtsPlayer.removeEventListener('play', this.ttsPlayHandler);
+      if (this.ttsPauseHandler) this.externalTtsPlayer.removeEventListener('pause', this.ttsPauseHandler);
+      if (this.ttsEndedHandler) this.externalTtsPlayer.removeEventListener('ended', this.ttsEndedHandler);
+    }
+
     this.externalTtsPlayer = player;
     this.syncMode = 'external';
 
-    // Listen for play/pause/ended events
-    player.addEventListener('play', () => {
+    // Create bound handlers
+    this.ttsPlayHandler = () => {
       console.log('[LAM External] TTS play event');
       this.externalTtsStartTime = Date.now() - (player.currentTime * 1000);
       this.startFramePlaybackFromQueue();
-    });
+    };
 
-    player.addEventListener('pause', () => {
+    this.ttsPauseHandler = () => {
       console.log('[LAM External] TTS pause event');
       // Don't stop playback on pause - may resume
-    });
+    };
 
-    player.addEventListener('ended', () => {
+    this.ttsEndedHandler = () => {
       console.log('[LAM External] TTS ended event');
       this.stopFramePlayback();
-    });
+    };
 
+    // Listen for play/pause/ended events
+    player.addEventListener('play', this.ttsPlayHandler);
+    player.addEventListener('pause', this.ttsPauseHandler);
+    player.addEventListener('ended', this.ttsEndedHandler);
+
+    this.externalTtsLinked = true;
     console.log('[LAM Avatar] External TTS player linked');
   }
 
