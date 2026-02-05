@@ -23,9 +23,10 @@ import uvicorn
 
 # Add LAM_Audio2Expression to path
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-LAM_A2E_PATH = os.path.join(SCRIPT_DIR, "..", "OpenAvatarChat", "src", "handlers", "avatar", "lam", "LAM_Audio2Expression")
+LAM_A2E_PATH = os.path.join(SCRIPT_DIR, "..", "LAM_Audio2Expression")
 if os.path.exists(LAM_A2E_PATH):
     sys.path.insert(0, LAM_A2E_PATH)
+    print(f"[Audio2Expression] Added LAM_Audio2Expression to path: {LAM_A2E_PATH}")
 
 app = FastAPI(title="Audio2Expression Service")
 
@@ -77,17 +78,32 @@ class Audio2ExpressionEngine:
 
             config_file = os.path.join(LAM_A2E_PATH, "configs", "lam_audio2exp_config_streaming.py")
 
-            # Use default config or custom model path
-            if model_path:
-                cfg = default_config_parser(config_file, {"weight": model_path})
-            else:
-                cfg = default_config_parser(config_file, {})
+            # Default weight path in cloned repo
+            default_weight_path = os.path.join(LAM_A2E_PATH, "pretrained_models", "lam_audio2exp_flow")
+            weight_path = model_path or default_weight_path
+
+            # wav2vec config path
+            wav2vec_config = os.path.join(LAM_A2E_PATH, "configs", "wav2vec2_config.json")
+
+            print(f"[Audio2Expression] Config file: {config_file}")
+            print(f"[Audio2Expression] Weight path: {weight_path}")
+
+            # Use default config with weight path
+            cfg = default_config_parser(config_file, {
+                "weight": weight_path,
+                "model": {
+                    "backbone": {
+                        "wav2vec2_config_path": wav2vec_config,
+                    }
+                }
+            })
 
             cfg = default_setup(cfg)
             self.infer = INFER.build(dict(type=cfg.infer.type, cfg=cfg))
             self.infer.model.eval()
 
             # Warmup
+            print("[Audio2Expression] Running warmup inference...")
             self.infer.infer_streaming_audio(
                 audio=np.zeros([self.sample_rate], dtype=np.float32),
                 ssr=self.sample_rate,
@@ -95,10 +111,12 @@ class Audio2ExpressionEngine:
             )
 
             self.initialized = True
-            print("[Audio2Expression] Model initialized successfully")
+            print("[Audio2Expression] Model initialized successfully (CPU mode)")
 
         except Exception as e:
+            import traceback
             print(f"[Audio2Expression] Initialization failed: {e}")
+            traceback.print_exc()
             print("[Audio2Expression] Running in mock mode")
 
     def process_audio(self, audio: np.ndarray, context: Optional[Dict] = None) -> tuple:
@@ -208,9 +226,13 @@ class ExpressionResponse(BaseModel):
 @app.on_event("startup")
 async def startup():
     """Initialize engine on startup"""
-    # Skip initialization on Cloud Run (will use mock mode)
-    # engine.initialize()
-    print("[Audio2Expression] Starting in mock mode (Cloud Run)")
+    # Try to initialize the real model (works on CPU)
+    model_path = os.environ.get("AUDIO2EXP_MODEL_PATH")
+    if model_path or os.path.exists(LAM_A2E_PATH):
+        print("[Audio2Expression] Attempting to initialize model...")
+        engine.initialize(model_path)
+    else:
+        print("[Audio2Expression] LAM_Audio2Expression not found, starting in mock mode")
 
 
 @app.get("/health")
