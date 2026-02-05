@@ -13,3 +13,4 @@ tracking_output/
 tmp/
 *.tar
 .pytest_cache/
+LAM_Audio2Expression/
