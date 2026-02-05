@@ -652,13 +652,17 @@ class LAMAvatarController {
 
           return this.expressionData;
         } else if (frameIndex >= this.frameBuffer.length) {
-          // フレームバッファの終端を超えた - 最後のフレームを使用
+          // フレームバッファの終端を超えた - 最後のフレームを維持
           const lastFrame = this.frameBuffer[this.frameBuffer.length - 1];
           if (lastFrame) {
             this.expressionData = {};
             Object.keys(lastFrame).forEach((name: string) => {
               this.expressionData[name] = lastFrame[name];
             });
+          }
+          // ★ TTSがまだ再生中なら最後のフレームを返す（フォールスルー防止）
+          if (!this.externalTtsPlayer.ended) {
+            return this.expressionData;
           }
         }
       }
@@ -676,7 +680,9 @@ class LAMAvatarController {
     }
 
     // フォールバック: playbackStartTimeベースの再生（レガシー）
-    if (this.isPlayingFrames && this.frameBuffer.length > 0 && this.playbackStartTime > 0) {
+    // ★ TTS-Syncモードが有効な場合はスキップ（競合防止）
+    const skipLegacy = this.syncMode === 'external' && this.ttsActive;
+    if (!skipLegacy && this.isPlayingFrames && this.frameBuffer.length > 0 && this.playbackStartTime > 0) {
       const length = this.frameBuffer.length;
       const frameInfoInternal = 1.0 / this.frameRate;
       const currentTime = performance.now() / 1000;
