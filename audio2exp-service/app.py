@@ -294,6 +294,61 @@ class Audio2ExpressionEngine:
 
         return expression.astype(np.float32), new_context
 
+    def process_full_audio(self, audio: np.ndarray, frame_rate: int = 30) -> np.ndarray:
+        """
+        Process full audio by splitting into chunks for proper streaming inference.
+
+        The LAM Audio2Expression model can only process ~64 frames (~2 seconds) at a time.
+        For longer audio, we need to call the streaming inference multiple times with context.
+
+        Args:
+            audio: Full audio samples (float32, 16kHz)
+            frame_rate: Output frame rate (default 30fps)
+
+        Returns:
+            Expression array with shape (num_frames, 52)
+        """
+        if not self.initialized or self.infer is None:
+            # Mock mode: generate simple lip movement
+            return self._mock_expression(audio, frame_rate)
+
+        # Calculate expected output frames
+        audio_duration = len(audio) / self.sample_rate
+        expected_frames = int(audio_duration * frame_rate)
+
+        if expected_frames <= 0:
+            return np.zeros((1, 52), dtype=np.float32)
+
+        # Process in chunks of ~1 second (16000 samples at 16kHz)
+        # This allows for proper streaming context to be maintained
+        chunk_samples = self.sample_rate  # 1 second chunks
+
+        all_expressions = []
+        context = None
+
+        for start in range(0, len(audio), chunk_samples):
+            end = min(start + chunk_samples, len(audio))
+            chunk = audio[start:end]
+
+            # Skip very short chunks
+            if len(chunk) < self.sample_rate // 10:  # Less than 0.1 seconds
+                continue
+
+            expression, context = self.process_audio(chunk, context)
+
+            if expression is not None and len(expression) > 0:
+                all_expressions.append(expression)
+
+        if not all_expressions:
+            return np.zeros((max(1, expected_frames), 52), dtype=np.float32)
+
+        # Concatenate all expression chunks
+        full_expression = np.concatenate(all_expressions, axis=0)
+
+        print(f"[Audio2Expression] Processed {audio_duration:.2f}s audio -> {len(full_expression)} frames (expected ~{expected_frames})")
+
+        return full_expression.astype(np.float32)
+
     def _mock_expression(self, audio: np.ndarray, frame_rate: int = 30) -> np.ndarray:
         """
         Generate mock expression data based on audio amplitude with dynamic variation.
@@ -469,10 +524,10 @@ async def process_audio_endpoint(request: AudioRequest):
         session_chunk_counts[session_id] += 1
         is_start = session_chunk_counts[session_id] == 1
 
-        # Process audio to get expression
-        expression, _ = engine.process_audio(audio_float)
+        # Process full audio to get expression (handles long audio by chunking)
+        expression = engine.process_full_audio(audio_float)
 
-        if expression is None:
+        if expression is None or len(expression) == 0:
             raise HTTPException(status_code=500, detail="Failed to process audio")
 
         # Send BUNDLED data to WebSocket if connected
