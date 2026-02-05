@@ -543,9 +543,6 @@ class LAMAvatarController {
 
     console.log(`[LAM Playback] Starting frame playback: ${this.frameBuffer.length} frames at ${this.frameRate}fps (${frameInterval.toFixed(1)}ms/frame)`);
 
-    // ★ Disable FLAME mode during lip sync so our expression data is used
-    this.setFlameMode(false);
-
     // 状態をRespondingに設定
     if (this.currentState !== 'Responding') {
       this.setChatState('Responding');
@@ -575,9 +572,6 @@ class LAMAvatarController {
       this.framePlaybackTimer = null;
     }
     this.isPlayingFrames = false;
-
-    // ★ Re-enable FLAME mode after lip sync
-    this.setFlameMode(true);
 
     // Reset to idle expression after a short delay
     setTimeout(() => {
@@ -626,25 +620,38 @@ class LAMAvatarController {
   }
 
   /**
-   * Apply expression data directly to splatMesh.bsWeight
-   * With FLAME mode disabled, this ensures the expression is applied to the mesh
+   * Apply expression data by injecting into flame_params['expr'] at current frame
+   * This way updateFlameBones() reads our expression data instead of pre-recorded animation
    */
   private applyExpressionToMesh(): void {
     try {
       const renderer = this.renderer as any;
-      if (renderer?.viewer?.splatMesh) {
-        // Directly set bsWeight on splatMesh
-        renderer.viewer.splatMesh.bsWeight = { ...this.expressionData };
+      if (!renderer?.viewer) return;
 
-        // Also set on renderer's expressionData for consistency
-        if (renderer.expressionData) {
-          Object.assign(renderer.expressionData, this.expressionData);
-        }
+      const viewer = renderer.viewer;
+      const currentFrame = viewer.frame ?? 0;
 
-        // Force texture update for Gaussian splat (if method exists)
-        if (typeof renderer.viewer.splatMesh.updateBoneMatrixTexture === 'function') {
-          renderer.viewer.splatMesh.updateBoneMatrixTexture(false);
+      // ★ Inject our expression data into flame_params['expr'] at current and next frames
+      // This ensures updateFlameBones() reads our lip sync data
+      if (viewer.flame_params?.expr) {
+        const totalFrames = viewer.flame_params.expr.length;
+        // Override current frame and a few nearby frames for safety
+        for (let offset = 0; offset < 5; offset++) {
+          const frameIdx = (currentFrame + offset) % totalFrames;
+          if (frameIdx < totalFrames) {
+            viewer.flame_params.expr[frameIdx] = { ...this.expressionData };
+          }
         }
+      }
+
+      // Also directly set bsWeight on splatMesh as backup
+      if (viewer.splatMesh) {
+        viewer.splatMesh.bsWeight = { ...this.expressionData };
+      }
+
+      // Also set on renderer's expressionData for consistency
+      if (renderer.expressionData) {
+        Object.assign(renderer.expressionData, this.expressionData);
       }
     } catch (e) {
       // Silently ignore if renderer structure is different
@@ -656,8 +663,12 @@ class LAMAvatarController {
     ARKIT_CHANNEL_NAMES.forEach(name => {
       this.expressionData[name] = 0;
     });
-    // Apply reset to mesh
+    // Apply reset to mesh (this will inject zeros into flame_params['expr'])
     this.applyExpressionToMesh();
+
+    // Also try to restore original flame animation data
+    // The next frame from the animation loop will continue normally
+    console.log('[LAM Avatar] Expression reset to neutral');
   }
 
   // Public API for external control
