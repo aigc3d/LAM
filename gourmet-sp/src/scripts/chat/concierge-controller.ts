@@ -243,8 +243,8 @@ export class ConciergeController extends CoreController {
       const data = await response.json();
 
       if (data.success && data.audio) {
-        // ★ 公式同期: TTS音声をaudio2exp-serviceに送信（非同期で実行）
-        this.sendAudioToExpression(data.audio, true, true);
+        // ★ 表情データを先に取得してから音声再生（同期のため）
+        await this.sendAudioToExpression(data.audio, true, true);
 
         this.ttsPlayer.src = `data:audio/mp3;base64,${data.audio}`;
         const playPromise = new Promise<void>((resolve) => {
@@ -490,8 +490,8 @@ export class ConciergeController extends CoreController {
           });
           const result = await response.json();
           if (result.success && result.audio) {
-            // ★ 表情データ生成（最初のセンテンス）
-            this.sendAudioToExpression(result.audio, true, false);
+            // ★ 表情データを先に取得（同期のため）
+            await this.sendAudioToExpression(result.audio, true, false);
             return `data:audio/mp3;base64,${result.audio}`;
           }
           return null;
@@ -513,8 +513,8 @@ export class ConciergeController extends CoreController {
             });
             const result = await response.json();
             if (result.success && result.audio) {
-              // ★ 表情データ生成（残りのセンテンス）
-              this.sendAudioToExpression(result.audio, false, true);
+              // ★ 表情データを先に取得（同期のため）
+              await this.sendAudioToExpression(result.audio, false, true);
               return `data:audio/mp3;base64,${result.audio}`;
             }
             return null;
