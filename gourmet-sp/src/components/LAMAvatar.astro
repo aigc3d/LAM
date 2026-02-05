@@ -543,6 +543,9 @@ class LAMAvatarController {
 
     console.log(`[LAM Playback] Starting frame playback: ${this.frameBuffer.length} frames at ${this.frameRate}fps (${frameInterval.toFixed(1)}ms/frame)`);
 
+    // ★ Disable FLAME mode during lip sync so our expression data is used
+    this.setFlameMode(false);
+
     // 状態をRespondingに設定
     if (this.currentState !== 'Responding') {
       this.setChatState('Responding');
@@ -573,6 +576,9 @@ class LAMAvatarController {
     }
     this.isPlayingFrames = false;
 
+    // ★ Re-enable FLAME mode after lip sync
+    this.setFlameMode(true);
+
     // Reset to idle expression after a short delay
     setTimeout(() => {
       if (!this.isPlayingFrames) {
@@ -580,6 +586,24 @@ class LAMAvatarController {
         this.setChatState('Idle');
       }
     }, 200);
+  }
+
+  /**
+   * Toggle FLAME mode in the renderer
+   * When disabled, the renderer uses our expression data via setExpression()
+   * When enabled, the renderer uses pre-recorded FLAME animation
+   */
+  private setFlameMode(enabled: boolean): void {
+    try {
+      const renderer = this.renderer as any;
+      if (renderer?.viewer) {
+        renderer.viewer.useFlame = enabled;
+        renderer.useFlame = enabled;
+        console.log(`[LAM Avatar] FLAME mode ${enabled ? 'enabled' : 'disabled'}`);
+      }
+    } catch (e) {
+      // Silently ignore
+    }
   }
 
   private applyFrame(index: number): void {
@@ -603,14 +627,24 @@ class LAMAvatarController {
 
   /**
    * Apply expression data directly to splatMesh.bsWeight
-   * This is needed because the renderer's setExpression() is not called in FLAME mode
+   * With FLAME mode disabled, this ensures the expression is applied to the mesh
    */
   private applyExpressionToMesh(): void {
     try {
       const renderer = this.renderer as any;
       if (renderer?.viewer?.splatMesh) {
-        // Directly set bsWeight on splatMesh (bypasses FLAME animation)
+        // Directly set bsWeight on splatMesh
         renderer.viewer.splatMesh.bsWeight = { ...this.expressionData };
+
+        // Also set on renderer's expressionData for consistency
+        if (renderer.expressionData) {
+          Object.assign(renderer.expressionData, this.expressionData);
+        }
+
+        // Force texture update for Gaussian splat (if method exists)
+        if (typeof renderer.viewer.splatMesh.updateBoneMatrixTexture === 'function') {
+          renderer.viewer.splatMesh.updateBoneMatrixTexture(false);
+        }
       }
     } catch (e) {
       // Silently ignore if renderer structure is different
