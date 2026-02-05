@@ -662,8 +662,8 @@ class LAMAvatarController {
   }
 
   /**
-   * Apply expression data by injecting into flame_params['expr'] at current frame
-   * This way updateFlameBones() reads our expression data instead of pre-recorded animation
+   * Apply expression data to the mesh
+   * Try multiple approaches: setExpression(), bsWeight, morphTargetInfluences
    */
   private applyExpressionToMesh(): void {
     try {
@@ -671,46 +671,41 @@ class LAMAvatarController {
       if (!renderer?.viewer) return;
 
       const viewer = renderer.viewer;
-      const currentFrame = viewer.frame ?? 0;
+      const splatMesh = viewer.splatMesh;
 
-      // Check if FLAME mode is being used
-      const useFlame = viewer.useFlame;
+      // ★ Method 1: Try renderer.setExpression() if it exists
+      if (typeof renderer.setExpression === 'function') {
+        renderer.setExpression(this.expressionData);
+        return; // If this works, no need for other methods
+      }
 
-      // ★ Inject our expression data into flame_params['expr'] at current and next frames
-      // This ensures updateFlameBones() reads our lip sync data
-      if (useFlame && viewer.flame_params?.expr) {
-        const totalFrames = viewer.flame_params.expr.length;
-        const originalFrame = viewer.flame_params.expr[currentFrame];
+      // ★ Method 2: Try viewer.setExpression() if it exists
+      if (typeof viewer.setExpression === 'function') {
+        viewer.setExpression(this.expressionData);
+        return;
+      }
 
-        // Check the format of flame_params.expr - is it object or array?
-        if (originalFrame && Array.isArray(originalFrame)) {
-          // flame_params.expr[frame] is an array of values, not an object
-          // We need to find the mapping from channel names to indices
-          console.log('[LAM Apply] flame_params uses ARRAY format, cannot inject object directly');
-          // Just set bsWeight directly instead
-          if (viewer.splatMesh) {
-            viewer.splatMesh.bsWeight = { ...this.expressionData };
-          }
-        } else {
-          // flame_params.expr[frame] is an object with channel names
-          for (let offset = 0; offset < 5; offset++) {
-            const frameIdx = (currentFrame + offset) % totalFrames;
-            if (frameIdx < totalFrames) {
-              viewer.flame_params.expr[frameIdx] = { ...this.expressionData };
+      // ★ Method 3: Set bsWeight on splatMesh
+      if (splatMesh) {
+        splatMesh.bsWeight = { ...this.expressionData };
+
+        // ★ Method 4: Also try morphTargetInfluences if it exists (Three.js standard)
+        if (splatMesh.morphTargetInfluences && splatMesh.morphTargetDictionary) {
+          const dict = splatMesh.morphTargetDictionary;
+          Object.keys(this.expressionData).forEach(key => {
+            const index = dict[key];
+            if (index !== undefined && index < splatMesh.morphTargetInfluences.length) {
+              splatMesh.morphTargetInfluences[index] = this.expressionData[key];
             }
-          }
+          });
         }
       }
 
-      // Also directly set bsWeight on splatMesh
-      if (viewer.splatMesh) {
-        viewer.splatMesh.bsWeight = { ...this.expressionData };
-      }
-
-      // Also set on renderer's expressionData for consistency
+      // ★ Method 5: Set on renderer's expressionData for callback consistency
       if (renderer.expressionData) {
         Object.assign(renderer.expressionData, this.expressionData);
       }
+
     } catch (e) {
       console.error('[LAM Apply] Error:', e);
     }
