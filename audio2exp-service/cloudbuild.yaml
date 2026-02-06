@@ -2,10 +2,11 @@
 # Deploy with: gcloud builds submit --config cloudbuild.yaml
 
 steps:
-  # Build the container image
+  # Build the container image (--no-cache to ensure fresh build)
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'build'
+      - '--no-cache'
       - '-t'
       - 'gcr.io/$PROJECT_ID/audio2exp-service:$COMMIT_SHA'
       - '-t'
