@@ -81,7 +81,7 @@ class InferBase:
         )
         if os.path.isfile(self.cfg.weight):
             self.logger.info(f"Loading weight at: {self.cfg.weight}")
-            checkpoint = torch.load(self.cfg.weight, map_location=self.device)
+            checkpoint = torch.load(self.cfg.weight, map_location=self.device, weights_only=False)
             weight = OrderedDict()
             for key, value in checkpoint["state_dict"].items():
                 if key.startswith("module."):
