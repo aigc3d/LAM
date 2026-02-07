@@ -1,0 +1,11 @@
+#spleeter==2.4.0
+opencv_python_headless==4.11.0.86
+gradio==5.25.2
+omegaconf==2.3.0
+addict==2.4.0
+yapf==0.40.1
+librosa==0.11.0
+transformers==4.36.2
+termcolor==3.0.1
+numpy==1.26.3
+patool
