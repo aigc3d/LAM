@@ -16,21 +16,32 @@ if [ ! -d "$MODEL_DIR/wav2vec2-base-960h" ]; then
 fi
 
 # Download LAM model weights if not exists
-if [ ! -f "$MODEL_DIR/lam_audio2exp_streaming.tar" ]; then
+MODEL_FILE="$MODEL_DIR/lam_audio2exp_streaming.tar"
+if [ ! -f "$MODEL_FILE" ]; then
     echo "[Startup] Downloading lam_audio2exp_streaming.tar from GCS..."
-    gsutil cp "$GCS_BUCKET/lam_audio2exp_streaming.tar" "$MODEL_DIR/lam_audio2exp_streaming.tar"
+    gsutil cp "$GCS_BUCKET/lam_audio2exp_streaming.tar" "$MODEL_FILE"
     echo "[Startup] lam_audio2exp_streaming.tar downloaded"
+
+    # Check if file is gzip compressed and decompress if needed
+    # HuggingFace/OSS provides gzipped file (~356MB) that needs decompression to ~390MB
+    if file "$MODEL_FILE" | grep -q "gzip compressed"; then
+        echo "[Startup] File is gzip compressed, decompressing..."
+        gunzip -c "$MODEL_FILE" > "$MODEL_FILE.tmp"
+        mv "$MODEL_FILE.tmp" "$MODEL_FILE"
+        echo "[Startup] Decompression complete"
+    fi
 fi
 
-# Verify model file integrity (expected size: ~390MB)
-MODEL_FILE="$MODEL_DIR/lam_audio2exp_streaming.tar"
+# Verify model file integrity (expected size: ~390MB after decompression)
 if [ -f "$MODEL_FILE" ]; then
     FILE_SIZE=$(stat -c%s "$MODEL_FILE" 2>/dev/null || stat -f%z "$MODEL_FILE")
     echo "[Startup] Model file size: $FILE_SIZE bytes"
-    # Warn if file seems too small (less than 350MB = 367001600 bytes)
-    if [ "$FILE_SIZE" -lt 367001600 ]; then
-        echo "[WARNING] Model file seems too small! Expected ~390MB, got $(echo "scale=1; $FILE_SIZE/1048576" | bc)MB"
-        echo "[WARNING] The model file may be corrupted. Re-upload with fix_gcs_model.sh"
+    # After decompression, file should be ~390MB (408538564 bytes)
+    if [ "$FILE_SIZE" -lt 400000000 ]; then
+        echo "[WARNING] Model file too small! Expected ~390MB after decompression"
+        echo "[WARNING] File may still be compressed or corrupted"
+    else
+        echo "[Startup] Model file size OK"
     fi
 fi
 
