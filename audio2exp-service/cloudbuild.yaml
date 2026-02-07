@@ -55,4 +55,4 @@ images:
   - 'gcr.io/$PROJECT_ID/audio2exp-service:$BUILD_ID'
   - 'gcr.io/$PROJECT_ID/audio2exp-service:latest'
 
-timeout: '3600s'
+timeout: '5400s'
