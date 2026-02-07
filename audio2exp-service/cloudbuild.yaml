@@ -59,7 +59,7 @@ steps:
       - '--min-instances'
       - '0'
       - '--max-instances'
-      - '5'
+      - '4'
       # GCS FUSE volume mount
       - '--add-volume'
       - 'name=models-volume,type=cloud-storage,bucket=hp-support-477512-models'
