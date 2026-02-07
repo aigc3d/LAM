@@ -492,22 +492,83 @@ class ExpressionResponse(BaseModel):
 
 @app.on_event("startup")
 async def startup():
-    """Initialize engine on startup"""
-    # Try to initialize the real model (works on CPU)
+    """Start background task to initialize engine when models are ready"""
+    print("[Audio2Expression] Server started, waiting for models in background...")
+    asyncio.create_task(initialize_model_when_ready())
+
+
+async def initialize_model_when_ready():
+    """Background task to initialize model when models are downloaded"""
+    model_dir = os.path.join(SCRIPT_DIR, "models")
+    ready_signal = os.path.join(model_dir, ".models_ready")
     model_path = os.environ.get("AUDIO2EXP_MODEL_PATH")
-    if model_path or os.path.exists(LAM_A2E_PATH):
-        print("[Audio2Expression] Attempting to initialize model...")
-        engine.initialize(model_path)
-    else:
-        print("[Audio2Expression] LAM_Audio2Expression not found, starting in mock mode")
+
+    # Wait for models to be ready (max 10 minutes)
+    max_wait = 600  # seconds
+    waited = 0
+    check_interval = 2  # seconds
+
+    while waited < max_wait:
+        # Check if models are already available (e.g., pre-baked in image)
+        if engine.initialized:
+            print("[Audio2Expression] Model already initialized")
+            return
+
+        # Check for ready signal from start.sh
+        if os.path.exists(ready_signal):
+            print("[Audio2Expression] Models ready signal detected, initializing...")
+            break
+
+        # Check if model files exist directly (for pre-baked images)
+        lam_model = os.path.join(model_dir, "lam_audio2exp_streaming.tar")
+        wav2vec = os.path.join(model_dir, "wav2vec2-base-960h")
+        if os.path.exists(lam_model) and os.path.exists(wav2vec):
+            print("[Audio2Expression] Model files detected, initializing...")
+            break
+
+        await asyncio.sleep(check_interval)
+        waited += check_interval
+        if waited % 30 == 0:
+            print(f"[Audio2Expression] Waiting for models... ({waited}s elapsed)")
+
+    if waited >= max_wait:
+        print("[Audio2Expression] Timeout waiting for models, running in mock mode")
+        return
+
+    # Initialize the model
+    try:
+        if LAM_A2E_PATH and os.path.exists(LAM_A2E_PATH):
+            print("[Audio2Expression] Attempting to initialize model...")
+            # Run initialization in executor to avoid blocking event loop
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, engine.initialize, model_path)
+            print("[Audio2Expression] Model initialization complete")
+        else:
+            print("[Audio2Expression] LAM_Audio2Expression not found, running in mock mode")
+    except Exception as e:
+        import traceback
+        print(f"[Audio2Expression] Model initialization failed: {e}")
+        traceback.print_exc()
+        print("[Audio2Expression] Running in mock mode")
 
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint - always returns ok for Cloud Run liveness probe"""
+    model_dir = os.path.join(SCRIPT_DIR, "models")
+    models_ready = os.path.exists(os.path.join(model_dir, ".models_ready"))
+
+    if engine.initialized:
+        model_status = "ready"
+    elif models_ready:
+        model_status = "initializing"
+    else:
+        model_status = "downloading"
+
     return {
-        "status": "ok",
-        "initialized": engine.initialized,
+        "status": "ok",  # Always ok for Cloud Run health check
+        "model_initialized": engine.initialized,
+        "model_status": model_status,
         "mode": "inference" if engine.initialized else "mock"
     }
 
