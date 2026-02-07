@@ -579,6 +579,57 @@ async def health_check():
     }
 
 
+@app.get("/debug")
+async def debug_info():
+    """Debug endpoint to check model paths and files"""
+    model_dir = os.path.join(MOUNT_PATH, MODEL_SUBDIR)
+    lam_model = os.path.join(model_dir, "LAM_audio2exp_streaming.tar")
+    wav2vec = os.path.join(model_dir, "wav2vec2-base-960h")
+
+    # List mount path contents
+    mount_contents = []
+    if os.path.exists(MOUNT_PATH):
+        try:
+            mount_contents = os.listdir(MOUNT_PATH)
+        except Exception as e:
+            mount_contents = [f"Error: {e}"]
+
+    # List model dir contents
+    model_dir_contents = []
+    if os.path.exists(model_dir):
+        try:
+            model_dir_contents = os.listdir(model_dir)
+        except Exception as e:
+            model_dir_contents = [f"Error: {e}"]
+
+    # Check LAM_A2E_PATH
+    lam_a2e_exists = LAM_A2E_PATH is not None and os.path.exists(LAM_A2E_PATH)
+    lam_a2e_contents = []
+    if lam_a2e_exists:
+        try:
+            lam_a2e_contents = os.listdir(LAM_A2E_PATH)[:10]  # First 10 items
+        except Exception as e:
+            lam_a2e_contents = [f"Error: {e}"]
+
+    return {
+        "mount_path": MOUNT_PATH,
+        "mount_exists": os.path.exists(MOUNT_PATH),
+        "mount_contents": mount_contents,
+        "model_dir": model_dir,
+        "model_dir_exists": os.path.exists(model_dir),
+        "model_dir_contents": model_dir_contents,
+        "lam_model_path": lam_model,
+        "lam_model_exists": os.path.exists(lam_model),
+        "lam_model_size": os.path.getsize(lam_model) if os.path.exists(lam_model) else 0,
+        "wav2vec_path": wav2vec,
+        "wav2vec_exists": os.path.exists(wav2vec),
+        "lam_a2e_path": LAM_A2E_PATH,
+        "lam_a2e_exists": lam_a2e_exists,
+        "lam_a2e_contents": lam_a2e_contents,
+        "engine_initialized": engine.initialized,
+    }
+
+
 @app.post("/api/audio2expression", response_model=ExpressionResponse)
 async def process_audio_endpoint(request: AudioRequest):
     """
