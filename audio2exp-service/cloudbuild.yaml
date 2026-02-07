@@ -1,5 +1,8 @@
 # Cloud Build configuration for audio2exp-service
 # Deploy with: gcloud builds submit --config cloudbuild.yaml
+#
+# Uses Cloud Storage FUSE to mount GCS bucket as filesystem
+# Models are read from /mnt/models/audio2exp/
 
 options:
   machineType: 'E2_HIGHCPU_8'
@@ -24,7 +27,7 @@ steps:
       - '--all-tags'
       - 'gcr.io/$PROJECT_ID/audio2exp-service'
 
-  # Deploy to Cloud Run
+  # Deploy to Cloud Run with GCS FUSE volume mount
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -38,10 +41,17 @@ steps:
       - '--platform'
       - 'managed'
       - '--allow-unauthenticated'
+      # Gen 2 execution environment (required for FUSE)
+      - '--execution-environment'
+      - 'gen2'
+      # Memory and CPU
       - '--memory'
-      - '4Gi'
+      - '8Gi'
       - '--cpu'
       - '2'
+      # Startup CPU Boost for faster model loading
+      - '--cpu-boost'
+      # Timeout settings
       - '--timeout'
       - '300'
       - '--concurrency'
@@ -50,6 +60,14 @@ steps:
       - '0'
       - '--max-instances'
       - '10'
+      # GCS FUSE volume mount
+      - '--add-volume'
+      - 'name=models-volume,type=cloud-storage,bucket=hp-support-477512-models'
+      - '--add-volume-mount'
+      - 'volume=models-volume,mount-path=/mnt/models'
+      # Environment variable for model subdirectory
+      - '--set-env-vars'
+      - 'MODEL_MOUNT_PATH=/mnt/models,MODEL_SUBDIR=audio2exp'
 
 images:
   - 'gcr.io/$PROJECT_ID/audio2exp-service:$BUILD_ID'
