@@ -22,6 +22,18 @@ if [ ! -f "$MODEL_DIR/lam_audio2exp_streaming.tar" ]; then
     echo "[Startup] lam_audio2exp_streaming.tar downloaded"
 fi
 
+# Verify model file integrity (expected size: ~390MB)
+MODEL_FILE="$MODEL_DIR/lam_audio2exp_streaming.tar"
+if [ -f "$MODEL_FILE" ]; then
+    FILE_SIZE=$(stat -c%s "$MODEL_FILE" 2>/dev/null || stat -f%z "$MODEL_FILE")
+    echo "[Startup] Model file size: $FILE_SIZE bytes"
+    # Warn if file seems too small (less than 350MB = 367001600 bytes)
+    if [ "$FILE_SIZE" -lt 367001600 ]; then
+        echo "[WARNING] Model file seems too small! Expected ~390MB, got $(echo "scale=1; $FILE_SIZE/1048576" | bc)MB"
+        echo "[WARNING] The model file may be corrupted. Re-upload with fix_gcs_model.sh"
+    fi
+fi
+
 echo "[Startup] Models ready, starting server..."
 
 # Start the application

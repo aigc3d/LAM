@@ -237,9 +237,14 @@ class Audio2ExpressionEngine:
             print(f"[Audio2Expression] Wav2Vec2 path: {wav2vec_model_path}")
             print(f"[Audio2Expression] Wav2Vec2 config: {wav2vec_config}")
 
+            # Ensure save_path directory exists for logging
+            save_path = os.path.join(SCRIPT_DIR, "exp", "audio2exp")
+            os.makedirs(os.path.join(save_path, "model"), exist_ok=True)
+
             # Build config with model paths
             cfg_options = {
                 "weight": weight_path,
+                "save_path": save_path,  # Override to use absolute path
                 "model": {
                     "backbone": {
                         "wav2vec2_config_path": wav2vec_config,
