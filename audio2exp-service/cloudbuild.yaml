@@ -8,7 +8,7 @@ steps:
       - 'build'
       - '--no-cache'
       - '-t'
-      - 'gcr.io/$PROJECT_ID/audio2exp-service:$COMMIT_SHA'
+      - 'gcr.io/$PROJECT_ID/audio2exp-service:$BUILD_ID'
       - '-t'
       - 'gcr.io/$PROJECT_ID/audio2exp-service:latest'
       - '.'
@@ -17,7 +17,7 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
-      - 'gcr.io/$PROJECT_ID/audio2exp-service:$COMMIT_SHA'
+      - 'gcr.io/$PROJECT_ID/audio2exp-service:$BUILD_ID'
 
   - name: 'gcr.io/cloud-builders/docker'
     args:
@@ -32,16 +32,16 @@ steps:
       - 'deploy'
       - 'audio2exp-service'
       - '--image'
-      - 'gcr.io/$PROJECT_ID/audio2exp-service:$COMMIT_SHA'
+      - 'gcr.io/$PROJECT_ID/audio2exp-service:$BUILD_ID'
       - '--region'
       - 'us-central1'
       - '--platform'
       - 'managed'
       - '--allow-unauthenticated'
       - '--memory'
-      - '1Gi'
+      - '4Gi'
       - '--cpu'
-      - '1'
+      - '2'
       - '--timeout'
       - '300'
       - '--concurrency'
@@ -52,7 +52,7 @@ steps:
       - '10'
 
 images:
-  - 'gcr.io/$PROJECT_ID/audio2exp-service:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/audio2exp-service:$BUILD_ID'
   - 'gcr.io/$PROJECT_ID/audio2exp-service:latest'
 
 timeout: '1200s'
