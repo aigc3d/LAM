@@ -18,8 +18,11 @@ fi
 # Download LAM model weights if not exists
 if [ ! -f "$MODEL_DIR/lam_audio2exp_streaming.tar" ]; then
     echo "[Startup] Downloading lam_audio2exp_streaming.tar from GCS..."
-    gsutil cp "$GCS_BUCKET/lam_audio2exp_streaming.tar" "$MODEL_DIR/"
+    gsutil cp "$GCS_BUCKET/lam_audio2exp_streaming.tar" "$MODEL_DIR/lam_audio2exp_streaming.tar.gz"
     echo "[Startup] lam_audio2exp_streaming.tar downloaded"
+    echo "[Startup] Extracting model file..."
+    gunzip -f "$MODEL_DIR/lam_audio2exp_streaming.tar.gz"
+    echo "[Startup] Model extracted"
 fi
 
 echo "[Startup] Models ready, starting server..."
