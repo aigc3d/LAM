@@ -165,21 +165,26 @@ class Audio2ExpressionEngine:
             os.environ["MASTER_ADDR"] = "localhost"
             os.environ["MASTER_PORT"] = "12345"
 
-            # Resolve model paths
-            lam_weight_path = self._resolve_model_path("LAM_audio2exp_streaming.tar")
+            # Resolve model paths via FUSE mount (primary) or Docker-baked (fallback)
+            lam_weight_path = self._resolve_model_path("lam_audio2exp_streaming.pth")
             wav2vec_path = self._resolve_model_path(None, subdir="wav2vec2-base-960h")
 
             if not lam_weight_path:
-                logger.error("LAM model weight not found. Aborting.")
+                logger.error("LAM model weight (.pth) not found. Aborting.")
                 return
             if not wav2vec_path:
                 logger.error("wav2vec2 model not found. Aborting.")
                 return
 
+            # wav2vec config: use config.json from the model directory itself
+            wav2vec_config = os.path.join(wav2vec_path, "config.json")
+            if not os.path.exists(wav2vec_config):
+                logger.error(f"wav2vec2 config.json not found at: {wav2vec_config}")
+                return
+            logger.info(f"wav2vec2 config: {wav2vec_config}")
+
             config_file = os.path.join(LAM_A2E_PATH, "configs",
                                        "lam_audio2exp_config_streaming.py")
-            wav2vec_config = os.path.join(LAM_A2E_PATH, "configs",
-                                          "wav2vec2_config.json")
 
             # --- CRITICAL: Config override to bypass DDP ---
             # save_path -> /tmp (only writable dir on Cloud Run)
@@ -201,7 +206,9 @@ class Audio2ExpressionEngine:
                 "batch_size": 1,
             }
 
-            logger.info("Loading config with Cloud Run overrides...")
+            logger.info(f"Loading config: {config_file}")
+            logger.info(f"Model weight: {lam_weight_path}")
+            logger.info(f"wav2vec2 path: {wav2vec_path}")
             cfg = default_config_parser(config_file, cfg_options)
 
             # --- CRITICAL: Skip default_setup() entirely ---

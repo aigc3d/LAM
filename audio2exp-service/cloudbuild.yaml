@@ -14,7 +14,7 @@ steps:
       - |
         mkdir -p models
         echo "Downloading LAM model..."
-        gsutil cp gs://hp-support-477512-models/audio2exp/LAM_audio2exp_streaming.tar models/
+        gsutil cp gs://hp-support-477512-models/audio2exp/lam_audio2exp_streaming.pth models/
         echo "Downloading wav2vec2 model..."
         gsutil -m cp -r gs://hp-support-477512-models/audio2exp/wav2vec2-base-960h models/
         echo "Models downloaded:"

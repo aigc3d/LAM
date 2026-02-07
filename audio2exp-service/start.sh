@@ -1,10 +1,8 @@
 #!/bin/bash
-
-# Simple startup script - model download is handled by Python app
-# This ensures proper logging and authentication in Cloud Run
+set -e
 
 echo "[Startup] Starting Audio2Expression service..."
-echo "[Startup] Model download will be handled by Python's google-cloud-storage client"
+echo "[Startup] Checking FUSE mount contents:"
+ls -l /mnt/models/audio2exp/ || echo "[Startup] WARNING: FUSE mount not available"
 
-# Start uvicorn directly
-exec uvicorn app:app --host 0.0.0.0 --port ${PORT:-8080}
+exec uvicorn app:app --host 0.0.0.0 --port ${PORT:-8080} --workers 1
