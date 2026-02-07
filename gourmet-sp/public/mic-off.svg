@@ -1,0 +1,14 @@
+<svg width="100" height="100" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- マイクアイコン（グレー）のみ -->
+  <g transform="translate(50, 50)">
+    <!-- マイク本体 -->
+    <rect x="-12" y="-25" width="24" height="35" rx="12" fill="#9E9E9E"/>
+    
+    <!-- マイク下部 -->
+    <path d="M -18 14 Q -18 26 0 26 Q 18 26 18 14" stroke="#9E9E9E" stroke-width="4" fill="none" stroke-linecap="round"/>
+    
+    <!-- スタンド -->
+    <line x1="0" y1="26" x2="0" y2="35" stroke="#9E9E9E" stroke-width="4" stroke-linecap="round"/>
+    <line x1="-12" y1="35" x2="12" y2="35" stroke="#9E9E9E" stroke-width="4" stroke-linecap="round"/>
+  </g>
+</svg>
