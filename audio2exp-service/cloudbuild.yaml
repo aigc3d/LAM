@@ -1,6 +1,10 @@
 # Cloud Build configuration for audio2exp-service
 # Deploy with: gcloud builds submit --config cloudbuild.yaml
 
+options:
+  machineType: 'E2_HIGHCPU_8'
+  diskSizeGb: 100
+
 steps:
   # Build the container image (--no-cache to ensure fresh build)
   - name: 'gcr.io/cloud-builders/docker'
@@ -17,12 +21,8 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
-      - 'gcr.io/$PROJECT_ID/audio2exp-service:$BUILD_ID'
-
-  - name: 'gcr.io/cloud-builders/docker'
-    args:
-      - 'push'
-      - 'gcr.io/$PROJECT_ID/audio2exp-service:latest'
+      - '--all-tags'
+      - 'gcr.io/$PROJECT_ID/audio2exp-service'
 
   # Deploy to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -55,4 +55,4 @@ images:
   - 'gcr.io/$PROJECT_ID/audio2exp-service:$BUILD_ID'
   - 'gcr.io/$PROJECT_ID/audio2exp-service:latest'
 
-timeout: '1200s'
+timeout: '3600s'
