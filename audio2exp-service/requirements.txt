@@ -7,6 +7,9 @@ pydantic>=2.0.0
 # Audio processing
 pydub>=0.25.0
 
+# Google Cloud Storage for model download
+google-cloud-storage>=2.10.0
+
 # For Audio2Expression (CPU mode)
 torch>=2.0.0
 torchaudio>=2.0.0

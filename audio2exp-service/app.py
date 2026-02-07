@@ -13,10 +13,13 @@ The client uses audio playback position to determine which expression frame to s
 
 import asyncio
 import base64
+import gzip
 import json
 import os
+import shutil
 import struct
 import sys
+import tarfile
 import time
 from typing import Dict, Optional, List
 import numpy as np
@@ -24,6 +27,9 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
+
+# Import GCS client (lazy loaded to avoid startup issues)
+GCS_CLIENT = None
 
 # Add LAM_Audio2Expression to path
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -465,6 +471,111 @@ engine = Audio2ExpressionEngine()
 # WebSocket connections
 active_connections: Dict[str, WebSocket] = {}
 
+
+def download_models_from_gcs():
+    """
+    Download models from Google Cloud Storage using Python client.
+    This is more reliable than gsutil in Cloud Run environment.
+    """
+    global GCS_CLIENT
+
+    model_dir = os.path.join(SCRIPT_DIR, "models")
+    os.makedirs(model_dir, exist_ok=True)
+
+    bucket_name = os.environ.get("GCS_MODEL_BUCKET", "gs://hp-support-477512-models/audio2exp")
+    # Parse bucket name (remove gs:// prefix and split bucket/prefix)
+    if bucket_name.startswith("gs://"):
+        bucket_name = bucket_name[5:]
+    parts = bucket_name.split("/", 1)
+    bucket_name = parts[0]
+    prefix = parts[1] if len(parts) > 1 else ""
+
+    print(f"[GCS Download] Bucket: {bucket_name}, Prefix: {prefix}")
+
+    try:
+        from google.cloud import storage
+        if GCS_CLIENT is None:
+            GCS_CLIENT = storage.Client()
+
+        bucket = GCS_CLIENT.bucket(bucket_name)
+
+        # Download wav2vec2-base-960h directory
+        wav2vec_dir = os.path.join(model_dir, "wav2vec2-base-960h")
+        if not os.path.exists(wav2vec_dir):
+            print("[GCS Download] Downloading wav2vec2-base-960h...")
+            os.makedirs(wav2vec_dir, exist_ok=True)
+
+            wav2vec_prefix = f"{prefix}/wav2vec2-base-960h/" if prefix else "wav2vec2-base-960h/"
+            blobs = list(bucket.list_blobs(prefix=wav2vec_prefix))
+
+            if not blobs:
+                print(f"[GCS Download] WARNING: No files found at {wav2vec_prefix}")
+
+            for blob in blobs:
+                # Get relative path within wav2vec2-base-960h
+                rel_path = blob.name[len(wav2vec_prefix):]
+                if not rel_path or blob.name.endswith("/"):
+                    continue
+
+                local_path = os.path.join(wav2vec_dir, rel_path)
+                os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                print(f"[GCS Download]   Downloading {rel_path}...")
+                blob.download_to_filename(local_path)
+
+            print("[GCS Download] wav2vec2-base-960h downloaded successfully")
+        else:
+            print("[GCS Download] wav2vec2-base-960h already exists")
+
+        # Download LAM model weights
+        model_file = os.path.join(model_dir, "lam_audio2exp_streaming.tar")
+        if not os.path.exists(model_file):
+            print("[GCS Download] Downloading lam_audio2exp_streaming.tar...")
+
+            model_blob_path = f"{prefix}/lam_audio2exp_streaming.tar" if prefix else "lam_audio2exp_streaming.tar"
+            blob = bucket.blob(model_blob_path)
+
+            if not blob.exists():
+                print(f"[GCS Download] ERROR: Model file not found at {model_blob_path}")
+                return False
+
+            blob.download_to_filename(model_file)
+            print("[GCS Download] lam_audio2exp_streaming.tar downloaded successfully")
+
+            # Check if file is gzip compressed and decompress if needed
+            try:
+                with open(model_file, 'rb') as f:
+                    magic = f.read(2)
+                if magic == b'\x1f\x8b':  # gzip magic number
+                    print("[GCS Download] File is gzip compressed, decompressing...")
+                    temp_file = model_file + ".tmp"
+                    with gzip.open(model_file, 'rb') as f_in:
+                        with open(temp_file, 'wb') as f_out:
+                            shutil.copyfileobj(f_in, f_out)
+                    os.replace(temp_file, model_file)
+                    print("[GCS Download] Decompression complete")
+            except Exception as e:
+                print(f"[GCS Download] Decompression check failed: {e}")
+
+            # Verify file size
+            file_size = os.path.getsize(model_file)
+            print(f"[GCS Download] Model file size: {file_size} bytes")
+            if file_size < 400000000:  # ~400MB minimum expected
+                print("[GCS Download] WARNING: Model file seems too small!")
+        else:
+            print("[GCS Download] lam_audio2exp_streaming.tar already exists")
+
+        print("[GCS Download] All models downloaded successfully")
+        return True
+
+    except ImportError:
+        print("[GCS Download] ERROR: google-cloud-storage not installed")
+        return False
+    except Exception as e:
+        import traceback
+        print(f"[GCS Download] ERROR: {e}")
+        traceback.print_exc()
+        return False
+
 # Batch tracking per session (for speech segment sync)
 session_batch_ids: Dict[str, int] = {}
 session_chunk_counts: Dict[str, int] = {}
@@ -498,42 +609,30 @@ async def startup():
 
 
 async def initialize_model_when_ready():
-    """Background task to initialize model when models are downloaded"""
+    """Background task to download and initialize model"""
     model_dir = os.path.join(SCRIPT_DIR, "models")
-    ready_signal = os.path.join(model_dir, ".models_ready")
     model_path = os.environ.get("AUDIO2EXP_MODEL_PATH")
 
-    # Wait for models to be ready (max 10 minutes)
-    max_wait = 600  # seconds
-    waited = 0
-    check_interval = 2  # seconds
-
-    while waited < max_wait:
-        # Check if models are already available (e.g., pre-baked in image)
-        if engine.initialized:
-            print("[Audio2Expression] Model already initialized")
-            return
-
-        # Check for ready signal from start.sh
-        if os.path.exists(ready_signal):
-            print("[Audio2Expression] Models ready signal detected, initializing...")
-            break
-
-        # Check if model files exist directly (for pre-baked images)
-        lam_model = os.path.join(model_dir, "lam_audio2exp_streaming.tar")
-        wav2vec = os.path.join(model_dir, "wav2vec2-base-960h")
-        if os.path.exists(lam_model) and os.path.exists(wav2vec):
-            print("[Audio2Expression] Model files detected, initializing...")
-            break
-
-        await asyncio.sleep(check_interval)
-        waited += check_interval
-        if waited % 30 == 0:
-            print(f"[Audio2Expression] Waiting for models... ({waited}s elapsed)")
-
-    if waited >= max_wait:
-        print("[Audio2Expression] Timeout waiting for models, running in mock mode")
+    # Check if models are already available (e.g., pre-baked in image)
+    if engine.initialized:
+        print("[Audio2Expression] Model already initialized")
         return
+
+    # Check if model files already exist
+    lam_model = os.path.join(model_dir, "lam_audio2exp_streaming.tar")
+    wav2vec = os.path.join(model_dir, "wav2vec2-base-960h")
+
+    if not (os.path.exists(lam_model) and os.path.exists(wav2vec)):
+        # Download models from GCS using Python client
+        print("[Audio2Expression] Models not found locally, downloading from GCS...")
+        loop = asyncio.get_event_loop()
+        download_success = await loop.run_in_executor(None, download_models_from_gcs)
+
+        if not download_success:
+            print("[Audio2Expression] Model download failed, running in mock mode")
+            return
+    else:
+        print("[Audio2Expression] Model files already exist locally")
 
     # Initialize the model
     try:
@@ -556,11 +655,13 @@ async def initialize_model_when_ready():
 async def health_check():
     """Health check endpoint - always returns ok for Cloud Run liveness probe"""
     model_dir = os.path.join(SCRIPT_DIR, "models")
-    models_ready = os.path.exists(os.path.join(model_dir, ".models_ready"))
+    lam_model = os.path.join(model_dir, "lam_audio2exp_streaming.tar")
+    wav2vec = os.path.join(model_dir, "wav2vec2-base-960h")
+    models_downloaded = os.path.exists(lam_model) and os.path.exists(wav2vec)
 
     if engine.initialized:
         model_status = "ready"
-    elif models_ready:
+    elif models_downloaded:
         model_status = "initializing"
     else:
         model_status = "downloading"
