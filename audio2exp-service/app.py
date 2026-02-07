@@ -198,10 +198,10 @@ class Audio2ExpressionEngine:
             weight_candidates = [
                 model_path,  # Explicit path
                 os.environ.get("LAM_WEIGHT_PATH"),  # Environment variable
-                os.path.join(model_dir, "lam_audio2exp_streaming.tar"),  # FUSE mount
-                os.path.join(SCRIPT_DIR, "models", "lam_audio2exp_streaming.tar"),  # Docker: /app/models/
-                os.path.join(SCRIPT_DIR, "..", "OpenAvatarChat", "models", "LAM_audio2exp", "pretrained_models", "lam_audio2exp_streaming.tar"),
-                os.path.join(LAM_A2E_PATH, "pretrained_models", "lam_audio2exp_streaming.tar"),
+                os.path.join(model_dir, "LAM_audio2exp_streaming.tar"),  # FUSE mount
+                os.path.join(SCRIPT_DIR, "models", "LAM_audio2exp_streaming.tar"),  # Docker: /app/models/
+                os.path.join(SCRIPT_DIR, "..", "OpenAvatarChat", "models", "LAM_audio2exp", "pretrained_models", "LAM_audio2exp_streaming.tar"),
+                os.path.join(LAM_A2E_PATH, "pretrained_models", "LAM_audio2exp_streaming.tar"),
             ]
             weight_path = None
             for candidate in weight_candidates:
@@ -502,7 +502,7 @@ async def lifespan(app: FastAPI):
     model_dir = os.path.join(MOUNT_PATH, MODEL_SUBDIR)
 
     # Check if models are available
-    lam_model = os.path.join(model_dir, "lam_audio2exp_streaming.tar")
+    lam_model = os.path.join(model_dir, "LAM_audio2exp_streaming.tar")
     wav2vec = os.path.join(model_dir, "wav2vec2-base-960h")
 
     print(f"[Audio2Expression] Checking for LAM model at: {lam_model}")
@@ -559,7 +559,7 @@ app.add_middleware(
 async def health_check():
     """Health check endpoint - always returns ok for Cloud Run liveness probe"""
     model_dir = os.path.join(MOUNT_PATH, MODEL_SUBDIR)
-    lam_model = os.path.join(model_dir, "lam_audio2exp_streaming.tar")
+    lam_model = os.path.join(model_dir, "LAM_audio2exp_streaming.tar")
     wav2vec = os.path.join(model_dir, "wav2vec2-base-960h")
     models_available = os.path.exists(lam_model) and os.path.exists(wav2vec)
 
