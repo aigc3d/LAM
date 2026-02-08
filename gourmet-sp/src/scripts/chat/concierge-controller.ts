@@ -278,6 +278,41 @@ export class ConciergeController extends CoreController {
     .catch(e => console.warn('[Concierge] Expression proxy error:', e));
   }
 
+  /**
+   * Expression フレームを先行取得（Promise返却）
+   * 1行目再生中に2行目の表情を先行フェッチし、遅延を最小化する
+   */
+  private prefetchExpression(audioBase64: string): Promise<{frames: {[key: string]: number}[], frameRate: number} | null> {
+    if (!this.sessionId) return Promise.resolve(null);
+
+    return fetch(`${this.apiBase}/api/audio2expression`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        audio_base64: audioBase64,
+        session_id: this.sessionId,
+        audio_format: 'mp3'
+      })
+    })
+    .then(r => r.json())
+    .then(result => {
+      if (result.names && result.frames && result.frames.length > 0) {
+        const frames = result.frames.map((f: { weights: number[] }) => {
+          const frame: { [key: string]: number } = {};
+          result.names.forEach((name: string, i: number) => { frame[name] = f.weights[i]; });
+          return frame;
+        });
+        console.log(`[Concierge] Expression pre-fetched: ${frames.length} frames`);
+        return { frames, frameRate: result.frame_rate || 30 };
+      }
+      return null;
+    })
+    .catch(e => {
+      console.warn('[Concierge] Expression prefetch error:', e);
+      return null;
+    });
+  }
+
   // アバターアニメーション停止
   private stopAvatarAnimation() {
     if (this.els.avatarContainer) {
@@ -430,10 +465,15 @@ export class ConciergeController extends CoreController {
           this.stopCurrentAudio();
           this.ttsPlayer.src = `data:audio/mp3;base64,${firstTtsResult.audio}`;
 
-          // 残りのTTS結果を先に取得しておく
+          // 残りのTTS結果を先に取得 + ★表情を先行フェッチ（1行目再生中に並行取得）
           let remainingTtsResult: any = null;
+          let remainingExpPromise: Promise<{frames: {[key: string]: number}[], frameRate: number} | null> | null = null;
           if (remainingTtsPromise) {
             remainingTtsResult = await remainingTtsPromise;
+            // ★ 1行目再生中に残りの表情を先行フェッチ（遅延最小化）
+            if (remainingTtsResult?.success && remainingTtsResult?.audio) {
+              remainingExpPromise = this.prefetchExpression(remainingTtsResult.audio);
+            }
           }
 
           // 最初のセンテンス再生
@@ -452,8 +492,20 @@ export class ConciergeController extends CoreController {
           if (remainingTtsResult?.success && remainingTtsResult?.audio) {
             this.lastAISpeech = this.normalizeText(cleanRemaining || '');
 
-            // ★ 残りセグメントの表情生成（fire-and-forget、バッファクリアなし）
-            this.fireAndForgetExpression(remainingTtsResult.audio, false);
+            // ★ バッファクリア + プリフェッチ結果を非ブロッキング適用
+            const lamController = (window as any).lamAvatarController;
+            if (lamController) {
+              lamController.clearFrameBuffer();
+              if (remainingExpPromise) {
+                // 1行目再生中に取得済みなら即適用、未完了なら到着次第適用
+                remainingExpPromise.then(expData => {
+                  if (expData) {
+                    lamController.queueExpressionFrames(expData.frames, expData.frameRate);
+                    console.log(`[Concierge] Pre-fetched expression applied: ${expData.frames.length} frames`);
+                  }
+                }).catch(() => {});
+              }
+            }
 
             this.stopCurrentAudio();
             this.ttsPlayer.src = `data:audio/mp3;base64,${remainingTtsResult.audio}`;
@@ -758,6 +810,17 @@ export class ConciergeController extends CoreController {
                 }
 
                 this.ttsPlayer.src = `data:audio/mp3;base64,${firstResult.audio}`;
+
+                // ★ 1店目再生中に残りの表情を先行フェッチ
+                let remainingResult: any = null;
+                let remainingShopExpPromise: Promise<{frames: {[key: string]: number}[], frameRate: number} | null> | null = null;
+                if (remainingShopTtsPromise) {
+                  remainingResult = await remainingShopTtsPromise;
+                  if (remainingResult?.success && remainingResult?.audio) {
+                    remainingShopExpPromise = this.prefetchExpression(remainingResult.audio);
+                  }
+                }
+
                 await new Promise<void>((resolve) => {
                   this.ttsPlayer.onended = () => {
                     this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
@@ -769,14 +832,23 @@ export class ConciergeController extends CoreController {
                   this.ttsPlayer.play();
                 });
 
-                if (remainingShopTtsPromise) {
-                  const remainingResult = await remainingShopTtsPromise;
-                  if (remainingResult?.success && remainingResult?.audio) {
+                if (remainingResult?.success && remainingResult?.audio) {
                     const restShopsText = this.stripMarkdown(shopLines.slice(1).join('\n\n'));
                     this.lastAISpeech = this.normalizeText(restShopsText);
 
-                    // ★ 残りの表情生成（fire-and-forget、バッファクリアなし）
-                    this.fireAndForgetExpression(remainingResult.audio, false);
+                    // ★ バッファクリア + プリフェッチ結果を非ブロッキング適用
+                    const shopLamController = (window as any).lamAvatarController;
+                    if (shopLamController) {
+                      shopLamController.clearFrameBuffer();
+                      if (remainingShopExpPromise) {
+                        remainingShopExpPromise.then(expData => {
+                          if (expData) {
+                            shopLamController.queueExpressionFrames(expData.frames, expData.frameRate);
+                            console.log(`[Concierge] Shop pre-fetched expression applied: ${expData.frames.length} frames`);
+                          }
+                        }).catch(() => {});
+                      }
+                    }
 
                     if (!isTextInput && this.isTTSEnabled) {
                       this.stopCurrentAudio();
@@ -793,7 +865,6 @@ export class ConciergeController extends CoreController {
                       this.els.voiceStatus.className = 'voice-status speaking';
                       this.ttsPlayer.play();
                     });
-                  }
                 }
               }
             }
