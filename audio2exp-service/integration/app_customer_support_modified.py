@@ -535,11 +535,31 @@ def synthesize_speech():
         audio_base64 = base64.b64encode(response_mp3.audio_content).decode('utf-8')
         logger.info(f"[TTS] MP3合成成功: {len(audio_base64)} bytes (base64)")
 
-        # ★ TTSは音声のみ即返却（表情生成はフロントエンドから /api/audio2expression プロキシ経由）
-        return jsonify({
+        # ========================================
+        # ★ Expression同梱: サーバー間通信で表情フレーム取得（~150ms）
+        #    TTS応答に同梱することで、フロント側で即座にリップシンク開始可能
+        #    タイムアウト時はexpression無しで返却（フロント側でproxyフォールバック）
+        # ========================================
+        import time as _time
+        expression_data = None
+        if AUDIO2EXP_SERVICE_URL and session_id:
+            try:
+                exp_start = _time.time()
+                expression_data = get_expression_frames(audio_base64, session_id, 'mp3')
+                exp_elapsed = _time.time() - exp_start
+                frame_count = len(expression_data.get('frames', [])) if expression_data else 0
+                logger.info(f"[TTS+Exp] Expression同梱: {exp_elapsed:.2f}秒, {frame_count}フレーム")
+            except Exception as e:
+                logger.warning(f"[TTS] Audio2Exp表情取得エラー（フォールバック）: {e}")
+
+        result = {
             'success': True,
             'audio': audio_base64
-        })
+        }
+        if expression_data:
+            result['expression'] = expression_data
+
+        return jsonify(result)
 
     except Exception as e:
         logger.error(f"[TTS] エラー: {e}", exc_info=True)
