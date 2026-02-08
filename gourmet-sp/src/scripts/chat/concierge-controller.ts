@@ -548,8 +548,11 @@ export class ConciergeController extends CoreController {
   // 🎯 コンシェルジュモード専用: メッセージ送信処理
   // ========================================
   protected async sendMessage() {
-    let firstAckPromise: Promise<void> | null = null; 
-    this.unlockAudioParams();
+    let firstAckPromise: Promise<void> | null = null;
+    // ★ voice入力時はunlockAudioParamsスキップ（ack再生中のttsPlayerを中断させない）
+    if (!this.pendingAckPromise) {
+      this.unlockAudioParams();
+    }
     const message = this.els.userInput.value.trim();
     if (!message || this.isProcessing) return;
     
