@@ -11,6 +11,7 @@
 import os
 import re
 import json
+import time
 import base64
 import logging
 import threading
@@ -62,6 +63,24 @@ if AUDIO2EXP_SERVICE_URL:
     logger.info(f"[Audio2Exp] サービスURL設定済み: {AUDIO2EXP_SERVICE_URL}")
 else:
     logger.info("[Audio2Exp] サービスURL未設定（リップシンク無効）")
+
+# ========================================
+# Expression Cache: バックグラウンド生成結果を一時保管
+# TTS即返却 → バックグラウンドでaudio2exp → ポーリングで取得
+# ========================================
+_expression_cache = {}  # token → (result_or_None, timestamp)
+_expression_cache_lock = threading.Lock()
+_EXPRESSION_CACHE_TTL = 60  # 60秒でキャッシュ自動削除
+
+
+def _cache_cleanup():
+    """期限切れキャッシュを削除"""
+    now = time.time()
+    with _expression_cache_lock:
+        expired = [k for k, (_, t) in _expression_cache.items() if now - t > _EXPRESSION_CACHE_TTL]
+        for k in expired:
+            del _expression_cache[k]
+
 
 app = Flask(__name__)
 app.config["JSON_AS_ASCII"] = False  # UTF-8エンコーディングを有効化
@@ -536,28 +555,43 @@ def synthesize_speech():
         logger.info(f"[TTS] MP3合成成功: {len(audio_base64)} bytes (base64)")
 
         # ========================================
-        # ★ Expression同梱: サーバー間通信で表情フレーム取得（~150ms）
-        #    TTS応答に同梱することで、フロント側で即座にリップシンク開始可能
-        #    タイムアウト時はexpression無しで返却（フロント側でproxyフォールバック）
+        # ★ 非同期Expression生成: バックグラウンドスレッドで即開始
+        #    TTS応答は即返却（ブロックしない） → フロントがポーリングで取得
+        #    サーバー間通信（~150ms）なので、ポーリング1回目で取得できることが多い
         # ========================================
-        import time as _time
-        expression_data = None
+        exp_token = None
         if AUDIO2EXP_SERVICE_URL and session_id:
-            try:
-                exp_start = _time.time()
-                expression_data = get_expression_frames(audio_base64, session_id, 'mp3')
-                exp_elapsed = _time.time() - exp_start
-                frame_count = len(expression_data.get('frames', [])) if expression_data else 0
-                logger.info(f"[TTS+Exp] Expression同梱: {exp_elapsed:.2f}秒, {frame_count}フレーム")
-            except Exception as e:
-                logger.warning(f"[TTS] Audio2Exp表情取得エラー（フォールバック）: {e}")
+            exp_token = f"{session_id}_{int(time.time()*1000)}"
 
+            def _bg_generate_expression(token, audio, sid):
+                try:
+                    exp_start = time.time()
+                    result = get_expression_frames(audio, sid, 'mp3')
+                    exp_elapsed = time.time() - exp_start
+                    frame_count = len(result.get('frames', [])) if result else 0
+                    logger.info(f"[Audio2Exp BG] 完了: {exp_elapsed:.2f}秒, {frame_count}フレーム, token={token}")
+                    with _expression_cache_lock:
+                        _expression_cache[token] = (result, time.time())
+                except Exception as e:
+                    logger.warning(f"[Audio2Exp BG] エラー: {e}")
+                    with _expression_cache_lock:
+                        _expression_cache[token] = (None, time.time())
+                _cache_cleanup()
+
+            threading.Thread(
+                target=_bg_generate_expression,
+                args=(exp_token, audio_base64, session_id),
+                daemon=True
+            ).start()
+            logger.info(f"[TTS] Expression生成をバックグラウンド開始: token={exp_token}")
+
+        # ★ TTS音声を即返却（Expressionを待たない）
         result = {
             'success': True,
             'audio': audio_base64
         }
-        if expression_data:
-            result['expression'] = expression_data
+        if exp_token:
+            result['expression_token'] = exp_token
 
         return jsonify(result)
 
@@ -569,33 +603,36 @@ def synthesize_speech():
         }), 500
 
 
-@app.route('/api/audio2expression', methods=['POST', 'OPTIONS'])
-def proxy_audio2expression():
+@app.route('/api/expression/poll', methods=['GET', 'OPTIONS'])
+def poll_expression():
     """
-    Audio2Expression プロキシ
-    フロントエンド→バックエンド→audio2exp-service（CORS回避・サーバー間通信）
-    フロントエンドからはfire-and-forget（TTS再生をブロックしない）
+    Expression ポーリング: バックグラウンド生成結果を取得
+    TTS応答の expression_token を使ってポーリング。
+    200: 結果あり（JSON body）, 202: まだ生成中, 404: トークン不明
     """
     if request.method == 'OPTIONS':
         return '', 204
 
-    try:
-        data = request.json
-        audio_base64 = data.get('audio_base64', '')
-        session_id = data.get('session_id', '')
+    token = request.args.get('token')
+    if not token:
+        return jsonify({'error': 'token parameter required'}), 400
 
-        if not audio_base64 or not session_id:
-            return jsonify({'error': 'audio_base64とsession_idが必要です'}), 400
+    with _expression_cache_lock:
+        entry = _expression_cache.get(token)
 
-        result = get_expression_frames(audio_base64, session_id, data.get('audio_format', 'mp3'))
-        if result:
-            return jsonify(result)
-        else:
-            return jsonify({'error': 'Expression generation failed'}), 502
+    if entry is None:
+        # まだバックグラウンドスレッドが完了していない
+        return jsonify({'status': 'pending'}), 202
 
-    except Exception as e:
-        logger.error(f"[Audio2Exp Proxy] エラー: {e}")
-        return jsonify({'error': str(e)}), 500
+    result, _ = entry
+    # 取得したらキャッシュから削除
+    with _expression_cache_lock:
+        _expression_cache.pop(token, None)
+
+    if result:
+        return jsonify(result)
+    else:
+        return jsonify({'error': 'Expression generation failed'}), 502
 
 
 @app.route('/api/stt/transcribe', methods=['POST', 'OPTIONS'])

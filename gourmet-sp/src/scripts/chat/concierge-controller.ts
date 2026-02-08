@@ -194,9 +194,8 @@ export class ConciergeController extends CoreController {
       const data = await response.json();
 
       if (data.success && data.audio) {
-        // ★ Expression同梱: TTS応答に含まれていれば即バッファ投入（遅延ゼロ）
-        //    含まれていなければプロキシ経由fire-and-forgetフォールバック
-        this.applyExpressionFromTts(data, true);
+        // ★ Expression非同期: バックグラウンド生成をポーリングで取得（TTS再生をブロックしない）
+        if (data.expression_token) this.pollExpression(data.expression_token, true);
         this.ttsPlayer.src = `data:audio/mp3;base64,${data.audio}`;
         const playPromise = new Promise<void>((resolve) => {
           this.ttsPlayer.onended = async () => {
@@ -242,11 +241,13 @@ export class ConciergeController extends CoreController {
   }
 
   /**
-   * TTS応答からExpressionを適用（同梱 or プロキシフォールバック）
-   * バックエンドがTTS生成時にサーバー間通信で取得した表情データを即適用。
-   * 含まれていない場合（タイムアウト等）はプロキシ経由fire-and-forgetフォールバック。
+   * Expression ポーリング: バックグラウンド生成結果を取得
+   * TTS応答の expression_token を使い、150ms間隔でポーリング。
+   * バックエンドはTTS返却と同時にaudio2expをバックグラウンド開始（~150ms）。
+   * → ポーリング1回目（~200ms後）で取得できることが多い。
+   * TTS再生をブロックしない（fire-and-forget）。
    */
-  private applyExpressionFromTts(ttsData: any, isStart: boolean = false): void {
+  private pollExpression(token: string, isStart: boolean = false): void {
     const lamController = (window as any).lamAvatarController;
     if (!lamController) return;
 
@@ -254,94 +255,39 @@ export class ConciergeController extends CoreController {
       lamController.clearFrameBuffer();
     }
 
-    const exp = ttsData.expression;
-    if (exp?.names && exp?.frames?.length > 0) {
-      // ★ TTS応答に表情同梱 → 遅延ゼロで即バッファ投入
-      const frames = exp.frames.map((f: { weights: number[] }) => {
-        const frame: { [key: string]: number } = {};
-        exp.names.forEach((name: string, i: number) => { frame[name] = f.weights[i]; });
-        return frame;
-      });
-      lamController.queueExpressionFrames(frames, exp.frame_rate || 30);
-      console.log(`[Concierge] Expression from TTS: ${frames.length} frames (instant, zero-delay)`);
-    } else if (ttsData.audio) {
-      // ★ フォールバック: プロキシ経由fire-and-forget
-      console.log('[Concierge] No expression in TTS response, falling back to proxy');
-      this.fireAndForgetExpression(ttsData.audio, false); // buffer already cleared above
-    }
-  }
-
-  /**
-   * バックエンドプロキシ経由で表情生成（fire-and-forget フォールバック）
-   * /api/audio2expression → バックエンド → audio2exp-service（CORS回避）
-   * TTS再生をブロックしない。フレーム到着次第バッファに追加。
-   */
-  private fireAndForgetExpression(audioBase64: string, isStart: boolean = false): void {
-    const lamController = (window as any).lamAvatarController;
-    if (!lamController || !this.sessionId) return;
-
-    if (isStart && typeof lamController.clearFrameBuffer === 'function') {
-      lamController.clearFrameBuffer();
-    }
-
-    // ★ awaitしない（fire-and-forget）
-    fetch(`${this.apiBase}/api/audio2expression`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        audio_base64: audioBase64,
-        session_id: this.sessionId,
-        audio_format: 'mp3'
-      })
-    })
-    .then(r => r.json())
-    .then(result => {
-      if (result.names && result.frames && result.frames.length > 0) {
-        const frames = result.frames.map((f: { weights: number[] }) => {
-          const frame: { [key: string]: number } = {};
-          result.names.forEach((name: string, i: number) => { frame[name] = f.weights[i]; });
-          return frame;
-        });
-        lamController.queueExpressionFrames(frames, result.frame_rate || 30);
-        console.log(`[Concierge] Expression: ${frames.length} frames queued (proxy, fire-and-forget)`);
+    const poll = async () => {
+      for (let i = 0; i < 20; i++) {
+        try {
+          const resp = await fetch(`${this.apiBase}/api/expression/poll?token=${encodeURIComponent(token)}`);
+          if (resp.status === 200) {
+            const result = await resp.json();
+            if (result.names && result.frames?.length > 0) {
+              const frames = result.frames.map((f: { weights: number[] }) => {
+                const frame: { [key: string]: number } = {};
+                result.names.forEach((name: string, i: number) => { frame[name] = f.weights[i]; });
+                return frame;
+              });
+              lamController.queueExpressionFrames(frames, result.frame_rate || 30);
+              console.log(`[Concierge] Expression polled: ${frames.length} frames (attempt ${i + 1})`);
+            }
+            return; // 成功 or エラー → ポーリング終了
+          }
+          if (resp.status === 202) {
+            // まだ生成中 → 150ms後にリトライ
+            await new Promise(r => setTimeout(r, 150));
+            continue;
+          }
+          // その他エラー → 中止
+          console.warn(`[Concierge] Expression poll unexpected status: ${resp.status}`);
+          return;
+        } catch (e) {
+          console.warn('[Concierge] Expression poll error:', e);
+          return;
+        }
       }
-    })
-    .catch(e => console.warn('[Concierge] Expression proxy error:', e));
-  }
-
-  /**
-   * Expression フレームを先行取得（Promise返却）
-   * 1行目再生中に2行目の表情を先行フェッチし、遅延を最小化する
-   */
-  private prefetchExpression(audioBase64: string): Promise<{frames: {[key: string]: number}[], frameRate: number} | null> {
-    if (!this.sessionId) return Promise.resolve(null);
-
-    return fetch(`${this.apiBase}/api/audio2expression`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        audio_base64: audioBase64,
-        session_id: this.sessionId,
-        audio_format: 'mp3'
-      })
-    })
-    .then(r => r.json())
-    .then(result => {
-      if (result.names && result.frames && result.frames.length > 0) {
-        const frames = result.frames.map((f: { weights: number[] }) => {
-          const frame: { [key: string]: number } = {};
-          result.names.forEach((name: string, i: number) => { frame[name] = f.weights[i]; });
-          return frame;
-        });
-        console.log(`[Concierge] Expression pre-fetched: ${frames.length} frames`);
-        return { frames, frameRate: result.frame_rate || 30 };
-      }
-      return null;
-    })
-    .catch(e => {
-      console.warn('[Concierge] Expression prefetch error:', e);
-      return null;
-    });
+      console.warn('[Concierge] Expression poll timeout (20 attempts)');
+    };
+    poll(); // fire-and-forget（TTS再生をブロックしない）
   }
 
   // アバターアニメーション停止
@@ -490,7 +436,7 @@ export class ConciergeController extends CoreController {
         const firstTtsResult = await firstTtsPromise;
         if (firstTtsResult.success && firstTtsResult.audio) {
           // ★ TTS応答に同梱されたExpressionを即バッファ投入（遅延ゼロ）
-          this.applyExpressionFromTts(firstTtsResult, true);
+          if (firstTtsResult.expression_token) this.pollExpression(firstTtsResult.expression_token, true);
 
           this.lastAISpeech = this.normalizeText(cleanFirst);
           this.stopCurrentAudio();
@@ -519,7 +465,7 @@ export class ConciergeController extends CoreController {
             this.lastAISpeech = this.normalizeText(cleanRemaining || '');
 
             // ★ TTS応答に同梱されたExpressionを即バッファ投入
-            this.applyExpressionFromTts(remainingTtsResult, true);
+            if (remainingTtsResult.expression_token) this.pollExpression(remainingTtsResult.expression_token, true);
 
             this.stopCurrentAudio();
             this.ttsPlayer.src = `data:audio/mp3;base64,${remainingTtsResult.audio}`;
@@ -817,7 +763,7 @@ export class ConciergeController extends CoreController {
                 this.lastAISpeech = this.normalizeText(firstShopText);
 
                 // ★ TTS応答に同梱されたExpressionを即バッファ投入
-                this.applyExpressionFromTts(firstResult, true);
+                if (firstResult.expression_token) this.pollExpression(firstResult.expression_token, true);
 
                 if (!isTextInput && this.isTTSEnabled) {
                   this.stopCurrentAudio();
@@ -847,7 +793,7 @@ export class ConciergeController extends CoreController {
                     this.lastAISpeech = this.normalizeText(restShopsText);
 
                     // ★ TTS応答に同梱されたExpressionを即バッファ投入
-                    this.applyExpressionFromTts(remainingResult, true);
+                    if (remainingResult.expression_token) this.pollExpression(remainingResult.expression_token, true);
 
                     if (!isTextInput && this.isTTSEnabled) {
                       this.stopCurrentAudio();
