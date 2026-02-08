@@ -362,6 +362,7 @@ export class ConciergeController extends CoreController {
         await this.pendingAckPromise;
         this.pendingAckPromise = null;
       }
+      this.stopCurrentAudio(); // ttsPlayer確実解放
 
       this.isAISpeaking = true;
       if (this.isRecording) {
@@ -524,8 +525,11 @@ export class ConciergeController extends CoreController {
       this.pendingAckPromise = new Promise<void>((resolve) => {
         this.lastAISpeech = this.normalizeText(ackText);
         this.ttsPlayer.src = `data:audio/mp3;base64,${preGeneratedAudio}`;
-        this.ttsPlayer.onended = () => resolve();
-        this.ttsPlayer.play().catch(_e => resolve());
+        let resolved = false;
+        const done = () => { if (!resolved) { resolved = true; resolve(); } };
+        this.ttsPlayer.onended = done;
+        this.ttsPlayer.onpause = done; // ★ pause時もresolve（src変更やstop時のデッドロック防止）
+        this.ttsPlayer.play().catch(_e => done());
       });
     } else if (this.isTTSEnabled) {
       this.pendingAckPromise = this.speakTextGCP(ackText, false);
@@ -673,6 +677,7 @@ export class ConciergeController extends CoreController {
               await this.pendingAckPromise;
               this.pendingAckPromise = null;
             }
+            this.stopCurrentAudio(); // ttsPlayer確実解放
 
             this.isAISpeaking = true;
             if (this.isRecording) { this.stopStreamingSTT(); }
