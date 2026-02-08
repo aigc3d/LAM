@@ -8,6 +8,7 @@ declare const io: any;
 
 export class ConciergeController extends CoreController {
   // Audio2Expression はバックエンドTTSエンドポイント経由で統合済み
+  private pendingAckPromise: Promise<void> | null = null;
 
   constructor(container: HTMLElement, apiBase: string) {
     super(container, apiBase);
@@ -194,8 +195,8 @@ export class ConciergeController extends CoreController {
       const data = await response.json();
 
       if (data.success && data.audio) {
-        // ★ Expression非同期: バックグラウンド生成をポーリングで取得（TTS再生をブロックしない）
-        if (data.expression_token) this.pollExpression(data.expression_token, true);
+        // ★ TTS応答に同梱されたExpressionを即バッファ投入（遅延ゼロ）
+        if (data.expression) this.applyExpressionFromTts(data.expression);
         this.ttsPlayer.src = `data:audio/mp3;base64,${data.audio}`;
         const playPromise = new Promise<void>((resolve) => {
           this.ttsPlayer.onended = async () => {
@@ -241,53 +242,27 @@ export class ConciergeController extends CoreController {
   }
 
   /**
-   * Expression ポーリング: バックグラウンド生成結果を取得
-   * TTS応答の expression_token を使い、150ms間隔でポーリング。
-   * バックエンドはTTS返却と同時にaudio2expをバックグラウンド開始（~150ms）。
-   * → ポーリング1回目（~200ms後）で取得できることが多い。
-   * TTS再生をブロックしない（fire-and-forget）。
+   * TTS応答に同梱されたExpressionデータをバッファに即投入（遅延ゼロ）
+   * 同期方式: バックエンドがTTS+audio2expを同期実行し、結果を同梱して返す
    */
-  private pollExpression(token: string, isStart: boolean = false): void {
+  private applyExpressionFromTts(expression: any): void {
     const lamController = (window as any).lamAvatarController;
     if (!lamController) return;
 
-    if (isStart && typeof lamController.clearFrameBuffer === 'function') {
+    // 新セグメント開始時は必ずバッファクリア（前セグメントのフレーム混入防止）
+    if (typeof lamController.clearFrameBuffer === 'function') {
       lamController.clearFrameBuffer();
     }
 
-    const poll = async () => {
-      for (let i = 0; i < 20; i++) {
-        try {
-          const resp = await fetch(`${this.apiBase}/api/expression/poll?token=${encodeURIComponent(token)}`);
-          if (resp.status === 200) {
-            const result = await resp.json();
-            if (result.names && result.frames?.length > 0) {
-              const frames = result.frames.map((f: { weights: number[] }) => {
-                const frame: { [key: string]: number } = {};
-                result.names.forEach((name: string, i: number) => { frame[name] = f.weights[i]; });
-                return frame;
-              });
-              lamController.queueExpressionFrames(frames, result.frame_rate || 30);
-              console.log(`[Concierge] Expression polled: ${frames.length} frames (attempt ${i + 1})`);
-            }
-            return; // 成功 or エラー → ポーリング終了
-          }
-          if (resp.status === 202) {
-            // まだ生成中 → 150ms後にリトライ
-            await new Promise(r => setTimeout(r, 150));
-            continue;
-          }
-          // その他エラー → 中止
-          console.warn(`[Concierge] Expression poll unexpected status: ${resp.status}`);
-          return;
-        } catch (e) {
-          console.warn('[Concierge] Expression poll error:', e);
-          return;
-        }
-      }
-      console.warn('[Concierge] Expression poll timeout (20 attempts)');
-    };
-    poll(); // fire-and-forget（TTS再生をブロックしない）
+    if (expression?.names && expression?.frames?.length > 0) {
+      const frames = expression.frames.map((f: { weights: number[] }) => {
+        const frame: { [key: string]: number } = {};
+        expression.names.forEach((name: string, i: number) => { frame[name] = f.weights[i]; });
+        return frame;
+      });
+      lamController.queueExpressionFrames(frames, expression.frame_rate || 30);
+      console.log(`[Concierge] Expression sync: ${frames.length} frames queued`);
+    }
   }
 
   // アバターアニメーション停止
@@ -382,6 +357,12 @@ export class ConciergeController extends CoreController {
     }
 
     try {
+      // ★ ack再生中ならttsPlayer解放を待つ（並行処理の同期ポイント）
+      if (this.pendingAckPromise) {
+        await this.pendingAckPromise;
+        this.pendingAckPromise = null;
+      }
+
       this.isAISpeaking = true;
       if (this.isRecording) {
         this.stopStreamingSTT();
@@ -436,7 +417,7 @@ export class ConciergeController extends CoreController {
         const firstTtsResult = await firstTtsPromise;
         if (firstTtsResult.success && firstTtsResult.audio) {
           // ★ TTS応答に同梱されたExpressionを即バッファ投入（遅延ゼロ）
-          if (firstTtsResult.expression_token) this.pollExpression(firstTtsResult.expression_token, true);
+          if (firstTtsResult.expression) this.applyExpressionFromTts(firstTtsResult.expression);
 
           this.lastAISpeech = this.normalizeText(cleanFirst);
           this.stopCurrentAudio();
@@ -465,7 +446,7 @@ export class ConciergeController extends CoreController {
             this.lastAISpeech = this.normalizeText(cleanRemaining || '');
 
             // ★ TTS応答に同梱されたExpressionを即バッファ投入
-            if (remainingTtsResult.expression_token) this.pollExpression(remainingTtsResult.expression_token, true);
+            if (remainingTtsResult.expression) this.applyExpressionFromTts(remainingTtsResult.expression);
 
             this.stopCurrentAudio();
             this.ttsPlayer.src = `data:audio/mp3;base64,${remainingTtsResult.audio}`;
@@ -537,40 +518,28 @@ export class ConciergeController extends CoreController {
     // ✅ 修正: 即答を「はい」だけに簡略化
     const ackText = this.t('ackYes'); // 「はい」のみ
     const preGeneratedAudio = this.preGeneratedAcks.get(ackText);
-    
-    // 即答を再生
-    let firstAckPromise: Promise<void> | null = null;
+
+    // 即答を再生（ttsPlayerで）
     if (preGeneratedAudio && this.isTTSEnabled && this.isUserInteracted) {
-      firstAckPromise = new Promise<void>((resolve) => {
+      this.pendingAckPromise = new Promise<void>((resolve) => {
         this.lastAISpeech = this.normalizeText(ackText);
         this.ttsPlayer.src = `data:audio/mp3;base64,${preGeneratedAudio}`;
         this.ttsPlayer.onended = () => resolve();
         this.ttsPlayer.play().catch(_e => resolve());
       });
-    } else if (this.isTTSEnabled) { 
-      firstAckPromise = this.speakTextGCP(ackText, false); 
+    } else if (this.isTTSEnabled) {
+      this.pendingAckPromise = this.speakTextGCP(ackText, false);
     }
-    
+
     this.addMessage('assistant', ackText);
-    
-    // ✅ 修正: オウム返しパターンを削除し、すぐにLLMへ送信
-    (async () => {
-      try {
-        if (firstAckPromise) await firstAckPromise;
-        
-        // すぐにsendMessage()を実行
-        if (this.els.userInput.value.trim()) {
-          this.isFromVoiceInput = true;
-          this.sendMessage();
-        }
-      } catch (_error) {
-        if (this.els.userInput.value.trim()) {
-          this.isFromVoiceInput = true;
-          this.sendMessage();
-        }
-      }
-    })();
-    
+
+    // ★ 並行処理: ack再生完了を待たず、即LLMリクエスト開始（~700ms短縮）
+    //   pendingAckPromiseはsendMessage内でTTS再生前にawaitされる
+    if (this.els.userInput.value.trim()) {
+      this.isFromVoiceInput = true;
+      this.sendMessage();
+    }
+
     this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
     this.els.voiceStatus.className = 'voice-status stopped';
   }
@@ -696,6 +665,12 @@ export class ConciergeController extends CoreController {
         
         (async () => {
           try {
+            // ★ ack再生中ならttsPlayer解放を待つ（並行処理の同期ポイント）
+            if (this.pendingAckPromise) {
+              await this.pendingAckPromise;
+              this.pendingAckPromise = null;
+            }
+
             this.isAISpeaking = true;
             if (this.isRecording) { this.stopStreamingSTT(); }
 
@@ -763,7 +738,7 @@ export class ConciergeController extends CoreController {
                 this.lastAISpeech = this.normalizeText(firstShopText);
 
                 // ★ TTS応答に同梱されたExpressionを即バッファ投入
-                if (firstResult.expression_token) this.pollExpression(firstResult.expression_token, true);
+                if (firstResult.expression) this.applyExpressionFromTts(firstResult.expression);
 
                 if (!isTextInput && this.isTTSEnabled) {
                   this.stopCurrentAudio();
@@ -793,7 +768,7 @@ export class ConciergeController extends CoreController {
                     this.lastAISpeech = this.normalizeText(restShopsText);
 
                     // ★ TTS応答に同梱されたExpressionを即バッファ投入
-                    if (remainingResult.expression_token) this.pollExpression(remainingResult.expression_token, true);
+                    if (remainingResult.expression) this.applyExpressionFromTts(remainingResult.expression);
 
                     if (!isTextInput && this.isTTSEnabled) {
                       this.stopCurrentAudio();
