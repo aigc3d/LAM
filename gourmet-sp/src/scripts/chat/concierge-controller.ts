@@ -202,10 +202,13 @@ export class ConciergeController extends CoreController {
       const data = await response.json();
 
       if (data.success && data.audio) {
-        // ★ 表情生成とTTS src設定を並行（表情APIの完了を待ってから再生開始）
+        // ★ 表情生成を開始（タイムアウト超過時はリップシンクなしでTTS再生続行）
         const expPromise = this.sendAudioToExpression(data.audio, true, true);
         this.ttsPlayer.src = `data:audio/mp3;base64,${data.audio}`;
-        await expPromise;
+        await Promise.race([
+          expPromise,
+          new Promise<void>(resolve => setTimeout(resolve, this.EXPRESSION_API_TIMEOUT_MS))
+        ]);
         const playPromise = new Promise<void>((resolve) => {
           this.ttsPlayer.onended = async () => {
             this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
@@ -256,6 +259,9 @@ export class ConciergeController extends CoreController {
    * ★ isStart=true の場合のみバッファをクリア（新しいスピーチの開始）
    * 残りのセグメントは呼び出し元で明示的にクリアする
    */
+  // 表情APIタイムアウト（コールドスタート考慮、これを超えたらリップシンクなしで続行）
+  private readonly EXPRESSION_API_TIMEOUT_MS = 8000;
+
   private async sendAudioToExpression(audioBase64: string, isStart: boolean = false, isFinal: boolean = false): Promise<void> {
     if (!this.sessionId) return;
 
@@ -268,6 +274,9 @@ export class ConciergeController extends CoreController {
     }
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), this.EXPRESSION_API_TIMEOUT_MS);
+
       const response = await fetch(`${this.audio2expApiUrl}/api/audio2expression`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -276,9 +285,11 @@ export class ConciergeController extends CoreController {
           session_id: this.sessionId,
           is_start: isStart,
           is_final: isFinal,
-          audio_format: 'mp3'  // Google Cloud TTSはMP3を返す
-        })
+          audio_format: 'mp3'
+        }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         console.warn('[Concierge] audio2exp API failed:', response.status);
@@ -319,6 +330,9 @@ export class ConciergeController extends CoreController {
   private async fetchExpressionFrames(audioBase64: string): Promise<void> {
     this.pendingExpressionFrames = null;
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), this.EXPRESSION_API_TIMEOUT_MS);
+
       const response = await fetch(`${this.audio2expApiUrl}/api/audio2expression`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -328,8 +342,10 @@ export class ConciergeController extends CoreController {
           is_start: false,
           is_final: true,
           audio_format: 'mp3'
-        })
+        }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
 
       if (response.ok) {
         const result = await response.json();
@@ -509,11 +525,12 @@ export class ConciergeController extends CoreController {
         // ★ 最初のTTSが返ったら、即座にその音声で表情生成を開始
         const firstTtsResult = await firstTtsPromise;
         if (firstTtsResult.success && firstTtsResult.audio) {
-          // TTS音声を使って表情生成を開始（非同期・再生と並行可能にする）
+          // TTS音声を使って表情生成を開始（タイムアウト時はリップシンクなしで続行）
           const firstExpPromise = this.sendAudioToExpression(firstTtsResult.audio, true, !cleanRemaining);
-
-          // 表情フレームがキューに入るのを待ってから再生開始
-          await firstExpPromise;
+          await Promise.race([
+            firstExpPromise,
+            new Promise<void>(resolve => setTimeout(resolve, this.EXPRESSION_API_TIMEOUT_MS))
+          ]);
 
           this.lastAISpeech = this.normalizeText(cleanFirst);
           this.stopCurrentAudio();
@@ -876,8 +893,11 @@ export class ConciergeController extends CoreController {
                 this.lastAISpeech = this.normalizeText(firstShopText);
                 const restShops = shopLines.slice(1).join('\n\n');
 
-                // ★ リップシンク: 表情データを取得
-                await this.sendAudioToExpression(firstShopAudioBase64, true, !restShops);
+                // ★ リップシンク: 表情データを取得（タイムアウト時はリップシンクなしで続行）
+                await Promise.race([
+                  this.sendAudioToExpression(firstShopAudioBase64, true, !restShops),
+                  new Promise<void>(resolve => setTimeout(resolve, this.EXPRESSION_API_TIMEOUT_MS))
+                ]);
 
                 if (!isTextInput && this.isTTSEnabled) {
                   this.stopCurrentAudio();
