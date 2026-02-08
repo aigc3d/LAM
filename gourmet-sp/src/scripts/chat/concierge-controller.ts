@@ -162,6 +162,9 @@ export class ConciergeController extends CoreController {
   // Audio2Expression REST API URL (Cloud Run)
   private audio2expApiUrl = 'https://audio2exp-service-6s2ds5mdba-uc.a.run.app';
 
+  // 表情フレーム一時保存（並行取得時にバッファ競合を防ぐ）
+  private pendingExpressionFrames: { frames: any[], frameRate: number } | null = null;
+
   // コンシェルジュモード固有: アバターアニメーション制御 + 公式リップシンク
   protected async speakTextGCP(text: string, stopPrevious: boolean = true, autoRestartMic: boolean = false, skipAudio: boolean = false) {
     if (skipAudio || !this.isTTSEnabled || !text) return Promise.resolve();
@@ -199,10 +202,10 @@ export class ConciergeController extends CoreController {
       const data = await response.json();
 
       if (data.success && data.audio) {
-        // ★ 表情データを先に取得してから音声再生（同期のため）
-        await this.sendAudioToExpression(data.audio, true, true);
-
+        // ★ 表情生成とTTS src設定を並行（表情APIの完了を待ってから再生開始）
+        const expPromise = this.sendAudioToExpression(data.audio, true, true);
         this.ttsPlayer.src = `data:audio/mp3;base64,${data.audio}`;
+        await expPromise;
         const playPromise = new Promise<void>((resolve) => {
           this.ttsPlayer.onended = async () => {
             this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
@@ -306,6 +309,46 @@ export class ConciergeController extends CoreController {
       }
     } catch (error) {
       console.warn('[Concierge] audio2exp API error:', error);
+    }
+  }
+
+  /**
+   * 表情フレームを取得して一時保存（バッファに直接入れない）
+   * 並行処理時に使用：最初のセンテンス再生中に次の表情を先行取得
+   */
+  private async fetchExpressionFrames(audioBase64: string): Promise<void> {
+    this.pendingExpressionFrames = null;
+    try {
+      const response = await fetch(`${this.audio2expApiUrl}/api/audio2expression`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          audio_base64: audioBase64,
+          session_id: this.sessionId,
+          is_start: false,
+          is_final: true,
+          audio_format: 'mp3'
+        })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        const frameCount = result.frames?.length || 0;
+        console.log(`[Concierge] Pre-fetched expression: ${frameCount} frames`);
+
+        if (frameCount > 0 && result.names && result.frames) {
+          const frames = result.frames.map((frameData: { weights: number[] }) => {
+            const frame: { [key: string]: number } = {};
+            result.names.forEach((name: string, index: number) => {
+              frame[name] = frameData.weights[index];
+            });
+            return frame;
+          });
+          this.pendingExpressionFrames = { frames, frameRate: result.frame_rate || 30 };
+        }
+      }
+    } catch (error) {
+      console.warn('[Concierge] fetchExpressionFrames error:', error);
     }
   }
 
@@ -434,71 +477,93 @@ export class ConciergeController extends CoreController {
 
       const langConfig = this.LANGUAGE_CODE_MAP[this.currentLanguage];
 
-      // ★並行処理開始: 最初のセンテンスと残りのセンテンスを同時にTTS生成
-      let firstSentenceAudioPromise: Promise<string | null> | null = null;
-      let remainingAudioPromise: Promise<string | null> | null = null;
-
+      // ★並行処理: TTS生成と表情生成を同時に実行して遅延を最小化
       if (this.isUserInteracted) {
-        // 最初のセンテンスのTTS生成（並行開始）
-        firstSentenceAudioPromise = (async () => {
-          const cleanText = this.stripMarkdown(firstSentence);
-          const response = await fetch(`${this.apiBase}/api/tts/synthesize`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              text: cleanText,
-              language_code: langConfig.tts,
-              voice_name: langConfig.voice,
-              session_id: this.sessionId
-            })
-          });
-          const result = await response.json();
-          if (result.success && result.audio) {
-            // ★ 表情データを先に取得（同期のため）
-            await this.sendAudioToExpression(result.audio, true, false);
-            return `data:audio/mp3;base64,${result.audio}`;
-          }
-          return null;
-        })();
+        const cleanFirst = this.stripMarkdown(firstSentence);
+        const cleanRemaining = remainingSentences.trim().length > 0
+          ? this.stripMarkdown(remainingSentences) : null;
 
-        // 残りのセンテンスのTTS生成（並行開始）
-        // ★ 表情APIは並列呼び出しせず、再生直前に呼び出す（フレームバッファ競合防止）
-        let remainingAudioBase64: string | null = null;
-        if (remainingSentences.trim().length > 0) {
-          remainingAudioPromise = (async () => {
-            const cleanText = this.stripMarkdown(remainingSentences);
-            const response = await fetch(`${this.apiBase}/api/tts/synthesize`, {
+        // ★ 4つのAPIコールを可能な限り並行で開始
+        // 1. 最初のセンテンスTTS
+        const firstTtsPromise = fetch(`${this.apiBase}/api/tts/synthesize`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: cleanFirst, language_code: langConfig.tts,
+            voice_name: langConfig.voice, session_id: this.sessionId
+          })
+        }).then(r => r.json());
+
+        // 2. 残りのセンテンスTTS（あれば）
+        const remainingTtsPromise = cleanRemaining
+          ? fetch(`${this.apiBase}/api/tts/synthesize`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                text: cleanText,
-                language_code: langConfig.tts,
-                voice_name: langConfig.voice,
-                session_id: this.sessionId
+                text: cleanRemaining, language_code: langConfig.tts,
+                voice_name: langConfig.voice, session_id: this.sessionId
               })
-            });
-            const result = await response.json();
-            if (result.success && result.audio) {
-              // ★ 表情APIはここでは呼ばず、audio_base64を保存
-              remainingAudioBase64 = result.audio;
-              return `data:audio/mp3;base64,${result.audio}`;
+            }).then(r => r.json())
+          : null;
+
+        // ★ 最初のTTSが返ったら、即座にその音声で表情生成を開始
+        const firstTtsResult = await firstTtsPromise;
+        if (firstTtsResult.success && firstTtsResult.audio) {
+          // TTS音声を使って表情生成を開始（非同期・再生と並行可能にする）
+          const firstExpPromise = this.sendAudioToExpression(firstTtsResult.audio, true, !cleanRemaining);
+
+          // 表情フレームがキューに入るのを待ってから再生開始
+          await firstExpPromise;
+
+          this.lastAISpeech = this.normalizeText(cleanFirst);
+          this.stopCurrentAudio();
+          this.ttsPlayer.src = `data:audio/mp3;base64,${firstTtsResult.audio}`;
+
+          // ★ 最初のセンテンス再生中に、残りのセンテンスの表情生成を並行実行
+          let remainingExpPromise: Promise<void> | null = null;
+          let remainingTtsResult: any = null;
+
+          if (remainingTtsPromise) {
+            remainingTtsResult = await remainingTtsPromise;
+            if (remainingTtsResult?.success && remainingTtsResult?.audio) {
+              // 最初のセンテンス再生中にバックグラウンドで表情生成
+              // ★ ただしフレームバッファは最初のセンテンス再生後にクリアするため、
+              //    結果を一時保存して再生直前にキューに入れる
+              remainingExpPromise = this.fetchExpressionFrames(remainingTtsResult.audio);
             }
-            return null;
-          })();
-        }
+          }
 
-        // ★最初のセンテンスの音声が完成したらすぐに再生
-        if (firstSentenceAudioPromise) {
-          const firstSentenceAudio = await firstSentenceAudioPromise;
-          if (firstSentenceAudio) {
-            const firstSentenceText = this.stripMarkdown(firstSentence);
-            this.lastAISpeech = this.normalizeText(firstSentenceText);
+          // 最初のセンテンス再生
+          await new Promise<void>((resolve) => {
+            this.ttsPlayer.onended = () => {
+              this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
+              this.els.voiceStatus.className = 'voice-status stopped';
+              resolve();
+            };
+            this.els.voiceStatus.innerHTML = this.t('voiceStatusSpeaking');
+            this.els.voiceStatus.className = 'voice-status speaking';
+            this.ttsPlayer.play();
+          });
 
-            // ★ 最初のセンテンスのフレームはsendAudioToExpression内で既に追加済み
-            // 残りのセンテンスは再生直前に表情APIを呼ぶため、ここではクリア不要
+          // ★ 残りのセンテンスを続けて再生
+          if (remainingTtsResult?.success && remainingTtsResult?.audio) {
+            this.lastAISpeech = this.normalizeText(cleanRemaining || '');
+
+            // 表情フレームの取得完了を待つ（既に並行実行中なので高速）
+            if (remainingExpPromise) await remainingExpPromise;
+
+            // フレームバッファを入れ替え
+            const lamController = (window as any).lamAvatarController;
+            if (lamController && typeof lamController.clearFrameBuffer === 'function') {
+              lamController.clearFrameBuffer();
+            }
+            if (this.pendingExpressionFrames) {
+              lamController?.queueExpressionFrames?.(this.pendingExpressionFrames.frames, this.pendingExpressionFrames.frameRate);
+              this.pendingExpressionFrames = null;
+            }
 
             this.stopCurrentAudio();
-            this.ttsPlayer.src = firstSentenceAudio;
+            this.ttsPlayer.src = `data:audio/mp3;base64,${remainingTtsResult.audio}`;
 
             await new Promise<void>((resolve) => {
               this.ttsPlayer.onended = () => {
@@ -510,38 +575,6 @@ export class ConciergeController extends CoreController {
               this.els.voiceStatus.className = 'voice-status speaking';
               this.ttsPlayer.play();
             });
-
-            // ★残りのセンテンスの音声が完成したら続けて再生
-            if (remainingAudioPromise) {
-              const remainingAudio = await remainingAudioPromise;
-              if (remainingAudio && remainingAudioBase64) {
-                const remainingText = this.stripMarkdown(remainingSentences);
-                this.lastAISpeech = this.normalizeText(remainingText);
-
-                await new Promise(r => setTimeout(r, 300)); // 短い間隔
-
-                // ★ 再生直前に表情APIを呼び出す（フレームバッファをこのセグメント用にクリア＆セット）
-                const lamController = (window as any).lamAvatarController;
-                if (lamController && typeof lamController.clearFrameBuffer === 'function') {
-                  lamController.clearFrameBuffer();
-                }
-                await this.sendAudioToExpression(remainingAudioBase64, false, true);
-
-                this.stopCurrentAudio();
-                this.ttsPlayer.src = remainingAudio;
-
-                await new Promise<void>((resolve) => {
-                  this.ttsPlayer.onended = () => {
-                    this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
-                    this.els.voiceStatus.className = 'voice-status stopped';
-                    resolve();
-                  };
-                  this.els.voiceStatus.innerHTML = this.t('voiceStatusSpeaking');
-                  this.els.voiceStatus.className = 'voice-status speaking';
-                  this.ttsPlayer.play();
-                });
-              }
-            }
           }
         }
       }
@@ -838,18 +871,22 @@ export class ConciergeController extends CoreController {
             
             if (firstShopAudioPromise) {
               const firstShopAudio = await firstShopAudioPromise;
-              if (firstShopAudio) {
+              if (firstShopAudio && firstShopAudioBase64) {
                 const firstShopText = this.stripMarkdown(shopLines[0]);
                 this.lastAISpeech = this.normalizeText(firstShopText);
+                const restShops = shopLines.slice(1).join('\n\n');
 
-                // ★ リップシンク: 表情データを先に取得
-                if (firstShopAudioBase64) {
-                  const restShops = shopLines.slice(1).join('\n\n');
-                  await this.sendAudioToExpression(firstShopAudioBase64, true, !restShops);
-                }
+                // ★ リップシンク: 表情データを取得
+                await this.sendAudioToExpression(firstShopAudioBase64, true, !restShops);
 
                 if (!isTextInput && this.isTTSEnabled) {
                   this.stopCurrentAudio();
+                }
+
+                // ★ 最初のショップ再生中に残りの表情を先行取得
+                let remainingExpPromise: Promise<void> | null = null;
+                if (restShopAudioBase64) {
+                  remainingExpPromise = this.fetchExpressionFrames(restShopAudioBase64);
                 }
 
                 this.ttsPlayer.src = firstShopAudio;
@@ -866,18 +903,19 @@ export class ConciergeController extends CoreController {
 
                 if (remainingAudioPromise) {
                   const remainingAudio = await remainingAudioPromise;
-                  if (remainingAudio) {
+                  if (remainingAudio && restShopAudioBase64) {
                     const restShopsText = this.stripMarkdown(shopLines.slice(1).join('\n\n'));
                     this.lastAISpeech = this.normalizeText(restShopsText);
-                    await new Promise(r => setTimeout(r, 500));
 
-                    // ★ リップシンク: 2番目セグメントの表情データを取得
+                    // ★ 先行取得した表情フレームをキューに入れる（待ち時間ほぼゼロ）
+                    if (remainingExpPromise) await remainingExpPromise;
                     const lamController = (window as any).lamAvatarController;
                     if (lamController && typeof lamController.clearFrameBuffer === 'function') {
                       lamController.clearFrameBuffer();
                     }
-                    if (restShopAudioBase64) {
-                      await this.sendAudioToExpression(restShopAudioBase64, false, true);
+                    if (this.pendingExpressionFrames) {
+                      lamController?.queueExpressionFrames?.(this.pendingExpressionFrames.frames, this.pendingExpressionFrames.frameRate);
+                      this.pendingExpressionFrames = null;
                     }
 
                     if (!isTextInput && this.isTTSEnabled) {

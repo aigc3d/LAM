@@ -168,6 +168,9 @@ class LAMAvatarController {
   // Frame buffer for expression
   private frameBuffer: ExpressionData[] = [];
   private frameRate: number = 30;
+  // Fade-in/out: smooth transition from/to neutral to avoid visual artifacts
+  private readonly FADE_IN_FRAMES = 6; // 6 frames at 30fps = 200ms fade
+  private fadeOutStartTime: number | null = null;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -416,8 +419,13 @@ class LAMAvatarController {
         if (frameIndex >= 0 && frameIndex < this.frameBuffer.length) {
           this.expressionData = {};
           const frame = this.frameBuffer[frameIndex];
+          // Fade-in: gradually blend from neutral (0) to actual values
+          // to prevent visual artifacts (Gaussian Splat distortion) at speech start
+          const fadeAlpha = frameIndex < this.FADE_IN_FRAMES
+            ? frameIndex / this.FADE_IN_FRAMES
+            : 1.0;
           Object.keys(frame).forEach((name: string) => {
-            this.expressionData[name] = frame[name];
+            this.expressionData[name] = frame[name] * fadeAlpha;
           });
 
           if (frameIndex !== this.lastLoggedFrameIndex && frameIndex % 10 === 0) {
@@ -448,10 +456,28 @@ class LAMAvatarController {
         }
       }
 
-      // TTS ended - reset to idle (buffer cleared by concierge-controller on next speech)
+      // TTS ended - fade out over FADE_IN_FRAMES then reset to idle
       if (this.externalTtsPlayer.ended && !this.ttsActive) {
         if (this.currentState === 'Responding') {
-          console.log('[LAM TTS-Sync] TTS ended, resetting to idle');
+          // Gradually fade expression to neutral over ~200ms
+          if (!this.fadeOutStartTime) {
+            this.fadeOutStartTime = performance.now();
+          }
+          const fadeOutDurationMs = (this.FADE_IN_FRAMES / this.frameRate) * 1000;
+          const elapsed = performance.now() - this.fadeOutStartTime;
+          const fadeOutAlpha = Math.max(0, 1.0 - elapsed / fadeOutDurationMs);
+
+          if (fadeOutAlpha > 0) {
+            // Apply fade-out to current expression
+            Object.keys(this.expressionData).forEach((name: string) => {
+              this.expressionData[name] = (this.expressionData[name] || 0) * fadeOutAlpha;
+            });
+            return this.expressionData;
+          }
+
+          // Fade-out complete
+          this.fadeOutStartTime = null;
+          console.log('[LAM TTS-Sync] TTS ended, fade-out complete');
           this.resetExpression();
           this.setChatState('Idle');
         }
@@ -506,6 +532,7 @@ class LAMAvatarController {
     this.lastLoggedFrameIndex = -1;
     this.ttsActive = false;
     this.ttsLastCurrentTime = 0;
+    this.fadeOutStartTime = null;
     console.log('[LAM Avatar] Frame buffer cleared');
   }
 
