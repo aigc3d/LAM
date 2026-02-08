@@ -194,8 +194,8 @@ export class ConciergeController extends CoreController {
       const data = await response.json();
 
       if (data.success && data.audio) {
-        // ★ バックエンドが表情データも一緒に返す（サーバー間通信で取得済み）
-        this.queueExpressionFromTtsResponse(data, true);
+        // ★ TTS即再生 + 表情はプロキシ経由fire-and-forget（再生をブロックしない）
+        this.fireAndForgetExpression(data.audio, true);
         this.ttsPlayer.src = `data:audio/mp3;base64,${data.audio}`;
         const playPromise = new Promise<void>((resolve) => {
           this.ttsPlayer.onended = async () => {
@@ -241,39 +241,41 @@ export class ConciergeController extends CoreController {
   }
 
   /**
-   * TTS応答に含まれるexpression データをLAMAvatarのフレームバッファにキュー
-   * バックエンドがTTS生成時にサーバー間通信でaudio2expから取得済み
-   *
-   * ★ isStart=true: バッファをクリア（新しいスピーチの開始）
+   * バックエンドプロキシ経由で表情生成（fire-and-forget）
+   * /api/audio2expression → バックエンド → audio2exp-service（CORS回避）
+   * TTS再生をブロックしない。フレーム到着次第バッファに追加。
    */
-  private queueExpressionFromTtsResponse(ttsData: any, isStart: boolean = false): void {
+  private fireAndForgetExpression(audioBase64: string, isStart: boolean = false): void {
     const lamController = (window as any).lamAvatarController;
-    if (!lamController) return;
+    if (!lamController || !this.sessionId) return;
 
-    // ★ 新しいスピーチの開始時のみバッファをクリア
     if (isStart && typeof lamController.clearFrameBuffer === 'function') {
       lamController.clearFrameBuffer();
     }
 
-    // バックエンドからの表情データ（存在しない場合はリップシンクなしで再生）
-    const exp = ttsData.expression;
-    if (!exp || !exp.names || !exp.frames || exp.frames.length === 0) {
-      console.log('[Concierge] No expression data in TTS response (lip sync disabled)');
-      return;
-    }
-
-    // names + frames[{weights}] → ExpressionData[] に変換
-    const frames = exp.frames.map((frameData: { weights: number[] }) => {
-      const frame: { [key: string]: number } = {};
-      exp.names.forEach((name: string, index: number) => {
-        frame[name] = frameData.weights[index];
-      });
-      return frame;
-    });
-
-    const frameRate = exp.frame_rate || 30;
-    lamController.queueExpressionFrames(frames, frameRate);
-    console.log(`[Concierge] Queued ${frames.length} expression frames at ${frameRate}fps (from TTS response)`);
+    // ★ awaitしない（fire-and-forget）
+    fetch(`${this.apiBase}/api/audio2expression`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        audio_base64: audioBase64,
+        session_id: this.sessionId,
+        audio_format: 'mp3'
+      })
+    })
+    .then(r => r.json())
+    .then(result => {
+      if (result.names && result.frames && result.frames.length > 0) {
+        const frames = result.frames.map((f: { weights: number[] }) => {
+          const frame: { [key: string]: number } = {};
+          result.names.forEach((name: string, i: number) => { frame[name] = f.weights[i]; });
+          return frame;
+        });
+        lamController.queueExpressionFrames(frames, result.frame_rate || 30);
+        console.log(`[Concierge] Expression: ${frames.length} frames queued (proxy, fire-and-forget)`);
+      }
+    })
+    .catch(e => console.warn('[Concierge] Expression proxy error:', e));
   }
 
   // アバターアニメーション停止
@@ -421,8 +423,8 @@ export class ConciergeController extends CoreController {
         // ★ 最初のTTSが返ったら即再生（表情生成はfire-and-forget）
         const firstTtsResult = await firstTtsPromise;
         if (firstTtsResult.success && firstTtsResult.audio) {
-          // ★ TTS応答に含まれる表情データをキュー（バックエンドで取得済み）
-          this.queueExpressionFromTtsResponse(firstTtsResult, true);
+          // ★ 表情生成はプロキシ経由fire-and-forget（TTS再生をブロックしない）
+          this.fireAndForgetExpression(firstTtsResult.audio, true);
 
           this.lastAISpeech = this.normalizeText(cleanFirst);
           this.stopCurrentAudio();
@@ -450,8 +452,8 @@ export class ConciergeController extends CoreController {
           if (remainingTtsResult?.success && remainingTtsResult?.audio) {
             this.lastAISpeech = this.normalizeText(cleanRemaining || '');
 
-            // ★ 残りセグメントの表情データをキュー（バッファクリア + TTS応答から取得）
-            this.queueExpressionFromTtsResponse(remainingTtsResult, true);
+            // ★ 残りセグメントの表情生成（fire-and-forget、バッファクリアなし）
+            this.fireAndForgetExpression(remainingTtsResult.audio, false);
 
             this.stopCurrentAudio();
             this.ttsPlayer.src = `data:audio/mp3;base64,${remainingTtsResult.audio}`;
@@ -748,8 +750,8 @@ export class ConciergeController extends CoreController {
                 const firstShopText = this.stripMarkdown(shopLines[0]);
                 this.lastAISpeech = this.normalizeText(firstShopText);
 
-                // ★ TTS応答の表情データをキュー（バックエンドで取得済み）
-                this.queueExpressionFromTtsResponse(firstResult, true);
+                // ★ 表情生成はプロキシ経由fire-and-forget（TTS再生をブロックしない）
+                this.fireAndForgetExpression(firstResult.audio, true);
 
                 if (!isTextInput && this.isTTSEnabled) {
                   this.stopCurrentAudio();
@@ -773,8 +775,8 @@ export class ConciergeController extends CoreController {
                     const restShopsText = this.stripMarkdown(shopLines.slice(1).join('\n\n'));
                     this.lastAISpeech = this.normalizeText(restShopsText);
 
-                    // ★ 残りの表情データをキュー
-                    this.queueExpressionFromTtsResponse(remainingResult, true);
+                    // ★ 残りの表情生成（fire-and-forget、バッファクリアなし）
+                    this.fireAndForgetExpression(remainingResult.audio, false);
 
                     if (!isTextInput && this.isTTSEnabled) {
                       this.stopCurrentAudio();

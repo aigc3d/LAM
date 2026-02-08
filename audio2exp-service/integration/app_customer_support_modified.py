@@ -535,26 +535,11 @@ def synthesize_speech():
         audio_base64 = base64.b64encode(response_mp3.audio_content).decode('utf-8')
         logger.info(f"[TTS] MP3合成成功: {len(audio_base64)} bytes (base64)")
 
-        # ========================================
-        # ★ Audio2Expression: MP3をそのまま送信して表情フレームを取得
-        #    PCM別途生成は不要（audio2exp-serviceがpydubで変換対応済み）
-        #    サーバー間通信なのでCORS問題なし・高速
-        # ========================================
-        expression_data = None
-        if AUDIO2EXP_SERVICE_URL and session_id:
-            try:
-                expression_data = get_expression_frames(audio_base64, session_id, 'mp3')
-            except Exception as e:
-                logger.warning(f"[TTS] Audio2Exp表情取得エラー: {e}")
-
-        result = {
+        # ★ TTSは音声のみ即返却（表情生成はフロントエンドから /api/audio2expression プロキシ経由）
+        return jsonify({
             'success': True,
             'audio': audio_base64
-        }
-        if expression_data:
-            result['expression'] = expression_data
-
-        return jsonify(result)
+        })
 
     except Exception as e:
         logger.error(f"[TTS] エラー: {e}", exc_info=True)
@@ -562,6 +547,35 @@ def synthesize_speech():
             'success': False,
             'error': str(e)
         }), 500
+
+
+@app.route('/api/audio2expression', methods=['POST', 'OPTIONS'])
+def proxy_audio2expression():
+    """
+    Audio2Expression プロキシ
+    フロントエンド→バックエンド→audio2exp-service（CORS回避・サーバー間通信）
+    フロントエンドからはfire-and-forget（TTS再生をブロックしない）
+    """
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    try:
+        data = request.json
+        audio_base64 = data.get('audio_base64', '')
+        session_id = data.get('session_id', '')
+
+        if not audio_base64 or not session_id:
+            return jsonify({'error': 'audio_base64とsession_idが必要です'}), 400
+
+        result = get_expression_frames(audio_base64, session_id, data.get('audio_format', 'mp3'))
+        if result:
+            return jsonify(result)
+        else:
+            return jsonify({'error': 'Expression generation failed'}), 502
+
+    except Exception as e:
+        logger.error(f"[Audio2Exp Proxy] エラー: {e}")
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/stt/transcribe', methods=['POST', 'OPTIONS'])
