@@ -100,18 +100,19 @@ const {
 
 <style>
 /* 全体レイアウト */
-.gourmet-chat-container { 
+.gourmet-chat-container {
   background: white;
-  border-radius: 16px; 
-  box-shadow: 0 20px 60px rgba(0,0,0,0.15); 
-  width: 100%; 
-  max-width: 800px; 
-  max-height: 650px;
-  display: flex;        
-  flex-direction: column; 
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+  width: 100%;
+  max-width: 800px;
+  height: calc(100dvh - 40px);
+  max-height: 960px;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
-  margin: 0 auto; 
-  position: relative; 
+  margin: 0 auto;
+  position: relative;
   transition: all 0.5s ease;
 }
 
@@ -141,7 +142,7 @@ const {
 /* アバターステージ */
 .avatar-stage {
   flex-shrink: 0;
-  height: 140px;
+  height: 300px;
   background: #f0f2f5;
   display: flex;
   justify-content: center;
@@ -196,12 +197,12 @@ const {
 .voice-status.speaking { background: #e1f5fe; color: #0277bd; animation: pulse 2s infinite; }
 
 /* チャットエリア - スクロール可能に */
-.chat-area { 
+.chat-area {
   flex: 1;
   overflow-y: auto;
-  padding: 20px; 
-  background: #f7f9fc; 
-  min-height: 0; /* Flexboxの子要素でスクロールを有効にする */
+  padding: 20px;
+  background: #f7f9fc;
+  min-height: 150px; /* チャット最低表示領域を確保 */
 }
 
 /* メッセージスタイル */
@@ -289,7 +290,7 @@ input:checked + .slider:before { transform: translateX(20px); }
 
 /* モバイル対応 */
 @media (max-width: 768px) { 
-  .avatar-stage { height: 100px; }
+  .avatar-stage { height: 200px; }
   .avatar-container { width: 80px; height: 80px; }
   .floating-buttons { bottom: 80px; right: 16px; gap: 8px; } 
   .btn-floating { width: 52px; height: 52px; } 
