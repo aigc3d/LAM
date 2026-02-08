@@ -119,32 +119,41 @@ SYSTEM_PROMPTS = load_system_prompts()
 
 
 # ========================================
-# Audio2Expression 送信関数
+# Audio2Expression: 表情フレーム取得関数
 # ========================================
-def send_to_audio2exp(audio_base64_pcm: str, session_id: str):
+def get_expression_frames(audio_base64: str, session_id: str, audio_format: str = 'mp3'):
     """
-    Audio2Expression サービスに音声を送信（同期版）
-    別スレッドで呼び出されることを想定
+    Audio2Expression サービスに音声を送信して表情フレームを取得
+    MP3をそのまま送信（audio2exp-serviceがpydubで変換対応済み）
+
+    Returns: dict with {names, frames, frame_rate} or None
     """
     if not AUDIO2EXP_SERVICE_URL or not session_id:
-        return
+        return None
 
     try:
         response = requests.post(
             f"{AUDIO2EXP_SERVICE_URL}/api/audio2expression",
             json={
-                "audio_base64": audio_base64_pcm,
+                "audio_base64": audio_base64,
                 "session_id": session_id,
-                "is_final": True
+                "is_start": True,
+                "is_final": True,
+                "audio_format": audio_format
             },
             timeout=10
         )
         if response.status_code == 200:
-            logger.info(f"[Audio2Exp] 送信成功: session={session_id}")
+            result = response.json()
+            frame_count = len(result.get('frames', []))
+            logger.info(f"[Audio2Exp] 表情生成成功: {frame_count}フレーム, session={session_id}")
+            return result
         else:
             logger.warning(f"[Audio2Exp] 送信失敗: status={response.status_code}")
+            return None
     except Exception as e:
         logger.warning(f"[Audio2Exp] 送信エラー: {e}")
+        return None
 
 
 @app.route('/')
@@ -527,42 +536,25 @@ def synthesize_speech():
         logger.info(f"[TTS] MP3合成成功: {len(audio_base64)} bytes (base64)")
 
         # ========================================
-        # ★ Audio2Expression用にLINEAR16形式も生成して送信
+        # ★ Audio2Expression: MP3をそのまま送信して表情フレームを取得
+        #    PCM別途生成は不要（audio2exp-serviceがpydubで変換対応済み）
+        #    サーバー間通信なのでCORS問題なし・高速
         # ========================================
+        expression_data = None
         if AUDIO2EXP_SERVICE_URL and session_id:
             try:
-                audio_config_pcm = texttospeech.AudioConfig(
-                    audio_encoding=texttospeech.AudioEncoding.LINEAR16,
-                    sample_rate_hertz=16000,
-                    speaking_rate=speaking_rate,
-                    pitch=pitch
-                )
-
-                response_pcm = tts_client.synthesize_speech(
-                    input=synthesis_input,
-                    voice=voice,
-                    audio_config=audio_config_pcm
-                )
-
-                audio_base64_pcm = base64.b64encode(response_pcm.audio_content).decode('utf-8')
-                logger.info(f"[TTS] PCM合成成功: {len(audio_base64_pcm)} bytes (base64)")
-
-                # 非同期で送信（レスポンスを待たない）
-                thread = threading.Thread(
-                    target=send_to_audio2exp,
-                    args=(audio_base64_pcm, session_id)
-                )
-                thread.start()
-
-                logger.info(f"[TTS] Audio2Exp送信開始: session={session_id}")
-
+                expression_data = get_expression_frames(audio_base64, session_id, 'mp3')
             except Exception as e:
-                logger.warning(f"[TTS] Audio2Exp送信準備エラー: {e}")
+                logger.warning(f"[TTS] Audio2Exp表情取得エラー: {e}")
 
-        return jsonify({
+        result = {
             'success': True,
             'audio': audio_base64
-        })
+        }
+        if expression_data:
+            result['expression'] = expression_data
+
+        return jsonify(result)
 
     except Exception as e:
         logger.error(f"[TTS] エラー: {e}", exc_info=True)
