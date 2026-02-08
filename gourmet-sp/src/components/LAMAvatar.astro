@@ -275,6 +275,15 @@ class LAMAvatarController {
         }
       );
 
+      // ★ カメラ調整: アバター頭部を大きく表示（上部の無駄なスペースを削減）
+      const camera = this.renderer.getCamera?.();
+      if (camera) {
+        camera.position.set(0, 1.75, 0.6);  // Z:1→0.6 近づける, Y:1.8→1.75 やや下
+        camera.fov = 36;                      // FOV:50→36 ズームイン
+        camera.updateProjectionMatrix();
+        console.log('[LAM Avatar] Camera adjusted: pos=(0, 1.75, 0.6), fov=36');
+      }
+
       this.testStartTime = performance.now() / 1000;
       this.isInitialized = true;
       this.showCanvas();
