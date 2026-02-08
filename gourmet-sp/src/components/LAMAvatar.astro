@@ -277,11 +277,11 @@ class LAMAvatarController {
 
       // ★ カメラ調整: アバター頭部〜首を大きく表示
       // デフォルト: pos(0,1.8,1) lookAt(0,1.8,0) fov=50 → 頭上に無駄スペース
-      // 修正: 注視点を顔の中心(鼻〜口)に下げ、カメラを近づけてズーム
+      // 修正: 注視点を顔中心に、カメラをやや上からの自然な角度に
       const camera = this.renderer.getCamera?.();
       if (camera) {
-        const targetY = 1.62;  // 注視点: 顔の中心（鼻〜口元あたり）
-        camera.position.set(0, targetY, 0.55);
+        const targetY = 1.66;  // 注視点: 顔の中心
+        camera.position.set(0, 1.72, 0.55);  // カメラをtargetより上に → やや見下ろす角度
         camera.fov = 38;
         camera.updateProjectionMatrix();
 
@@ -291,7 +291,7 @@ class LAMAvatarController {
           controls.target.set(0, targetY, 0);
           controls.update();
         }
-        console.log(`[LAM Avatar] Camera adjusted: pos=(0,${targetY},0.55), fov=38, target.y=${targetY}`);
+        console.log(`[LAM Avatar] Camera adjusted: pos=(0,1.72,0.55), fov=38, target.y=${targetY}`);
       }
 
       this.testStartTime = performance.now() / 1000;
