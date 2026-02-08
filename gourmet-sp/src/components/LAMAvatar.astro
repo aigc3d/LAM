@@ -1,0 +1,536 @@
+---
+// LAMAvatar.astro - LAM 3D Avatar Component using gaussian-splat-renderer-for-lam
+// This component renders a 3D avatar using WebGL Gaussian Splatting
+// With OpenAvatarChat WebSocket integration for real-time lip sync
+
+export interface Props {
+  avatarPath?: string;  // Path to avatar .zip file
+  width?: string;
+  height?: string;
+  wsUrl?: string;       // WebSocket URL for OpenAvatarChat backend
+  autoConnect?: boolean; // Auto-connect to WebSocket on load
+}
+
+const {
+  avatarPath = '/avatar/concierge.zip',
+  width = '100%',
+  height = '100%',
+  wsUrl = '',
+  autoConnect = false
+} = Astro.props;
+---
+
+<div
+  class="lam-avatar-container"
+  id="lamAvatarContainer"
+  data-avatar-path={avatarPath}
+  data-ws-url={wsUrl}
+  data-auto-connect={autoConnect.toString()}
+  style={`width: ${width}; height: ${height};`}
+>
+  <div class="lam-avatar-canvas" id="lamAvatarCanvas"></div>
+  <div class="lam-avatar-loading" id="lamAvatarLoading">
+    <div class="spinner"></div>
+    <p>Loading 3D Avatar...</p>
+  </div>
+  <div class="lam-avatar-fallback" id="lamAvatarFallback">
+    <img src="/images/avatar-anime.png" alt="AI Avatar" class="fallback-img" />
+  </div>
+</div>
+
+<style>
+.lam-avatar-container {
+  position: relative;
+  background: transparent;
+  overflow: hidden;
+}
+
+.lam-avatar-canvas {
+  width: 100%;
+  height: 100%;
+  display: none;
+}
+
+.lam-avatar-canvas.ready {
+  display: block;
+}
+
+.lam-avatar-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  z-index: 10;
+}
+
+.lam-avatar-loading.hidden {
+  display: none;
+}
+
+.lam-avatar-loading .spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid rgba(6, 182, 212, 0.3);
+  border-top-color: #06b6d4;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 12px;
+}
+
+.lam-avatar-loading p {
+  color: #0891b2;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.lam-avatar-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lam-avatar-fallback.hidden {
+  display: none;
+}
+
+.fallback-img {
+  max-width: 80%;
+  max-height: 80%;
+  object-fit: contain;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+</style>
+
+<script>
+/**
+ * LAM Avatar Controller
+ *
+ * Synchronization: External TTS player + expression frames from audio2exp REST API
+ * - concierge-controller sends TTS audio to audio2exp-service
+ * - Expression frames are queued into frameBuffer before TTS playback
+ * - getExpressionData() reads frameBuffer indexed by ttsPlayer.currentTime
+ * - Renderer calls getExpressionData() at ~60fps
+ */
+
+import {
+  LAMWebSocketManager,
+  type ExpressionData,
+  type ExpressionFrameData,
+  type MotionData,
+  ARKIT_CHANNEL_NAMES
+} from '../scripts/lam/lam-websocket-manager';
+
+type ChatState = 'Idle' | 'Listening' | 'Thinking' | 'Responding';
+
+function createDefaultExpressionData(): ExpressionData {
+  const data: ExpressionData = {};
+  ARKIT_CHANNEL_NAMES.forEach(name => { data[name] = 0; });
+  return data;
+}
+
+class LAMAvatarController {
+  private container: HTMLElement;
+  private canvas: HTMLElement;
+  private loading: HTMLElement;
+  private fallback: HTMLElement;
+  private avatarPath: string;
+  private wsUrl: string;
+  private autoConnect: boolean;
+  private renderer: any = null;
+  private wsManager: LAMWebSocketManager | null = null;
+  private currentState: ChatState = 'Idle';
+  private expressionData: ExpressionData = createDefaultExpressionData();
+  private isInitialized = false;
+
+  // Test mode: loop test_expression_1s.json
+  private testMode: boolean = false;
+  private testBsData: any = null;
+  private testStartTime: number = 0;
+
+  private syncMode: 'bundled' | 'external' = 'external';
+
+  // External TTS sync
+  private externalTtsPlayer: HTMLAudioElement | null = null;
+  private externalTtsLinked: boolean = false;
+  private ttsPlayHandler: (() => void) | null = null;
+  private ttsPauseHandler: (() => void) | null = null;
+  private ttsEndedHandler: (() => void) | null = null;
+  private ttsActive: boolean = false;
+  private ttsLastCurrentTime: number = 0;
+
+  // Frame buffer for expression
+  private frameBuffer: ExpressionData[] = [];
+  private frameRate: number = 30;
+
+  constructor(container: HTMLElement) {
+    this.container = container;
+    this.canvas = container.querySelector('#lamAvatarCanvas') as HTMLElement;
+    this.loading = container.querySelector('#lamAvatarLoading') as HTMLElement;
+    this.fallback = container.querySelector('#lamAvatarFallback') as HTMLElement;
+    this.avatarPath = container.dataset.avatarPath || '/avatar/concierge.zip';
+    this.wsUrl = container.dataset.wsUrl || '';
+    this.autoConnect = container.dataset.autoConnect === 'true';
+
+    this.init();
+  }
+
+  private async init() {
+    try {
+      await this.loadRenderer();
+
+      // Health check (10s interval)
+      setInterval(() => {
+        const jaw = this.expressionData['jawOpen'] || 0;
+        const mouth = this.expressionData['mouthLowerDownLeft'] || 0;
+        console.log(`[LAM Health] state=${this.currentState}, jaw=${jaw.toFixed(3)}, mouth=${mouth.toFixed(3)}, buffer=${this.frameBuffer.length}, ttsActive=${this.ttsActive}`);
+      }, 10000);
+
+      if (this.autoConnect && this.wsUrl) {
+        await this.connectWebSocket(this.wsUrl);
+      }
+    } catch (error) {
+      console.warn('LAM WebGL renderer not available, using fallback image:', error);
+      this.showFallback();
+    }
+  }
+
+  public setExternalTtsPlayer(player: HTMLAudioElement): void {
+    if (this.externalTtsLinked && this.externalTtsPlayer === player) {
+      console.log('[LAM Avatar] External TTS player already linked, skipping');
+      return;
+    }
+
+    // Remove old listeners if switching players
+    if (this.externalTtsPlayer && this.externalTtsPlayer !== player) {
+      if (this.ttsPlayHandler) this.externalTtsPlayer.removeEventListener('play', this.ttsPlayHandler);
+      if (this.ttsPauseHandler) this.externalTtsPlayer.removeEventListener('pause', this.ttsPauseHandler);
+      if (this.ttsEndedHandler) this.externalTtsPlayer.removeEventListener('ended', this.ttsEndedHandler);
+    }
+
+    this.externalTtsPlayer = player;
+    this.syncMode = 'external';
+
+    this.ttsPlayHandler = () => {
+      console.log(`[LAM External] TTS play - frameBuffer has ${this.frameBuffer.length} frames`);
+      this.ttsActive = true;
+      this.ttsLastCurrentTime = player.currentTime;
+    };
+
+    this.ttsPauseHandler = () => {
+      // pause イベントでは ttsActive を false にしない（バッファリング等で一時的に発火するため）
+      console.log('[LAM External] TTS pause event, currentTime=' + player.currentTime.toFixed(3));
+    };
+
+    this.ttsEndedHandler = () => {
+      console.log('[LAM External] TTS ended event');
+      this.ttsActive = false;
+    };
+
+    player.addEventListener('play', this.ttsPlayHandler);
+    player.addEventListener('pause', this.ttsPauseHandler);
+    player.addEventListener('ended', this.ttsEndedHandler);
+
+    this.externalTtsLinked = true;
+    console.log('[LAM Avatar] External TTS player linked');
+  }
+
+  public setSyncMode(mode: 'bundled' | 'external'): void {
+    this.syncMode = mode;
+    console.log(`[LAM Avatar] Sync mode set to: ${mode}`);
+  }
+
+  private async loadRenderer() {
+    try {
+      const GaussianSplats3D = await import('gaussian-splat-renderer-for-lam');
+
+      if (this.testMode) {
+        try {
+          const response = await fetch('/avatar/test_expression_1s.json');
+          this.testBsData = await response.json();
+          console.log(`[LAM TEST] Loaded test_expression_1s.json: ${this.testBsData.frames.length} frames`);
+        } catch (e) {
+          console.error('[LAM TEST] Failed to load test data:', e);
+          this.testMode = false;
+        }
+      }
+
+      this.renderer = await GaussianSplats3D.GaussianSplatRenderer.getInstance(
+        this.canvas,
+        this.avatarPath,
+        {
+          getChatState: this.getChatState.bind(this),
+          getExpressionData: this.getExpressionData.bind(this),
+          backgroundColor: '0xbae6fd',
+          alpha: 0.0
+        }
+      );
+
+      this.testStartTime = performance.now() / 1000;
+      this.isInitialized = true;
+      this.showCanvas();
+      console.log('LAM Avatar initialized successfully');
+
+      if (this.testMode) {
+        console.log('[LAM TEST] Test mode enabled - looping test_expression_1s.json');
+      }
+    } catch (error) {
+      throw new Error(`Failed to load LAM renderer: ${error}`);
+    }
+  }
+
+  private showCanvas() {
+    this.loading.classList.add('hidden');
+    this.fallback.classList.add('hidden');
+    this.canvas.classList.add('ready');
+  }
+
+  private showFallback() {
+    this.loading.classList.add('hidden');
+    this.canvas.classList.remove('ready');
+    this.fallback.classList.remove('hidden');
+  }
+
+  // WebSocket connection management
+
+  public async connectWebSocket(url: string): Promise<void> {
+    if (this.wsManager) {
+      this.wsManager.destroy();
+    }
+
+    this.wsManager = new LAMWebSocketManager({
+      onExpressionUpdate: (data: ExpressionData) => {
+        if (this.syncMode === 'bundled') return;
+        Object.keys(data).forEach(key => { this.expressionData[key] = data[key]; });
+      },
+      onExpressionFrames: (data: ExpressionFrameData) => {
+        if (this.syncMode === 'bundled') return;
+        this.frameBuffer = this.frameBuffer.concat(data.frames);
+        this.frameRate = data.frameRate;
+        console.log(`[LAM Expression] Queued ${data.frameCount} frames via WebSocket`);
+      },
+      onAudioData: (audio: Int16Array) => {
+        console.log(`[LAM Audio] Received ${audio.length} samples`);
+      },
+      onConnectionChange: (connected: boolean) => {
+        this.container.dispatchEvent(new CustomEvent('lamConnectionChange', { detail: { connected } }));
+        if (connected) this.setChatState('Idle');
+      },
+      onBatchStarted: (batchId: number) => {
+        console.log(`[LAM Avatar] Batch ${batchId} started`);
+        this.setChatState('Responding');
+        this.container.dispatchEvent(new CustomEvent('lamSpeechStart', { detail: { batchId } }));
+      },
+      onBatchEnded: (batchId: number) => {
+        console.log(`[LAM Avatar] Batch ${batchId} ended`);
+        this.resetExpression();
+        this.setChatState('Idle');
+        this.container.dispatchEvent(new CustomEvent('lamSpeechEnd', { detail: { batchId } }));
+      }
+    });
+
+    await this.wsManager.initializeAudio();
+    await this.wsManager.connect(url);
+    console.log('[LAM Avatar] WebSocket connected:', url);
+  }
+
+  public disconnectWebSocket(): void {
+    if (this.wsManager) {
+      this.wsManager.destroy();
+      this.wsManager = null;
+    }
+  }
+
+  public isWebSocketConnected(): boolean {
+    return this.wsManager?.isConnected() ?? false;
+  }
+
+  public stopAudio(): void { this.wsManager?.stopAudio(); }
+  public setAudioMute(muted: boolean): void { this.wsManager?.setAudioMute(muted); }
+  public isAudioPlaying(): boolean { return this.wsManager?.isAudioPlaying() ?? false; }
+
+  // ========================================
+  // Expression sync
+  // ========================================
+
+  private resetExpression(): void {
+    ARKIT_CHANNEL_NAMES.forEach(name => { this.expressionData[name] = 0; });
+    console.log('[LAM Avatar] Expression reset to neutral');
+  }
+
+  public getChatState(): ChatState { return this.currentState; }
+
+  public setChatState(state: ChatState) {
+    if (this.currentState !== state) {
+      console.log(`[LAM Avatar] setChatState: ${this.currentState} -> ${state}`);
+      this.currentState = state;
+      this.container.dispatchEvent(new CustomEvent('lamStateChange', { detail: { state } }));
+    }
+  }
+
+  private getExpCallCount = 0;
+  private lastLoggedFrameIndex = -1;
+
+  /**
+   * Called by renderer at ~60fps
+   * Returns expression data based on TTS player currentTime
+   */
+  public getExpressionData() {
+    this.getExpCallCount++;
+
+    // Test mode: loop test data
+    if (this.testMode && this.testBsData) {
+      const length = this.testBsData.frames.length;
+      const frameInfoInternal = 1.0 / 30.0;
+      const currentTime = performance.now() / 1000;
+      const calcDelta = (currentTime - this.testStartTime) % (length * frameInfoInternal);
+      const frameIndex = Math.floor(calcDelta / frameInfoInternal);
+
+      this.expressionData = {};
+      this.testBsData.names.forEach((name: string, index: number) => {
+        this.expressionData[name] = this.testBsData.frames[frameIndex].weights[index];
+      });
+
+      if (this.getExpCallCount % 30 === 0) {
+        const jaw = this.expressionData['jawOpen'] || 0;
+        console.log(`[LAM TEST] Frame ${frameIndex}/${length}: jaw=${jaw.toFixed(3)}`);
+      }
+      return this.expressionData;
+    }
+
+    // TTS sync mode: index frameBuffer by ttsPlayer.currentTime
+    if (this.syncMode === 'external' && this.externalTtsPlayer && this.frameBuffer.length > 0) {
+      const currentTimeMs = this.externalTtsPlayer.currentTime * 1000;
+      const isSyncActive = this.ttsActive || (currentTimeMs > 0 && !this.externalTtsPlayer.ended);
+
+      if (isSyncActive) {
+        const effectiveTimeMs = Math.max(0, currentTimeMs);
+        const frameIndex = Math.floor((effectiveTimeMs / 1000) * this.frameRate);
+
+        if (frameIndex >= 0 && frameIndex < this.frameBuffer.length) {
+          this.expressionData = {};
+          const frame = this.frameBuffer[frameIndex];
+          Object.keys(frame).forEach((name: string) => {
+            this.expressionData[name] = frame[name];
+          });
+
+          if (frameIndex !== this.lastLoggedFrameIndex && frameIndex % 10 === 0) {
+            this.lastLoggedFrameIndex = frameIndex;
+            const jaw = this.expressionData['jawOpen'] || 0;
+            const mouth = this.expressionData['mouthLowerDownLeft'] || 0;
+            console.log(`[LAM TTS-Sync] Frame ${frameIndex}/${this.frameBuffer.length}: jaw=${jaw.toFixed(3)}, mouth=${mouth.toFixed(3)}, time=${effectiveTimeMs.toFixed(0)}ms`);
+          }
+
+          if (this.currentState !== 'Responding') {
+            this.setChatState('Responding');
+          }
+          this.ttsLastCurrentTime = this.externalTtsPlayer.currentTime;
+          return this.expressionData;
+
+        } else if (frameIndex >= this.frameBuffer.length) {
+          // Past buffer end - hold last frame while TTS still playing
+          const lastFrame = this.frameBuffer[this.frameBuffer.length - 1];
+          if (lastFrame) {
+            this.expressionData = {};
+            Object.keys(lastFrame).forEach((name: string) => {
+              this.expressionData[name] = lastFrame[name];
+            });
+          }
+          if (!this.externalTtsPlayer.ended) {
+            return this.expressionData;
+          }
+        }
+      }
+
+      // TTS ended - reset to idle (buffer cleared by concierge-controller on next speech)
+      if (this.externalTtsPlayer.ended && !this.ttsActive) {
+        if (this.currentState === 'Responding') {
+          console.log('[LAM TTS-Sync] TTS ended, resetting to idle');
+          this.resetExpression();
+          this.setChatState('Idle');
+        }
+      }
+    }
+
+    // Idle: periodic debug log
+    if (this.getExpCallCount % 200 === 0) {
+      const ttsTime = this.externalTtsPlayer ? this.externalTtsPlayer.currentTime.toFixed(2) : 'N/A';
+      console.log(`[LAM Idle] buffer=${this.frameBuffer.length}, ttsActive=${this.ttsActive}, ttsTime=${ttsTime}s`);
+    }
+
+    return this.expressionData;
+  }
+
+  public setExpressionData(data: ExpressionData) {
+    this.expressionData = data;
+  }
+
+  public updateFromAudio2Expression(frameData: { names: string[], weights: number[] }) {
+    const newExpression: ExpressionData = {};
+    frameData.names.forEach((name, index) => {
+      newExpression[name] = frameData.weights[index];
+    });
+    this.expressionData = newExpression;
+  }
+
+  public sendEndSpeech(): void {
+    this.wsManager?.sendEndSpeech();
+  }
+
+  /**
+   * Queue expression frames from REST API
+   * Frames are appended to frameBuffer for TTS-sync playback
+   */
+  public queueExpressionFrames(frames: ExpressionData[], frameRate: number = 30): void {
+    if (!frames || frames.length === 0) {
+      console.warn('[LAM Avatar] queueExpressionFrames called with no frames');
+      return;
+    }
+
+    this.frameBuffer = this.frameBuffer.concat(frames);
+    this.frameRate = frameRate;
+    console.log(`[LAM Avatar] Added ${frames.length} frames to buffer (total: ${this.frameBuffer.length}) at ${frameRate}fps`);
+  }
+
+  /**
+   * Clear frame buffer (call when starting new speech)
+   */
+  public clearFrameBuffer(): void {
+    this.frameBuffer = [];
+    this.lastLoggedFrameIndex = -1;
+    this.ttsActive = false;
+    this.ttsLastCurrentTime = 0;
+    console.log('[LAM Avatar] Frame buffer cleared');
+  }
+
+  /**
+   * Stop TTS sync manually (call when TTS is interrupted)
+   */
+  public stopTtsSync(): void {
+    console.log('[LAM Avatar] stopTtsSync called');
+    this.ttsActive = false;
+    this.resetExpression();
+    this.setChatState('Idle');
+  }
+
+  public getWebSocketManager(): LAMWebSocketManager | null {
+    return this.wsManager;
+  }
+}
+
+// Initialize when DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+  const container = document.getElementById('lamAvatarContainer');
+  if (container) {
+    (window as any).lamAvatarController = new LAMAvatarController(container);
+  }
+});
+
+export { LAMAvatarController };
+</script>
