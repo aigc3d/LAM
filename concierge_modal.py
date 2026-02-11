@@ -2,20 +2,26 @@
 concierge_modal.py - Concierge ZIP Generator on Modal
 =====================================================
 
-Gradio UI for generating concierge.zip (3D avatar data for LAMAvatar/gourmet-sp).
+Gradio UI for generating concierge.zip with CUSTOM image + CUSTOM motion video.
+
+The official LAM UI only allows selecting from pre-set sample motion videos.
+This script enables uploading your own motion video, which is processed through
+VHAP FLAME tracking to extract per-frame expression/pose parameters, then used
+with LAM inference to generate a high-quality concierge.zip.
 
 Usage:
   modal serve concierge_modal.py   # Development mode (hot reload)
   modal deploy concierge_modal.py  # Production deployment
 
+Pipeline:
+  1. Source Image  → FlameTrackingSingleImage → shape parameters
+  2. Motion Video  → VHAP GlobalTracker → per-frame FLAME parameters
+  3. Shape + Motion → LAM inference → 3D Gaussian avatar
+  4. Avatar data   → Blender GLB export → concierge.zip
+
 Prerequisites:
   - ./assets/human_parametric_models/ directory with FLAME model assets
   - Modal account with GPU access (A10G)
-
-Architecture:
-  - @modal.asgi_app() + Gradio 4.x (no subprocess, no patching)
-  - Direct Python integration with LAM pipeline
-  - Blender 4.2 for GLB generation (OpenAvatarChat format)
 """
 
 import os
@@ -109,6 +115,7 @@ image = (
         "ninja",
         "patool",
         "safetensors",
+        "decord",
         "numpy==1.23.5",
     )
     # More CUDA extensions
@@ -167,7 +174,6 @@ image = (
 def _init_lam_pipeline():
     """Initialize FLAME tracking and LAM model. Called once per container."""
     import torch
-    from omegaconf import OmegaConf
 
     os.chdir("/root/LAM")
     sys.path.insert(0, "/root/LAM")
@@ -191,7 +197,7 @@ def _init_lam_pipeline():
     lam.eval()
     print("LAM model loaded.")
 
-    # Initialize FLAME tracking
+    # Initialize FLAME tracking (reused for both image and video frames)
     from tools.flame_tracking_single_image import FlameTrackingSingleImage
     print("Initializing FLAME tracking...")
     flametracking = FlameTrackingSingleImage(
@@ -207,11 +213,226 @@ def _init_lam_pipeline():
     return cfg, lam, flametracking
 
 
-def _generate_concierge_zip(image_path: str, cfg, lam, flametracking):
+def _track_video_to_motion(video_path, flametracking, working_dir, status_callback=None):
     """
-    Full pipeline: image -> FLAME tracking -> LAM inference -> Blender GLB -> ZIP.
+    Process a custom motion video through VHAP FLAME tracking.
 
-    Returns (status_msg, zip_path, preview_video_path).
+    Pipeline:
+      video.mp4 → extract frames → per-frame preprocessing (face detect, matting, landmarks)
+      → VHAP GlobalTracker → tracked_flame_params.npz → export as NeRF dataset
+      → motion_dir/ with transforms.json + flame_param/*.npz
+
+    Args:
+        video_path: Path to the uploaded video file
+        flametracking: FlameTrackingSingleImage instance (reuse detection models)
+        working_dir: Temporary working directory
+        status_callback: Optional function to report progress
+
+    Returns:
+        flame_params_dir: Path to flame_param/ directory for LAM inference
+    """
+    import cv2
+    import numpy as np
+    import torch
+    import torchvision
+    from pathlib import Path
+
+    def report(msg):
+        if status_callback:
+            status_callback(msg)
+        print(msg)
+
+    # --- Step A: Extract frames from video ---
+    report("  Extracting video frames...")
+    frames_root = os.path.join(working_dir, "video_tracking", "preprocess")
+    sequence_name = "custom_motion"
+    sequence_dir = os.path.join(frames_root, sequence_name)
+
+    images_dir = os.path.join(sequence_dir, "images")
+    alpha_dir = os.path.join(sequence_dir, "alpha_maps")
+    landmark_dir = os.path.join(sequence_dir, "landmark2d")
+    os.makedirs(images_dir, exist_ok=True)
+    os.makedirs(alpha_dir, exist_ok=True)
+    os.makedirs(landmark_dir, exist_ok=True)
+
+    cap = cv2.VideoCapture(video_path)
+    video_fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    # Sample at 30fps or video's native fps, whichever is lower
+    target_fps = min(30, video_fps) if video_fps > 0 else 30
+    frame_interval = max(1, int(round(video_fps / target_fps)))
+    max_frames = 300  # Cap at 10 seconds at 30fps to keep processing manageable
+
+    report(f"  Video: {total_frames} frames at {video_fps:.1f}fps, sampling every {frame_interval} frame(s)")
+
+    # --- Step B: Per-frame preprocessing ---
+    report("  Processing frames (face detection, matting, landmarks)...")
+    all_landmarks = []
+    frame_idx = 0
+    processed_count = 0
+
+    while True:
+        ret, frame_bgr = cap.read()
+        if not ret:
+            break
+
+        if frame_idx % frame_interval != 0:
+            frame_idx += 1
+            continue
+
+        if processed_count >= max_frames:
+            break
+
+        # Convert to RGB tensor for VGGHead detection
+        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        frame_tensor = torch.from_numpy(frame_rgb).permute(2, 0, 1)  # [3, H, W]
+
+        # Face detection via VGGHead
+        try:
+            from tools.flame_tracking_single_image import expand_bbox
+            _, bbox, _ = flametracking.vgghead_encoder(frame_tensor, processed_count)
+            if bbox is None:
+                frame_idx += 1
+                continue
+        except Exception:
+            frame_idx += 1
+            continue
+
+        # Expand bbox and crop
+        bbox = expand_bbox(bbox, scale=1.65).long()
+        cropped = torchvision.transforms.functional.crop(
+            frame_tensor, top=bbox[1], left=bbox[0],
+            height=bbox[3] - bbox[1], width=bbox[2] - bbox[0],
+        )
+        cropped = torchvision.transforms.functional.resize(
+            cropped, (1024, 1024), antialias=True,
+        )
+
+        # Matting (background removal)
+        cropped_matted, mask = flametracking.matting_engine(
+            cropped / 255.0, return_type="matting", background_rgb=1.0,
+        )
+        cropped_matted = cropped_matted.cpu() * 255.0
+        saved_image = np.round(
+            cropped_matted.permute(1, 2, 0).numpy()
+        ).astype(np.uint8)[:, :, ::-1]  # RGB -> BGR for cv2
+
+        # Save image and alpha map
+        fname = f"{processed_count:05d}.png"
+        cv2.imwrite(os.path.join(images_dir, fname), saved_image)
+        cv2.imwrite(
+            os.path.join(alpha_dir, fname.replace(".png", ".jpg")),
+            (np.ones_like(saved_image) * 255).astype(np.uint8),
+        )
+
+        # Landmark detection
+        saved_image_rgb = saved_image[:, :, ::-1]  # BGR -> RGB for alignment
+        detections, _ = flametracking.detector.detect(saved_image_rgb, 0.8, 1)
+        frame_landmarks = None
+        for det in detections:
+            x1, y1 = det[2], det[3]
+            x2, y2 = x1 + det[4], y1 + det[5]
+            scale = max(x2 - x1, y2 - y1) / 180
+            cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+            face_lmk = flametracking.alignment.analyze(
+                saved_image_rgb, float(scale), float(cx), float(cy),
+            )
+            normalized = np.zeros((face_lmk.shape[0], 3))
+            normalized[:, :2] = face_lmk / 1024
+            frame_landmarks = normalized
+            break
+
+        if frame_landmarks is None:
+            frame_idx += 1
+            continue
+
+        all_landmarks.append(frame_landmarks)
+        processed_count += 1
+
+        if processed_count % 30 == 0:
+            report(f"  Processed {processed_count} frames...")
+
+        frame_idx += 1
+
+    cap.release()
+    torch.cuda.empty_cache()
+
+    if processed_count == 0:
+        raise RuntimeError("No valid face frames found in video")
+
+    report(f"  Preprocessed {processed_count} frames")
+
+    # Save landmarks in the format VHAP expects
+    # landmarks.npz: bounding_box=[], face_landmark_2d=[N, num_lmks, 3]
+    stacked_landmarks = np.stack(all_landmarks, axis=0)  # [N, 68, 3]
+    np.savez(
+        os.path.join(landmark_dir, "landmarks.npz"),
+        bounding_box=[],
+        face_landmark_2d=stacked_landmarks,
+    )
+
+    # --- Step C: VHAP Tracking ---
+    report("  Running VHAP FLAME tracking (this may take several minutes)...")
+
+    import tyro
+    from yaml import safe_load
+    from vhap.config.base import BaseTrackingConfig
+    from vhap.model.tracker import GlobalTracker
+
+    with open("configs/vhap_tracking/base_tracking_config.yaml", "r") as f:
+        config_data = safe_load(f)
+    vhap_cfg = tyro.from_yaml(BaseTrackingConfig, config_data)
+
+    # Configure for our video sequence
+    vhap_cfg.data.sequence = sequence_name
+    vhap_cfg.data.root_folder = Path(frames_root)
+
+    tracking_output = os.path.join(working_dir, "video_tracking", "tracking")
+    vhap_cfg.exp.output_folder = Path(tracking_output)
+
+    tracker = GlobalTracker(vhap_cfg)
+    tracker.optimize()
+    torch.cuda.empty_cache()
+
+    report("  VHAP tracking complete")
+
+    # --- Step D: Export to NeRF dataset format ---
+    report("  Exporting motion sequence...")
+
+    from vhap.export_as_nerf_dataset import (
+        NeRFDatasetWriter, TrackedFLAMEDatasetWriter, split_json, load_config,
+    )
+
+    export_dir = os.path.join(working_dir, "video_tracking", "export", sequence_name)
+    export_path = Path(export_dir)
+
+    src_folder, cfg_loaded = load_config(Path(tracking_output))
+
+    nerf_writer = NeRFDatasetWriter(cfg_loaded.data, export_path, None, None, "white")
+    nerf_writer.write()
+
+    flame_writer = TrackedFLAMEDatasetWriter(
+        cfg_loaded.model, src_folder, export_path, mode="param", epoch=-1,
+    )
+    flame_writer.write()
+
+    split_json(export_path)
+
+    flame_params_dir = os.path.join(export_dir, "flame_param")
+    report(f"  Motion sequence exported: {len(os.listdir(flame_params_dir))} frames")
+
+    return flame_params_dir
+
+
+def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking):
+    """
+    Full pipeline: image + video -> concierge.zip
+
+    If video_path is provided, extract custom motion via VHAP tracking.
+    Otherwise, use default sample motion ("nice").
+
+    Yields (status_msg, zip_path, preview_video_path) tuples for progress.
     """
     import torch
     import numpy as np
@@ -220,27 +441,25 @@ def _generate_concierge_zip(image_path: str, cfg, lam, flametracking):
     import tempfile
     from pathlib import Path
     from PIL import Image
+    from glob import glob
 
     from lam.runners.infer.head_utils import prepare_motion_seqs, preprocess_image
 
     working_dir = tempfile.mkdtemp(prefix="concierge_")
     base_iid = "concierge"
-    # Use first available motion sequence
-    default_motion = "nice"
-    flame_params_dir = f"./assets/sample_motion/export/{default_motion}/flame_param"
 
     try:
-        # --- Step 1: Preprocess image ---
-        yield "Step 1/5: Preprocessing image...", None, None
+        # ============================================================
+        # Step 1: Source image FLAME tracking
+        # ============================================================
+        yield "Step 1: FLAME tracking on source image...", None, None
 
         image_raw = os.path.join(working_dir, "raw.png")
         with Image.open(image_path).convert("RGB") as img:
             img.save(image_raw)
 
-        # FLAME tracking
-        yield "Step 2/5: FLAME face tracking...", None, None
         ret = flametracking.preprocess(image_raw)
-        assert ret == 0, "FLAME preprocess failed"
+        assert ret == 0, "FLAME preprocess failed - could not detect face in image"
         ret = flametracking.optimize()
         assert ret == 0, "FLAME optimize failed"
         ret, output_dir = flametracking.export()
@@ -249,9 +468,44 @@ def _generate_concierge_zip(image_path: str, cfg, lam, flametracking):
         tracked_image = os.path.join(output_dir, "images/00000_00.png")
         mask_path = os.path.join(output_dir, "fg_masks/00000_00.png")
 
-        # --- Step 2: Prepare inputs ---
-        yield "Step 3/5: LAM inference...", None, None
+        # ============================================================
+        # Step 2: Motion sequence preparation
+        # ============================================================
+        if video_path and os.path.isfile(video_path):
+            # --- Custom video: VHAP tracking ---
+            total_steps = 6
+            yield f"Step 2/{total_steps}: Processing custom motion video (VHAP tracking)...", None, None
 
+            def video_status(msg):
+                # Forward sub-status through generator isn't easy,
+                # so we just print to container logs
+                print(f"  [Video Tracking] {msg}")
+
+            flame_params_dir = _track_video_to_motion(
+                video_path, flametracking, working_dir,
+                status_callback=video_status,
+            )
+            motion_source = "custom video"
+        else:
+            # --- Default sample motion ---
+            total_steps = 5
+            # Find available sample motions
+            sample_motions = glob("./assets/sample_motion/export/*/flame_param")
+            if sample_motions:
+                flame_params_dir = sample_motions[0]
+                motion_name = os.path.basename(os.path.dirname(flame_params_dir))
+                motion_source = f"sample '{motion_name}'"
+            else:
+                raise RuntimeError(
+                    "No motion sequences available. "
+                    "Please upload a custom motion video."
+                )
+
+        yield f"Step 3/{total_steps}: Preparing LAM inference (motion: {motion_source})...", None, None
+
+        # ============================================================
+        # Step 3: LAM inference
+        # ============================================================
         source_size = cfg.source_size
         render_size = cfg.render_size
 
@@ -263,7 +517,6 @@ def _generate_concierge_zip(image_path: str, cfg, lam, flametracking):
             need_mask=True, get_shape_param=True,
         )
 
-        # Prepare motion sequence
         src = tracked_image.split("/")[-3]
         driven = flame_params_dir.split("/")[-2]
         motion_seq = prepare_motion_seqs(
@@ -275,7 +528,8 @@ def _generate_concierge_zip(image_path: str, cfg, lam, flametracking):
             cross_id=False, src_driven=[src, driven],
         )
 
-        # --- Step 3: LAM inference ---
+        yield f"Step 4/{total_steps}: Running LAM inference...", None, None
+
         motion_seq["flame_params"]["betas"] = shape_param.unsqueeze(0)
         device = "cuda"
         with torch.no_grad():
@@ -285,21 +539,25 @@ def _generate_concierge_zip(image_path: str, cfg, lam, flametracking):
                 render_c2ws=motion_seq["render_c2ws"].to(device),
                 render_intrs=motion_seq["render_intrs"].to(device),
                 render_bg_colors=motion_seq["render_bg_colors"].to(device),
-                flame_params={k: v.to(device) for k, v in motion_seq["flame_params"].items()},
+                flame_params={
+                    k: v.to(device) for k, v in motion_seq["flame_params"].items()
+                },
             )
 
-        # --- Step 4: Generate GLB + export ---
-        yield "Step 4/5: Generating 3D avatar (Blender GLB)...", None, None
+        # ============================================================
+        # Step 4: Generate GLB + ZIP
+        # ============================================================
+        yield f"Step 5/{total_steps}: Generating 3D avatar (Blender GLB)...", None, None
 
         oac_dir = os.path.join(working_dir, "oac_export", base_iid)
         os.makedirs(oac_dir, exist_ok=True)
 
         # Save shaped mesh + Gaussian offset
         saved_head_path = lam.renderer.flame_model.save_shaped_mesh(
-            shape_param.unsqueeze(0).cuda(), fd=oac_dir
+            shape_param.unsqueeze(0).cuda(), fd=oac_dir,
         )
         res["cano_gs_lst"][0].save_ply(
-            os.path.join(oac_dir, "offset.ply"), rgb2sh=False, offset2xyz=True
+            os.path.join(oac_dir, "offset.ply"), rgb2sh=False, offset2xyz=True,
         )
 
         # Generate GLB via Blender
@@ -321,12 +579,15 @@ def _generate_concierge_zip(image_path: str, cfg, lam, flametracking):
         if os.path.exists(saved_head_path):
             os.remove(saved_head_path)
 
-        # --- Step 5: Create ZIP ---
-        yield "Step 5/5: Creating concierge.zip...", None, None
+        # ============================================================
+        # Step 5: Create ZIP + preview
+        # ============================================================
+        step_label = f"Step {total_steps}/{total_steps}"
+        yield f"{step_label}: Creating concierge.zip...", None, None
 
         output_zip = os.path.join(working_dir, "concierge.zip")
         with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-            for root, dirs, files in os.walk(oac_dir):
+            for root, _dirs, files in os.walk(oac_dir):
                 for fname in files:
                     fpath = os.path.join(root, fname)
                     arcname = os.path.relpath(fpath, os.path.dirname(oac_dir))
@@ -343,11 +604,24 @@ def _generate_concierge_zip(image_path: str, cfg, lam, flametracking):
         from app_lam import save_images2video
         save_images2video(rgb, preview_path, 30)
 
+        # Add audio if available (from custom video)
+        final_preview = preview_path
+        if video_path and os.path.isfile(video_path):
+            try:
+                from app_lam import add_audio_to_video
+                preview_with_audio = os.path.join(working_dir, "preview_audio.mp4")
+                add_audio_to_video(preview_path, preview_with_audio, video_path)
+                final_preview = preview_with_audio
+            except Exception:
+                pass  # Fallback to video without audio
+
         zip_size_mb = os.path.getsize(output_zip) / (1024 * 1024)
+        num_motion_frames = len(os.listdir(flame_params_dir))
         yield (
-            f"concierge.zip generated successfully ({zip_size_mb:.1f} MB)",
+            f"concierge.zip generated ({zip_size_mb:.1f} MB) | "
+            f"Motion: {motion_source} ({num_motion_frames} frames)",
             output_zip,
-            preview_path,
+            final_preview,
         )
 
     except Exception as e:
@@ -371,7 +645,7 @@ def web():
     """Gradio UI served via ASGI (no subprocess, no patching)."""
     import gradio as gr
     from fastapi import FastAPI
-    from fastapi.responses import HTMLResponse
+    from glob import glob
 
     # --- Initialize pipeline (once per container) ---
     os.chdir("/root/LAM")
@@ -381,12 +655,26 @@ def web():
     cfg, lam, flametracking = _init_lam_pipeline()
     print("Pipeline ready. Starting Gradio UI...")
 
+    # Discover available sample motions (if any)
+    sample_motions = sorted(glob("./assets/sample_motion/export/*/*.mp4"))
+
     # --- Processing function ---
-    def process_image(image_path):
+    def process(image_path, video_path, motion_choice):
         if image_path is None:
-            yield "Error: No image uploaded", None, None
+            yield "Error: Please upload a face image", None, None
             return
-        yield from _generate_concierge_zip(image_path, cfg, lam, flametracking)
+
+        # Determine motion source
+        effective_video = None
+        if motion_choice == "custom" and video_path:
+            effective_video = video_path
+        elif motion_choice and motion_choice != "custom":
+            # Using a sample motion - video_path is ignored, flame_params used directly
+            effective_video = None
+
+        yield from _generate_concierge_zip(
+            image_path, effective_video, cfg, lam, flametracking,
+        )
 
     # --- Build Gradio Blocks ---
     with gr.Blocks(
@@ -394,38 +682,67 @@ def web():
         theme=gr.themes.Soft(),
         css="""
         .main-title { text-align: center; margin-bottom: 0.5em; }
-        .subtitle { text-align: center; color: #666; margin-bottom: 1.5em; }
+        .subtitle { text-align: center; color: #666; font-size: 0.95em; margin-bottom: 1.5em; }
         footer { display: none !important; }
+        .tip-box { background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px;
+                    padding: 12px 16px; margin-top: 8px; font-size: 0.9em; color: #0369a1; }
         """,
     ) as demo:
         gr.HTML('<h1 class="main-title">Concierge ZIP Generator</h1>')
         gr.HTML(
             '<p class="subtitle">'
-            "Upload a face image to generate concierge.zip "
-            "(3D Gaussian avatar for LAMAvatar)"
+            "Upload your face image + custom motion video to generate "
+            "a high-quality concierge.zip for LAMAvatar"
             "</p>"
         )
 
         with gr.Row():
-            # Left column: Input
+            # ---- Left: Inputs ----
             with gr.Column(scale=1):
                 input_image = gr.Image(
-                    label="Input Face Image",
+                    label="1. Source Face Image",
                     type="filepath",
-                    height=400,
+                    height=300,
                 )
+
+                motion_choice = gr.Radio(
+                    label="2. Motion Source",
+                    choices=["custom"] + [
+                        os.path.basename(os.path.dirname(m))
+                        for m in sample_motions
+                    ] if sample_motions else ["custom"],
+                    value="custom",
+                    info="Select 'custom' to upload your own video, or choose a sample",
+                )
+
+                input_video = gr.Video(
+                    label="3. Custom Motion Video",
+                    height=200,
+                )
+
+                gr.HTML(
+                    '<div class="tip-box">'
+                    "<b>Tips for best results:</b><br>"
+                    "- Source image: front-facing, good lighting, neutral expression<br>"
+                    "- Motion video: clear face, consistent lighting, 3-10 seconds<br>"
+                    "- The motion video's expressions drive the avatar animation quality"
+                    "</div>"
+                )
+
                 generate_btn = gr.Button(
                     "Generate concierge.zip",
                     variant="primary",
                     size="lg",
                 )
+
                 status_text = gr.Textbox(
                     label="Status",
                     interactive=False,
-                    placeholder="Upload an image and click Generate...",
+                    placeholder="Upload image + video, then click Generate...",
+                    lines=2,
                 )
 
-            # Right column: Output
+            # ---- Right: Outputs ----
             with gr.Column(scale=1):
                 preview_video = gr.Video(
                     label="Avatar Preview",
@@ -435,19 +752,16 @@ def web():
                 output_file = gr.File(
                     label="Download concierge.zip",
                 )
-
-        gr.Markdown(
-            "---\n"
-            "**How it works:** Image → FLAME Tracking → LAM Inference → "
-            "Blender GLB Export → concierge.zip\n\n"
-            "The generated zip can be placed at `/avatar/concierge.zip` "
-            "in gourmet-sp for the LAMAvatar component."
-        )
+                gr.Markdown(
+                    "**Usage:** Place the downloaded `concierge.zip` at "
+                    "`gourmet-sp/public/avatar/concierge.zip` for the "
+                    "LAMAvatar component."
+                )
 
         # Wire up the generate button
         generate_btn.click(
-            fn=process_image,
-            inputs=[input_image],
+            fn=process,
+            inputs=[input_image, input_video, motion_choice],
             outputs=[status_text, output_file, preview_video],
         )
 
@@ -462,12 +776,20 @@ def web():
 
 
 # ============================================================
-# Local entry point (for testing without Modal)
+# Local entry point
 # ============================================================
 if __name__ == "__main__":
-    print("This script is designed to run on Modal.")
-    print("  modal serve concierge_modal.py   # Dev mode")
+    print("Concierge ZIP Generator - Modal Deployment")
+    print("=" * 50)
+    print()
+    print("Usage:")
+    print("  modal serve concierge_modal.py   # Dev mode (hot reload)")
     print("  modal deploy concierge_modal.py  # Production")
     print()
-    print("To test locally (requires GPU + all dependencies):")
-    print("  python -c 'from concierge_modal import web; web()'")
+    print("The Gradio UI will be available at the URL shown by Modal.")
+    print()
+    print("Pipeline:")
+    print("  1. Upload source face image")
+    print("  2. Upload custom motion video (or select sample)")
+    print("  3. Click Generate")
+    print("  4. Download concierge.zip")
