@@ -799,6 +799,10 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking):
     image=image,
     gpu="A10G",
     timeout=3600,
+    # Gradio needs all requests (uploads, queue, SSE) on the SAME container.
+    # Default is 1, which forces Modal to spin up new containers per request,
+    # breaking Gradio's in-memory file storage and queue state.
+    allow_concurrent_inputs=100,
 )
 @modal.asgi_app()
 def web():
