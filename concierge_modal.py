@@ -684,6 +684,7 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
     """
     import torch
     import numpy as np
+    import subprocess
     import zipfile
     import shutil
     import tempfile
@@ -889,11 +890,13 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
         )
 
         # Generate GLB via Blender (with per-request temp dir to avoid conflicts)
+        # NOTE: We only import update_flame_shape and convert_ascii_to_binary from
+        # the tools module.  The Blender subprocess calls are inlined here so that
+        # we do NOT depend on whichever version of the tools module Modal happens
+        # to resolve (auto-mount vs. git-clone), which has caused silent failures.
         from tools.generateARKITGLBWithBlender import (
             update_flame_shape,
             convert_ascii_to_binary,
-            convert_with_blender,
-            gen_vertex_order_with_blender,
         )
 
         skin_glb_path = Path(os.path.join(oac_dir, "skin.glb"))
@@ -901,19 +904,60 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
         template_fbx = Path("./model_zoo/sample_oac/template_file.fbx")
         blender_exec = Path("/usr/local/bin/blender")
 
+        # Resolve Blender helper scripts — try several locations
+        _script_candidates = [
+            Path("/root/LAM/tools/convertFBX2GLB.py"),       # git clone
+            Path(os.getcwd()) / "tools" / "convertFBX2GLB.py",  # CWD
+        ]
+        convert_script = next((p for p in _script_candidates if p.exists()), None)
+        vtx_script_candidates = [
+            Path("/root/LAM/tools/generateVertexIndices.py"),
+            Path(os.getcwd()) / "tools" / "generateVertexIndices.py",
+        ]
+        vtx_script = next((p for p in vtx_script_candidates if p.exists()), None)
+
         # Validate prerequisites before starting the pipeline
         diag.append(f"[GLB] CWD={os.getcwd()}")
         diag.append(f"[GLB] blender exists: {blender_exec.exists()}")
         diag.append(f"[GLB] template_fbx exists: {template_fbx.exists()}")
         diag.append(f"[GLB] saved_head_path exists: {os.path.isfile(saved_head_path)}")
-        script_dir = Path(__file__).resolve().parent / "tools"
-        diag.append(f"[GLB] convertFBX2GLB.py exists: {(script_dir / 'convertFBX2GLB.py').exists()}")
-        # Also check fallback path under CWD
-        diag.append(f"[GLB] tools/convertFBX2GLB.py (CWD): {Path('tools/convertFBX2GLB.py').exists()}")
+        diag.append(f"[GLB] convertFBX2GLB.py: {convert_script}")
+        diag.append(f"[GLB] generateVertexIndices.py: {vtx_script}")
+
+        if not convert_script:
+            raise FileNotFoundError(
+                "convertFBX2GLB.py not found in any expected location: "
+                + ", ".join(str(p) for p in _script_candidates)
+            )
+        if not vtx_script:
+            raise FileNotFoundError(
+                "generateVertexIndices.py not found in any expected location: "
+                + ", ".join(str(p) for p in vtx_script_candidates)
+            )
 
         # Use working_dir for temp files (avoid CWD collision across requests)
         temp_ascii = Path(os.path.join(working_dir, "temp_ascii.fbx"))
         temp_binary = Path(os.path.join(working_dir, "temp_bin.fbx"))
+
+        def _run_blender(script, args, label):
+            """Run a Blender Python script and return (stdout, stderr)."""
+            cmd = [
+                str(blender_exec), "--background",
+                "--python", str(script), "--",
+            ] + [str(a) for a in args]
+            r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+            diag.append(f"[GLB] {label} returncode={r.returncode}")
+            if r.stdout:
+                # Keep last 600 chars for diagnostics
+                diag.append(f"[GLB] {label} stdout: ...{r.stdout[-600:]}")
+            if r.stderr:
+                diag.append(f"[GLB] {label} stderr: ...{r.stderr[-600:]}")
+            if r.returncode != 0:
+                raise RuntimeError(
+                    f"Blender {label} exited with code {r.returncode}\n"
+                    f"stdout: {r.stdout[-1000:]}\nstderr: {r.stderr[-1000:]}"
+                )
+            return r
 
         try:
             update_flame_shape(Path(saved_head_path), temp_ascii, template_fbx)
@@ -924,12 +968,20 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
             assert temp_binary.exists(), f"convert_ascii_to_binary produced no output: {temp_binary}"
             diag.append(f"[GLB] Binary FBX size: {temp_binary.stat().st_size} bytes")
 
-            convert_with_blender(temp_binary, skin_glb_path, blender_exec)
+            _run_blender(convert_script, [temp_binary, skin_glb_path], "FBX→GLB")
+            if not skin_glb_path.exists():
+                raise RuntimeError(
+                    f"Blender exited OK but {skin_glb_path} was not created. "
+                    "Check [GLB] stdout/stderr above."
+                )
             diag.append(f"[GLB] skin.glb size: {skin_glb_path.stat().st_size} bytes")
 
-            gen_vertex_order_with_blender(
-                Path(saved_head_path), vertex_order_path, blender_exec,
-            )
+            _run_blender(vtx_script, [saved_head_path, vertex_order_path], "VertexOrder")
+            if not vertex_order_path.exists():
+                raise RuntimeError(
+                    f"Blender exited OK but {vertex_order_path} was not created. "
+                    "Check [GLB] stdout/stderr above."
+                )
             diag.append(f"[GLB] vertex_order.json size: {vertex_order_path.stat().st_size} bytes")
         finally:
             for f in [temp_ascii, temp_binary]:
