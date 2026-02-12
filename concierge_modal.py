@@ -131,9 +131,7 @@ image = (
     )
     # FBX SDK Python bindings (needed for OBJ → FBX → GLB avatar export)
     .run_commands(
-        "wget -q https://virutalbuy-public.oss-cn-hangzhou.aliyuncs.com/share/aigc3d/data/LAM/fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl -O /tmp/fbx.whl",
-        "pip install /tmp/fbx.whl",
-        "rm /tmp/fbx.whl",
+        "pip install https://virutalbuy-public.oss-cn-hangzhou.aliyuncs.com/share/aigc3d/data/LAM/fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl",
     )
     # Blender 4.2 LTS (needed for GLB generation)
     .run_commands(
@@ -805,11 +803,11 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking):
     image=image,
     gpu="A10G",
     timeout=3600,
-    # Gradio needs all requests (uploads, queue, SSE) on the SAME container.
-    # Default is 1, which forces Modal to spin up new containers per request,
-    # breaking Gradio's in-memory file storage and queue state.
-    allow_concurrent_inputs=100,
 )
+# Gradio needs all requests (uploads, queue, SSE) on the SAME container.
+# Default concurrency is 1, which forces Modal to spin up new containers
+# per request, breaking Gradio's in-memory file storage and queue state.
+@modal.concurrent(max_inputs=100)
 @modal.asgi_app()
 def web():
     """Gradio UI served via ASGI (no subprocess, no patching)."""
