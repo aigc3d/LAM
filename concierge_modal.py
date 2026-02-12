@@ -276,6 +276,10 @@ if _has_model_zoo:
     image = image.add_local_dir("./model_zoo", remote_path="/root/LAM/model_zoo")
 if _has_assets:
     image = image.add_local_dir("./assets", remote_path="/root/LAM/assets")
+# Mount tools/ so Blender subprocess scripts (convertFBX2GLB.py, generateVertexIndices.py)
+# are available even if the git-cloned upstream version differs from our local copy.
+if os.path.isdir("./tools"):
+    image = image.add_local_dir("./tools", remote_path="/root/LAM/tools")
 
 
 # ============================================================
@@ -897,6 +901,16 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
         template_fbx = Path("./model_zoo/sample_oac/template_file.fbx")
         blender_exec = Path("/usr/local/bin/blender")
 
+        # Validate prerequisites before starting the pipeline
+        diag.append(f"[GLB] CWD={os.getcwd()}")
+        diag.append(f"[GLB] blender exists: {blender_exec.exists()}")
+        diag.append(f"[GLB] template_fbx exists: {template_fbx.exists()}")
+        diag.append(f"[GLB] saved_head_path exists: {os.path.isfile(saved_head_path)}")
+        script_dir = Path(__file__).resolve().parent / "tools"
+        diag.append(f"[GLB] convertFBX2GLB.py exists: {(script_dir / 'convertFBX2GLB.py').exists()}")
+        # Also check fallback path under CWD
+        diag.append(f"[GLB] tools/convertFBX2GLB.py (CWD): {Path('tools/convertFBX2GLB.py').exists()}")
+
         # Use working_dir for temp files (avoid CWD collision across requests)
         temp_ascii = Path(os.path.join(working_dir, "temp_ascii.fbx"))
         temp_binary = Path(os.path.join(working_dir, "temp_bin.fbx"))
@@ -904,17 +918,19 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
         try:
             update_flame_shape(Path(saved_head_path), temp_ascii, template_fbx)
             assert temp_ascii.exists(), f"update_flame_shape produced no output: {temp_ascii}"
+            diag.append(f"[GLB] ASCII FBX size: {temp_ascii.stat().st_size} bytes")
 
             convert_ascii_to_binary(temp_ascii, temp_binary)
             assert temp_binary.exists(), f"convert_ascii_to_binary produced no output: {temp_binary}"
+            diag.append(f"[GLB] Binary FBX size: {temp_binary.stat().st_size} bytes")
 
             convert_with_blender(temp_binary, skin_glb_path, blender_exec)
-            assert skin_glb_path.exists(), f"Blender FBX→GLB failed: {skin_glb_path} not found"
+            diag.append(f"[GLB] skin.glb size: {skin_glb_path.stat().st_size} bytes")
 
             gen_vertex_order_with_blender(
                 Path(saved_head_path), vertex_order_path, blender_exec,
             )
-            assert vertex_order_path.exists(), f"Blender vertex order failed: {vertex_order_path} not found"
+            diag.append(f"[GLB] vertex_order.json size: {vertex_order_path.stat().st_size} bytes")
         finally:
             for f in [temp_ascii, temp_binary]:
                 if f.exists():
