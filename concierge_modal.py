@@ -150,6 +150,44 @@ image = (
     )
 )
 
+
+# Download model weights not included locally (cached in image layer).
+# This runs BEFORE add_local_dir so Modal ordering is satisfied.
+def _download_missing_models():
+    import subprocess
+    from huggingface_hub import snapshot_download, hf_hub_download
+
+    os.chdir("/root/LAM")
+
+    # LAM-20K model weights
+    target = "/root/LAM/model_zoo/lam_models/releases/lam/lam-20k/step_045500"
+    if not os.path.isfile(os.path.join(target, "model.safetensors")):
+        print("[1/2] Downloading LAM-20K model weights...")
+        snapshot_download(
+            repo_id="3DAIGC/LAM-20K",
+            local_dir=target,
+            local_dir_use_symlinks=False,
+        )
+
+    # LAM assets (template_file.fbx, animation.glb, sample motions)
+    if not os.path.isfile("/root/LAM/assets/sample_oac/template_file.fbx"):
+        print("[2/2] Downloading LAM assets (GLB templates)...")
+        hf_hub_download(
+            repo_id="Ethan18/test_model",
+            repo_type="model",
+            filename="LAM_assets.tar",
+            local_dir="/root/LAM/",
+        )
+        subprocess.run(
+            "tar -xf LAM_assets.tar && rm LAM_assets.tar",
+            shell=True, cwd="/root/LAM", check=True,
+        )
+
+    print("Model downloads complete.")
+
+
+image = image.run_function(_download_missing_models)
+
 # Mount local model files into the container (must be LAST in image build).
 # modal serve must be run from the LAM repo root.
 if _has_model_zoo:
