@@ -308,6 +308,8 @@ def _setup_model_paths():
 def _init_lam_pipeline():
     """Initialize FLAME tracking and LAM model. Called once per container."""
     import torch
+    import io
+    from contextlib import redirect_stdout
 
     os.chdir("/root/LAM")
     sys.path.insert(0, "/root/LAM")
@@ -327,12 +329,28 @@ def _init_lam_pipeline():
     from app_lam import parse_configs, _build_model
     cfg, _ = parse_configs()
 
-    # Build and load LAM model
+    # Build and load LAM model - capture warnings from weight loading
     print("Loading LAM model...")
-    lam = _build_model(cfg)
+    build_log = io.StringIO()
+    with redirect_stdout(build_log):
+        lam = _build_model(cfg)
+    build_output = build_log.getvalue()
+    # Print captured output and flag any warnings
+    print(build_output)
+    warn_lines = [l for l in build_output.splitlines() if "WARN" in l]
+    if warn_lines:
+        print(f"\n!!! MODEL LOADING: {len(warn_lines)} weight warnings detected !!!")
+        for w in warn_lines:
+            print(f"  {w}")
+    else:
+        print("Model loading: all weights matched successfully.")
+
     lam.to("cuda")
     lam.eval()
     print("LAM model loaded.")
+
+    # Store warnings for diagnostics
+    lam._build_warnings = warn_lines
 
     # Initialize FLAME tracking (reused for both image and video frames)
     from tools.flame_tracking_single_image import FlameTrackingSingleImage
@@ -590,6 +608,16 @@ def _track_video_to_motion(video_path, flametracking, working_dir, status_callba
     return flame_params_dir
 
 
+def _log_tensor(name, t):
+    """Log tensor statistics for debugging."""
+    import numpy as _np
+    if t is None:
+        return f"  {name}: None"
+    if isinstance(t, _np.ndarray):
+        return f"  {name}: shape={t.shape} dtype={t.dtype} min={t.min():.4f} max={t.max():.4f} mean={t.mean():.4f}"
+    return f"  {name}: shape={list(t.shape)} dtype={t.dtype} min={t.min().item():.4f} max={t.max().item():.4f} mean={t.mean().item():.4f}"
+
+
 def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
                             motion_name=None):
     """
@@ -598,7 +626,7 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
     If video_path is provided, extract custom motion via VHAP tracking.
     Otherwise, use the selected sample motion (or first available).
 
-    Yields (status_msg, zip_path, preview_video_path, tracked_image_path) tuples.
+    Yields (status_msg, zip_path, preview_video_path, tracked_image_path, preproc_image_path) tuples.
     """
     import torch
     import numpy as np
@@ -613,15 +641,42 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
 
     working_dir = tempfile.mkdtemp(prefix="concierge_")
     base_iid = "concierge"
+    diag = []  # Collect diagnostic messages
+
+    # Report model loading warnings
+    build_warnings = getattr(lam, "_build_warnings", [])
+    if build_warnings:
+        diag.append(f"[MODEL] {len(build_warnings)} weight warnings:")
+        for w in build_warnings[:5]:
+            diag.append(f"  {w}")
+    else:
+        diag.append("[MODEL] All weights loaded OK")
 
     try:
         # ============================================================
+        # Step 0: Clean stale FLAME tracking data
+        # ============================================================
+        # FlameTrackingSingleImage uses fixed output dirs under output/tracking/.
+        # Stale data from a previous run can corrupt results. Clean everything.
+        tracking_root = os.path.join(os.getcwd(), "output", "tracking")
+        if os.path.isdir(tracking_root):
+            for subdir in ["preprocess", "tracking", "export"]:
+                stale = os.path.join(tracking_root, subdir)
+                if os.path.isdir(stale):
+                    shutil.rmtree(stale)
+                    print(f"[DIAG] Cleaned stale tracking dir: {stale}")
+            diag.append("[CLEAN] Removed stale tracking data")
+        else:
+            diag.append("[CLEAN] No stale tracking data found")
+
+        # ============================================================
         # Step 1: Source image FLAME tracking
         # ============================================================
-        yield "Step 1: FLAME tracking on source image...", None, None, None
+        yield "Step 1: FLAME tracking on source image...", None, None, None, None
 
         image_raw = os.path.join(working_dir, "raw.png")
         with Image.open(image_path).convert("RGB") as img:
+            diag.append(f"[INPUT] Image size: {img.size}, mode: {img.mode}")
             img.save(image_raw)
 
         ret = flametracking.preprocess(image_raw)
@@ -634,8 +689,27 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
         tracked_image = os.path.join(output_dir, "images/00000_00.png")
         mask_path = os.path.join(output_dir, "fg_masks/00000_00.png")
 
+        # Verify tracked outputs exist and log stats
+        diag.append(f"[FLAME] output_dir: {output_dir}")
+        diag.append(f"[FLAME] tracked_image exists: {os.path.isfile(tracked_image)}")
+        diag.append(f"[FLAME] mask exists: {os.path.isfile(mask_path)}")
+        flame_npz = os.path.join(output_dir, "canonical_flame_param.npz")
+        if os.path.isfile(flame_npz):
+            fp = np.load(flame_npz)
+            diag.append(f"[FLAME] canonical_flame_param keys: {list(fp.keys())}")
+            if "shape" in fp:
+                sp = fp["shape"]
+                diag.append(f"[FLAME] shape_param: shape={sp.shape} min={sp.min():.4f} max={sp.max():.4f} mean={sp.mean():.4f}")
+                # Flag if shape params look suspicious (near-zero or extreme)
+                if np.abs(sp).max() < 0.01:
+                    diag.append("[FLAME] WARNING: shape params near-zero!")
+                if np.abs(sp).max() > 10:
+                    diag.append("[FLAME] WARNING: shape params extremely large!")
+        else:
+            diag.append(f"[FLAME] WARNING: canonical_flame_param.npz NOT FOUND at {flame_npz}")
+
         # Show tracked face so user can verify FLAME tracking quality
-        yield "Step 1 done: check tracked face on the right -->", None, None, tracked_image
+        yield f"Step 1 done: check tracked face -->", None, None, tracked_image, None
 
         # ============================================================
         # Step 2: Motion sequence preparation
@@ -643,7 +717,7 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
         if video_path and os.path.isfile(video_path):
             # --- Custom video: VHAP tracking ---
             total_steps = 6
-            yield f"Step 2/{total_steps}: Processing custom motion video (VHAP tracking)...", None, None, None
+            yield f"Step 2/{total_steps}: Processing custom motion video (VHAP tracking)...", None, None, None, None
 
             def video_status(msg):
                 # Forward sub-status through generator isn't easy,
@@ -677,7 +751,7 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
             resolved_name = os.path.basename(os.path.dirname(flame_params_dir))
             motion_source = f"sample '{resolved_name}'"
 
-        yield f"Step 3/{total_steps}: Preparing LAM inference (motion: {motion_source})...", None, None, None
+        yield f"Step 3/{total_steps}: Preparing LAM inference (motion: {motion_source})...", None, None, None, None
 
         # ============================================================
         # Step 3: LAM inference
@@ -693,6 +767,16 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
             need_mask=True, get_shape_param=True,
         )
 
+        # --- Diagnostics: preprocessed image tensor ---
+        diag.append(f"[PREPROCESS] source_size={source_size}, render_size={render_size}")
+        diag.append(_log_tensor("image_tensor", image_tensor))
+        diag.append(_log_tensor("shape_param", shape_param))
+        # Save preprocessed image for visual inspection
+        preproc_vis_path = os.path.join(working_dir, "preprocessed_input.png")
+        vis_img = (image_tensor[0].permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+        Image.fromarray(vis_img).save(preproc_vis_path)
+        diag.append(f"[PREPROCESS] Saved preprocessed input to: {preproc_vis_path}")
+
         src = tracked_image.split("/")[-3]
         driven = flame_params_dir.split("/")[-2]
         motion_seq = prepare_motion_seqs(
@@ -704,7 +788,15 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
             cross_id=False, src_driven=[src, driven],
         )
 
-        yield f"Step 4/{total_steps}: Running LAM inference...", None, None, None
+        # --- Diagnostics: motion sequence ---
+        diag.append(f"[MOTION] flame_params_dir: {flame_params_dir}")
+        diag.append(f"[MOTION] num_frames: {motion_seq['render_c2ws'].shape[1]}")
+        diag.append(_log_tensor("render_c2ws", motion_seq["render_c2ws"]))
+        diag.append(_log_tensor("render_intrs", motion_seq["render_intrs"]))
+        for pk, pv in motion_seq["flame_params"].items():
+            diag.append(_log_tensor(f"flame.{pk}", pv))
+
+        yield f"Step 4/{total_steps}: Running LAM inference...", None, None, None, preproc_vis_path
 
         motion_seq["flame_params"]["betas"] = shape_param.unsqueeze(0)
         device = "cuda"
@@ -720,10 +812,14 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
                 },
             )
 
+        # --- Diagnostics: model output ---
+        diag.append(_log_tensor("comp_rgb", res["comp_rgb"]))
+        diag.append(_log_tensor("comp_mask", res["comp_mask"]))
+
         # ============================================================
         # Step 4: Generate GLB + ZIP
         # ============================================================
-        yield f"Step 5/{total_steps}: Generating 3D avatar (Blender GLB)...", None, None, None
+        yield f"Step 5/{total_steps}: Generating 3D avatar (Blender GLB)...", None, None, None, preproc_vis_path
 
         oac_dir = os.path.join(working_dir, "oac_export", base_iid)
         os.makedirs(oac_dir, exist_ok=True)
@@ -794,7 +890,7 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
         # Step 5: Create ZIP + preview
         # ============================================================
         step_label = f"Step {total_steps}/{total_steps}"
-        yield f"{step_label}: Creating concierge.zip...", None, None, None
+        yield f"{step_label}: Creating concierge.zip...", None, None, None, preproc_vis_path
 
         output_zip = os.path.join(working_dir, "concierge.zip")
         with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -828,18 +924,29 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
 
         zip_size_mb = os.path.getsize(output_zip) / (1024 * 1024)
         num_motion_frames = len(os.listdir(flame_params_dir))
+
+        # Save diagnostics to file for download
+        diag_path = os.path.join(working_dir, "diagnostics.txt")
+        with open(diag_path, "w") as f:
+            f.write("\n".join(diag))
+        print("\n=== DIAGNOSTICS ===\n" + "\n".join(diag) + "\n=== END ===\n")
+
         yield (
             f"concierge.zip generated ({zip_size_mb:.1f} MB) | "
             f"Motion: {motion_source} ({num_motion_frames} frames)",
             output_zip,
             final_preview,
             None,
+            preproc_vis_path,
         )
 
     except Exception as e:
         import traceback
         traceback.print_exc()
-        yield f"Error: {str(e)}", None, None, None
+        # Include diagnostics in error message
+        diag_summary = "\n".join(diag[-10:]) if diag else "No diagnostics"
+        print("\n=== DIAGNOSTICS (error) ===\n" + "\n".join(diag) + "\n=== END ===\n")
+        yield f"Error: {str(e)}\n\nDiagnostics:\n{diag_summary}", None, None, None, None
 
 
 # ============================================================
@@ -907,7 +1014,7 @@ def web():
     # --- Processing function ---
     def process(image_path, video_path, motion_choice):
         if image_path is None:
-            yield "Error: Please upload a face image", None, None, None
+            yield "Error: Please upload a face image", None, None, None, None
             return
 
         # Determine motion source
@@ -920,13 +1027,13 @@ def web():
             effective_video = None
             selected_motion = motion_choice
 
-        for status, zip_path, preview, tracked_img in _generate_concierge_zip(
+        for status, zip_path, preview, tracked_img, preproc_img in _generate_concierge_zip(
             image_path, effective_video, cfg, lam, flametracking,
             motion_name=selected_motion,
         ):
             if zip_path:
                 _latest_zip["path"] = zip_path
-            yield status, zip_path, preview, tracked_img
+            yield status, zip_path, preview, tracked_img, preproc_img
 
     # --- Build Gradio Blocks ---
     with gr.Blocks(
@@ -1000,13 +1107,18 @@ def web():
 
             # ---- Right: Outputs ----
             with gr.Column(scale=1):
-                tracked_face = gr.Image(
-                    label="Tracked Face (FLAME output - verify this looks correct!)",
-                    height=200,
-                )
+                with gr.Row():
+                    tracked_face = gr.Image(
+                        label="Tracked Face (FLAME output)",
+                        height=200,
+                    )
+                    preproc_image = gr.Image(
+                        label="Model Input (what LAM actually sees)",
+                        height=200,
+                    )
                 preview_video = gr.Video(
                     label="Avatar Preview",
-                    height=400,
+                    height=350,
                     autoplay=True,
                 )
                 output_file = gr.File(
@@ -1026,7 +1138,7 @@ def web():
         generate_btn.click(
             fn=process,
             inputs=[input_image, input_video, motion_choice],
-            outputs=[status_text, output_file, preview_video, tracked_face],
+            outputs=[status_text, output_file, preview_video, tracked_face, preproc_image],
         )
 
     # --- Mount Gradio on FastAPI (proper ASGI serving) ---
