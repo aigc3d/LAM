@@ -732,18 +732,47 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
         saved_head_path = lam.renderer.flame_model.save_shaped_mesh(
             shape_param.unsqueeze(0).cuda(), fd=oac_dir,
         )
+        assert os.path.isfile(saved_head_path), f"save_shaped_mesh failed: {saved_head_path}"
+
         res["cano_gs_lst"][0].save_ply(
             os.path.join(oac_dir, "offset.ply"), rgb2sh=False, offset2xyz=True,
         )
 
-        # Generate GLB via Blender
-        from tools.generateARKITGLBWithBlender import generate_glb
-        generate_glb(
-            input_mesh=Path(saved_head_path),
-            template_fbx=Path("./model_zoo/sample_oac/template_file.fbx"),
-            output_glb=Path(os.path.join(oac_dir, "skin.glb")),
-            blender_exec=Path("/usr/local/bin/blender"),
+        # Generate GLB via Blender (with per-request temp dir to avoid conflicts)
+        from tools.generateARKITGLBWithBlender import (
+            update_flame_shape,
+            convert_ascii_to_binary,
+            convert_with_blender,
+            gen_vertex_order_with_blender,
         )
+
+        skin_glb_path = Path(os.path.join(oac_dir, "skin.glb"))
+        vertex_order_path = Path(os.path.join(oac_dir, "vertex_order.json"))
+        template_fbx = Path("./model_zoo/sample_oac/template_file.fbx")
+        blender_exec = Path("/usr/local/bin/blender")
+
+        # Use working_dir for temp files (avoid CWD collision across requests)
+        temp_ascii = Path(os.path.join(working_dir, "temp_ascii.fbx"))
+        temp_binary = Path(os.path.join(working_dir, "temp_bin.fbx"))
+
+        try:
+            update_flame_shape(Path(saved_head_path), temp_ascii, template_fbx)
+            assert temp_ascii.exists(), f"update_flame_shape produced no output: {temp_ascii}"
+
+            convert_ascii_to_binary(temp_ascii, temp_binary)
+            assert temp_binary.exists(), f"convert_ascii_to_binary produced no output: {temp_binary}"
+
+            convert_with_blender(temp_binary, skin_glb_path, blender_exec)
+            assert skin_glb_path.exists(), f"Blender FBX→GLB failed: {skin_glb_path} not found"
+
+            gen_vertex_order_with_blender(
+                Path(saved_head_path), vertex_order_path, blender_exec,
+            )
+            assert vertex_order_path.exists(), f"Blender vertex order failed: {vertex_order_path} not found"
+        finally:
+            for f in [temp_ascii, temp_binary]:
+                if f.exists():
+                    f.unlink()
 
         # Copy template animation
         shutil.copy(
@@ -751,9 +780,15 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
             dst=os.path.join(oac_dir, "animation.glb"),
         )
 
-        # Clean up intermediate mesh
+        # Clean up intermediate mesh (nature.obj)
         if os.path.exists(saved_head_path):
             os.remove(saved_head_path)
+
+        # Verify all required files before creating ZIP
+        required_files = ["offset.ply", "skin.glb", "vertex_order.json", "animation.glb"]
+        missing = [f for f in required_files if not os.path.isfile(os.path.join(oac_dir, f))]
+        if missing:
+            raise RuntimeError(f"OAC export incomplete - missing: {', '.join(missing)}")
 
         # ============================================================
         # Step 5: Create ZIP + preview
