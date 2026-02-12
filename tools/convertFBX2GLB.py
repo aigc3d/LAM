@@ -38,14 +38,14 @@ def main():
         bpy.ops.import_scene.fbx(filepath=str(input_fbx))
 
         # Export optimized GLB
+        # NOTE: Blender 4.2 removed several legacy glTF export kwargs
+        # (export_colors, export_texcoords, export_normals).
+        # Use only parameters supported across Blender 3.x–4.2+.
         print(f"Exporting to {output_glb}...")
         bpy.ops.export_scene.gltf(
             filepath=str(output_glb),
             export_format='GLB',          # Binary format
             export_skins=True,            # Keep skinning data
-            export_texcoords=False,       # Reduce file size
-            export_normals=False,         # Reduce file size
-            export_colors=False,          # Reduce file size
         )
 
         print("Conversion completed successfully")
