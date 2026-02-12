@@ -128,10 +128,6 @@ image = (
     .run_commands(
         "pip install git+https://github.com/ashawkey/diff-gaussian-rasterization.git --no-build-isolation",
         "pip install git+https://github.com/ShenhanQian/nvdiffrast.git@backface-culling --no-build-isolation",
-        # Fix clang narrowing error in nvdiffrast JIT compilation (runtime).
-        # Patch ops.py: add -Wno-c++11-narrowing to extra_cflags in the JIT load() call.
-        "sed -i \"s/extra_cflags=common_opts+cc_opts/extra_cflags=common_opts+cc_opts+['-Wno-c++11-narrowing']/\" "
-        "/usr/local/lib/python3.10/site-packages/nvdiffrast/torch/ops.py",
     )
     # Blender 4.2 LTS (needed for GLB generation)
     .run_commands(
@@ -828,6 +824,18 @@ def web():
     # --- Initialize pipeline (once per container) ---
     os.chdir("/root/LAM")
     sys.path.insert(0, "/root/LAM")
+
+    # Monkey-patch torch.utils.cpp_extension.load to inject
+    # -Wno-c++11-narrowing, fixing nvdiffrast JIT build with clang.
+    import torch.utils.cpp_extension as _cext
+    _orig_load = _cext.load
+    def _patched_load(*args, **kwargs):
+        cflags = list(kwargs.get("extra_cflags", []) or [])
+        if "-Wno-c++11-narrowing" not in cflags:
+            cflags.append("-Wno-c++11-narrowing")
+        kwargs["extra_cflags"] = cflags
+        return _orig_load(*args, **kwargs)
+    _cext.load = _patched_load
 
     print("Initializing LAM pipeline...")
     cfg, lam, flametracking = _init_lam_pipeline()
