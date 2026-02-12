@@ -165,69 +165,72 @@ if _has_assets:
 def _setup_model_paths():
     """Create symlinks to bridge local directory layout to what LAM code expects.
 
-    Handles two common layouts:
-      A) Official: model_zoo/human_parametric_models/flame_assets/flame/flame2023.pkl
-      B) User:     assets/human_parametric_models/flame_assets/flame2023.pkl
+    The user may have all models under assets/ instead of model_zoo/.
+    This function bridges the gap so LAM code (which expects model_zoo/) works.
 
     Called once at container startup (not during image build).
     """
     import subprocess
 
-    hpm_mz = "/root/LAM/model_zoo/human_parametric_models"
-    hpm_assets = "/root/LAM/assets/human_parametric_models"
+    model_zoo = "/root/LAM/model_zoo"
+    assets = "/root/LAM/assets"
 
-    # If human_parametric_models only lives under assets/, link into model_zoo/
-    if not os.path.isdir(hpm_mz) and os.path.isdir(hpm_assets):
-        os.makedirs("/root/LAM/model_zoo", exist_ok=True)
-        os.symlink(hpm_assets, hpm_mz)
-        print(f"Symlink: model_zoo/human_parametric_models -> assets/...")
+    # If model_zoo/ doesn't exist at all, symlink it to assets/
+    # (user keeps everything under assets/ instead of model_zoo/)
+    if not os.path.exists(model_zoo) and os.path.isdir(assets):
+        os.symlink(assets, model_zoo)
+        print(f"Symlink: model_zoo -> assets (unified layout)")
+    elif os.path.isdir(model_zoo) and os.path.isdir(assets):
+        # Both exist - bridge missing subdirectories from assets/ into model_zoo/
+        for subdir in os.listdir(assets):
+            src = os.path.join(assets, subdir)
+            dst = os.path.join(model_zoo, subdir)
+            if os.path.isdir(src) and not os.path.exists(dst):
+                os.symlink(src, dst)
+                print(f"Symlink: model_zoo/{subdir} -> assets/{subdir}")
+
+    # Resolve human_parametric_models path
+    hpm = os.path.join(model_zoo, "human_parametric_models")
 
     # If flame_assets/ has no flame/ subdirectory but files sit directly inside,
     # create flame/ as a symlink to flame_assets/ itself.
-    flame_subdir = os.path.join(hpm_mz, "flame_assets", "flame")
-    flame_assets_dir = os.path.join(hpm_mz, "flame_assets")
-    if os.path.isdir(flame_assets_dir) and not os.path.exists(flame_subdir):
-        if os.path.isfile(os.path.join(flame_assets_dir, "flame2023.pkl")):
-            os.symlink(flame_assets_dir, flame_subdir)
-            print("Symlink: flame_assets/flame -> flame_assets/ (flat layout)")
+    if os.path.isdir(hpm):
+        flame_subdir = os.path.join(hpm, "flame_assets", "flame")
+        flame_assets_dir = os.path.join(hpm, "flame_assets")
+        if os.path.isdir(flame_assets_dir) and not os.path.exists(flame_subdir):
+            if os.path.isfile(os.path.join(flame_assets_dir, "flame2023.pkl")):
+                os.symlink(flame_assets_dir, flame_subdir)
+                print("Symlink: flame_assets/flame -> flame_assets/ (flat layout)")
 
-    # VHAP expects flame_vhap/; LAM provides flame_assets/flame/
-    flame_vhap = os.path.join(hpm_mz, "flame_vhap")
-    if not os.path.exists(flame_vhap):
-        for candidate in [flame_subdir, flame_assets_dir]:
-            if os.path.isdir(candidate):
-                os.symlink(candidate, flame_vhap)
-                print(f"Symlink: flame_vhap -> {os.path.basename(candidate)}")
-                break
-
-    # Ensure flame_points directory exists (for LAM query points)
-    flame_points = os.path.join(hpm_mz, "flame_points")
-    if not os.path.isdir(flame_points):
-        alt = "/root/LAM/assets/human_parametric_models/flame_points"
-        if os.path.isdir(alt) and not os.path.exists(flame_points):
-            os.symlink(alt, flame_points)
-            print(f"Symlink: flame_points -> assets/...")
+        # VHAP expects flame_vhap/; LAM provides flame_assets/flame/
+        flame_vhap = os.path.join(hpm, "flame_vhap")
+        if not os.path.exists(flame_vhap):
+            for candidate in [flame_subdir, flame_assets_dir]:
+                if os.path.isdir(candidate):
+                    os.symlink(candidate, flame_vhap)
+                    print(f"Symlink: flame_vhap -> {os.path.basename(candidate)}")
+                    break
 
     # Verify critical files
     print("\n=== Model file verification ===")
-    search_dirs = ["/root/LAM/model_zoo", "/root/LAM/assets"]
+    search_dirs = [d for d in [model_zoo, assets] if os.path.isdir(d)]
     for name in [
         "flame2023.pkl", "FaceBoxesV2.pth", "68_keypoints_model.pkl",
         "vgg_heads_l.trcd", "stylematte_synth.pt",
+        "model.safetensors",
         "template_file.fbx", "animation.glb",
     ]:
         found = False
         for d in search_dirs:
-            if os.path.isdir(d):
-                result = subprocess.run(
-                    ["find", d, "-name", name],
-                    capture_output=True, text=True,
-                )
-                paths = result.stdout.strip()
-                if paths:
-                    found = True
-                    for p in paths.split("\n"):
-                        print(f"  OK: {p}")
+            result = subprocess.run(
+                ["find", d, "-name", name],
+                capture_output=True, text=True,
+            )
+            paths = result.stdout.strip()
+            if paths:
+                found = True
+                for p in paths.split("\n"):
+                    print(f"  OK: {p}")
         if not found:
             print(f"  MISSING: {name}")
 
