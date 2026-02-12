@@ -21,7 +21,10 @@ Pipeline:
 
 Prerequisites:
   - Modal account with GPU access (A10G)
-  - All FLAME model assets are auto-downloaded during container build
+  - Run from your LAM repo root where model files are already downloaded
+  - Required local directories:
+      ./model_zoo/   (LAM weights, flame tracking models)
+      ./assets/      (human_parametric_models, sample_oac, sample_motion)
 """
 
 import os
@@ -30,7 +33,16 @@ import modal
 
 app = modal.App("concierge-zip-generator")
 
-# No local asset check needed - all FLAME models are downloaded during container build
+# Detect which local directories contain model files.
+# These are mounted into the container at build time.
+_has_model_zoo = os.path.isdir("./model_zoo")
+_has_assets = os.path.isdir("./assets")
+
+if not _has_model_zoo and not _has_assets:
+    print(
+        "WARNING: Neither ./model_zoo/ nor ./assets/ found.\n"
+        "Run `modal serve concierge_modal.py` from your LAM repo root."
+    )
 
 # ============================================================
 # Modal Image Build
@@ -138,93 +150,92 @@ image = (
     )
 )
 
+# Mount local model files into the container.
+# modal serve must be run from the LAM repo root.
+if _has_model_zoo:
+    image = image.add_local_dir("./model_zoo", remote_path="/root/LAM/model_zoo")
+if _has_assets:
+    image = image.add_local_dir("./assets", remote_path="/root/LAM/assets")
 
-# Download all model checkpoints and assets during image build
-def _download_models():
+
+def _setup_paths():
+    """Create symlinks to bridge local directory layout to what LAM code expects.
+
+    Handles two common layouts:
+      A) Official: model_zoo/human_parametric_models/flame_assets/flame/flame2023.pkl
+      B) User:     assets/human_parametric_models/flame_assets/flame2023.pkl
+    """
     import subprocess
-    from huggingface_hub import snapshot_download, hf_hub_download
 
     os.chdir("/root/LAM")
 
-    # 1. LAM-20K model weights
-    print("[1/4] Downloading LAM-20K checkpoints...")
-    snapshot_download(
-        repo_id="3DAIGC/LAM-20K",
-        local_dir="/root/LAM/model_zoo/lam_models/releases/lam/lam-20k/step_045500",
-        local_dir_use_symlinks=False,
-    )
+    hpm_mz = "/root/LAM/model_zoo/human_parametric_models"
+    hpm_assets = "/root/LAM/assets/human_parametric_models"
 
-    # 2. FLAME tracking models (face detection, alignment, matting)
-    print("[2/4] Downloading FLAME tracking models...")
-    hf_hub_download(
-        repo_id="yuandong513/flametracking_model",
-        repo_type="model",
-        filename="pretrain_model.tar",
-        local_dir="/root/LAM/",
-    )
-    subprocess.run(
-        "tar -xf pretrain_model.tar && rm pretrain_model.tar",
-        shell=True, cwd="/root/LAM", check=True,
-    )
+    # If human_parametric_models only lives under assets/, link into model_zoo/
+    if not os.path.isdir(hpm_mz) and os.path.isdir(hpm_assets):
+        os.makedirs("/root/LAM/model_zoo", exist_ok=True)
+        os.symlink(hpm_assets, hpm_mz)
+        print(f"Symlink: model_zoo/human_parametric_models -> assets/...")
 
-    # 3. Human parametric models (FLAME mesh, textures, masks)
-    print("[3/4] Downloading FLAME parametric models...")
-    hf_hub_download(
-        repo_id="Ethan18/test_model",
-        repo_type="model",
-        filename="LAM_human_model.tar",
-        local_dir="/root/LAM/",
-    )
-    subprocess.run(
-        "tar -xf LAM_human_model.tar && rm LAM_human_model.tar",
-        shell=True, cwd="/root/LAM", check=True,
-    )
+    # If flame_assets/ has no flame/ subdirectory but files sit directly inside,
+    # create flame/ as a symlink to flame_assets/ itself.
+    flame_subdir = os.path.join(hpm_mz, "flame_assets", "flame")
+    flame_assets_dir = os.path.join(hpm_mz, "flame_assets")
+    if os.path.isdir(flame_assets_dir) and not os.path.exists(flame_subdir):
+        # Check if flame2023.pkl sits directly in flame_assets/
+        if os.path.isfile(os.path.join(flame_assets_dir, "flame2023.pkl")):
+            os.symlink(flame_assets_dir, flame_subdir)
+            print("Symlink: flame_assets/flame -> flame_assets/ (flat layout)")
 
-    # 4. LAM assets (sample_oac templates for GLB generation, sample motions)
-    print("[4/4] Downloading LAM assets...")
-    hf_hub_download(
-        repo_id="Ethan18/test_model",
-        repo_type="model",
-        filename="LAM_assets.tar",
-        local_dir="/root/LAM/",
-    )
-    subprocess.run(
-        "tar -xf LAM_assets.tar && rm LAM_assets.tar",
-        shell=True, cwd="/root/LAM", check=True,
-    )
+    # VHAP expects flame_vhap/; LAM provides flame_assets/flame/
+    flame_vhap = os.path.join(hpm_mz, "flame_vhap")
+    if not os.path.exists(flame_vhap):
+        for candidate in [flame_subdir, flame_assets_dir]:
+            if os.path.isdir(candidate):
+                os.symlink(candidate, flame_vhap)
+                print(f"Symlink: flame_vhap -> {os.path.basename(candidate)}")
+                break
 
-    # Ensure flame_vhap symlink exists for VHAP tracking
-    # VHAP expects model_zoo/human_parametric_models/flame_vhap/
-    # LAM provides model_zoo/human_parametric_models/flame_assets/flame/
-    flame_vhap = "/root/LAM/model_zoo/human_parametric_models/flame_vhap"
-    flame_assets = "/root/LAM/model_zoo/human_parametric_models/flame_assets/flame"
-    if not os.path.isdir(flame_vhap) and os.path.isdir(flame_assets):
-        os.symlink(flame_assets, flame_vhap)
-        print(f"Created symlink: flame_vhap -> flame_assets/flame")
+    # Also ensure flame_points directory exists (for LAM query points)
+    flame_points = os.path.join(hpm_mz, "flame_points")
+    if not os.path.isdir(flame_points):
+        # Check in assets/
+        alt = "/root/LAM/assets/human_parametric_models/flame_points"
+        if os.path.isdir(alt) and not os.path.exists(flame_points):
+            os.symlink(alt, flame_points)
+            print(f"Symlink: flame_points -> assets/...")
 
-    # Verify critical files
-    critical_files = [
-        "model_zoo/human_parametric_models/flame_assets/flame/flame2023.pkl",
-        "model_zoo/flame_tracking_models/68_keypoints_model.pkl",
-        "model_zoo/flame_tracking_models/vgghead/vgg_heads_l.trcd",
-        "model_zoo/flame_tracking_models/matting/stylematte_synth.pt",
-        "model_zoo/flame_tracking_models/FaceBoxesV2.pth",
-    ]
-    for f in critical_files:
-        path = os.path.join("/root/LAM", f)
-        if os.path.exists(path):
-            print(f"  OK: {f}")
-        else:
-            print(f"  MISSING: {f}")
+    # Verify critical files by searching
+    print("\n=== Model file verification ===")
+    search_dirs = ["/root/LAM/model_zoo", "/root/LAM/assets"]
+    for name in [
+        "flame2023.pkl", "FaceBoxesV2.pth", "68_keypoints_model.pkl",
+        "vgg_heads_l.trcd", "stylematte_synth.pt",
+        "template_file.fbx", "animation.glb",
+    ]:
+        found = False
+        for d in search_dirs:
+            if os.path.isdir(d):
+                result = subprocess.run(
+                    ["find", d, "-name", name],
+                    capture_output=True, text=True,
+                )
+                paths = result.stdout.strip()
+                if paths:
+                    found = True
+                    for p in paths.split("\n"):
+                        print(f"  OK: {p}")
+        if not found:
+            print(f"  MISSING: {name}")
 
-    # List what we have
-    subprocess.run("ls -la /root/LAM/model_zoo/", shell=True)
-    subprocess.run("ls -la /root/LAM/assets/", shell=True)
-
-    print("All models and assets downloaded.")
+    # Show directory tree for debugging
+    print("\n=== Directory layout ===")
+    for d in ["/root/LAM/model_zoo", "/root/LAM/assets"]:
+        subprocess.run(f"ls -laR {d}/ 2>/dev/null | head -60", shell=True)
 
 
-image = image.run_function(_download_models)
+image = image.run_function(_setup_paths)
 
 
 # ============================================================
