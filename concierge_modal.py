@@ -127,7 +127,8 @@ image = (
     # More CUDA extensions
     .run_commands(
         "pip install git+https://github.com/ashawkey/diff-gaussian-rasterization.git --no-build-isolation",
-        "pip install git+https://github.com/ShenhanQian/nvdiffrast.git@backface-culling --no-build-isolation",
+        # nvdiffrast: suppress clang narrowing error in torch_antialias.cpp
+        'CXXFLAGS="-Wno-c++11-narrowing" pip install git+https://github.com/ShenhanQian/nvdiffrast.git@backface-culling --no-build-isolation',
     )
     # Blender 4.2 LTS (needed for GLB generation)
     .run_commands(
