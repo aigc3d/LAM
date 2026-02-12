@@ -86,7 +86,9 @@ image = (
     # Python dependencies
     .pip_install(
         # --- Gradio 4.x (ASGI-native, no patching needed) ---
-        "gradio>=4.0,<5.0",
+        # Pin to 4.44.0 to avoid json_schema_to_python_type bug in later versions
+        "gradio==4.44.0",
+        "gradio_client==1.3.0",
         "fastapi",
         # --- LAM dependencies ---
         "omegaconf==2.3.0",
@@ -170,7 +172,8 @@ def _download_missing_models():
         )
 
     # LAM assets (template_file.fbx, animation.glb, sample motions)
-    if not os.path.isfile("/root/LAM/assets/sample_oac/template_file.fbx"):
+    # Extract to model_zoo/ so they survive the add_local_dir mount of assets/
+    if not os.path.isfile("/root/LAM/model_zoo/sample_oac/template_file.fbx"):
         print("[2/2] Downloading LAM assets (GLB templates)...")
         hf_hub_download(
             repo_id="Ethan18/test_model",
@@ -182,6 +185,14 @@ def _download_missing_models():
             "tar -xf LAM_assets.tar && rm LAM_assets.tar",
             shell=True, cwd="/root/LAM", check=True,
         )
+        # Move extracted assets into model_zoo/ to avoid being
+        # overwritten by the add_local_dir mount of assets/
+        for subdir in ["sample_oac", "sample_motion"]:
+            src = f"/root/LAM/assets/{subdir}"
+            dst = f"/root/LAM/model_zoo/{subdir}"
+            if os.path.isdir(src) and not os.path.exists(dst):
+                subprocess.run(["cp", "-r", src, dst], check=True)
+                print(f"  Copied assets/{subdir} -> model_zoo/{subdir}")
 
     print("Model downloads complete.")
 
@@ -623,7 +634,7 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking):
             # --- Default sample motion ---
             total_steps = 5
             # Find available sample motions
-            sample_motions = glob("./assets/sample_motion/export/*/flame_param")
+            sample_motions = glob("./model_zoo/sample_motion/export/*/flame_param")
             if sample_motions:
                 flame_params_dir = sample_motions[0]
                 motion_name = os.path.basename(os.path.dirname(flame_params_dir))
@@ -697,14 +708,14 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking):
         from tools.generateARKITGLBWithBlender import generate_glb
         generate_glb(
             input_mesh=Path(saved_head_path),
-            template_fbx=Path("./assets/sample_oac/template_file.fbx"),
+            template_fbx=Path("./model_zoo/sample_oac/template_file.fbx"),
             output_glb=Path(os.path.join(oac_dir, "skin.glb")),
             blender_exec=Path("/usr/local/bin/blender"),
         )
 
         # Copy template animation
         shutil.copy(
-            src="./assets/sample_oac/animation.glb",
+            src="./model_zoo/sample_oac/animation.glb",
             dst=os.path.join(oac_dir, "animation.glb"),
         )
 
@@ -788,7 +799,7 @@ def web():
     print("Pipeline ready. Starting Gradio UI...")
 
     # Discover available sample motions (if any)
-    sample_motions = sorted(glob("./assets/sample_motion/export/*/*.mp4"))
+    sample_motions = sorted(glob("./model_zoo/sample_motion/export/*/*.mp4"))
 
     # --- Processing function ---
     def process(image_path, video_path, motion_choice):
