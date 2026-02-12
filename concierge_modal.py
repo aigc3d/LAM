@@ -590,14 +590,15 @@ def _track_video_to_motion(video_path, flametracking, working_dir, status_callba
     return flame_params_dir
 
 
-def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking):
+def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
+                            motion_name=None):
     """
     Full pipeline: image + video -> concierge.zip
 
     If video_path is provided, extract custom motion via VHAP tracking.
-    Otherwise, use default sample motion ("nice").
+    Otherwise, use the selected sample motion (or first available).
 
-    Yields (status_msg, zip_path, preview_video_path) tuples for progress.
+    Yields (status_msg, zip_path, preview_video_path, tracked_image_path) tuples.
     """
     import torch
     import numpy as np
@@ -617,7 +618,7 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking):
         # ============================================================
         # Step 1: Source image FLAME tracking
         # ============================================================
-        yield "Step 1: FLAME tracking on source image...", None, None
+        yield "Step 1: FLAME tracking on source image...", None, None, None
 
         image_raw = os.path.join(working_dir, "raw.png")
         with Image.open(image_path).convert("RGB") as img:
@@ -633,13 +634,16 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking):
         tracked_image = os.path.join(output_dir, "images/00000_00.png")
         mask_path = os.path.join(output_dir, "fg_masks/00000_00.png")
 
+        # Show tracked face so user can verify FLAME tracking quality
+        yield "Step 1 done: check tracked face on the right -->", None, None, tracked_image
+
         # ============================================================
         # Step 2: Motion sequence preparation
         # ============================================================
         if video_path and os.path.isfile(video_path):
             # --- Custom video: VHAP tracking ---
             total_steps = 6
-            yield f"Step 2/{total_steps}: Processing custom motion video (VHAP tracking)...", None, None
+            yield f"Step 2/{total_steps}: Processing custom motion video (VHAP tracking)...", None, None, None
 
             def video_status(msg):
                 # Forward sub-status through generator isn't easy,
@@ -652,21 +656,28 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking):
             )
             motion_source = "custom video"
         else:
-            # --- Default sample motion ---
+            # --- Sample motion ---
             total_steps = 5
             # Find available sample motions
             sample_motions = glob("./model_zoo/sample_motion/export/*/flame_param")
-            if sample_motions:
-                flame_params_dir = sample_motions[0]
-                motion_name = os.path.basename(os.path.dirname(flame_params_dir))
-                motion_source = f"sample '{motion_name}'"
-            else:
+            if not sample_motions:
                 raise RuntimeError(
                     "No motion sequences available. "
                     "Please upload a custom motion video."
                 )
 
-        yield f"Step 3/{total_steps}: Preparing LAM inference (motion: {motion_source})...", None, None
+            # Use the motion selected by the user (if it matches)
+            flame_params_dir = sample_motions[0]  # default fallback
+            if motion_name:
+                for sp in sample_motions:
+                    if os.path.basename(os.path.dirname(sp)) == motion_name:
+                        flame_params_dir = sp
+                        break
+
+            resolved_name = os.path.basename(os.path.dirname(flame_params_dir))
+            motion_source = f"sample '{resolved_name}'"
+
+        yield f"Step 3/{total_steps}: Preparing LAM inference (motion: {motion_source})...", None, None, None
 
         # ============================================================
         # Step 3: LAM inference
@@ -693,7 +704,7 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking):
             cross_id=False, src_driven=[src, driven],
         )
 
-        yield f"Step 4/{total_steps}: Running LAM inference...", None, None
+        yield f"Step 4/{total_steps}: Running LAM inference...", None, None, None
 
         motion_seq["flame_params"]["betas"] = shape_param.unsqueeze(0)
         device = "cuda"
@@ -712,7 +723,7 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking):
         # ============================================================
         # Step 4: Generate GLB + ZIP
         # ============================================================
-        yield f"Step 5/{total_steps}: Generating 3D avatar (Blender GLB)...", None, None
+        yield f"Step 5/{total_steps}: Generating 3D avatar (Blender GLB)...", None, None, None
 
         oac_dir = os.path.join(working_dir, "oac_export", base_iid)
         os.makedirs(oac_dir, exist_ok=True)
@@ -748,7 +759,7 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking):
         # Step 5: Create ZIP + preview
         # ============================================================
         step_label = f"Step {total_steps}/{total_steps}"
-        yield f"{step_label}: Creating concierge.zip...", None, None
+        yield f"{step_label}: Creating concierge.zip...", None, None, None
 
         output_zip = os.path.join(working_dir, "concierge.zip")
         with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -787,12 +798,13 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking):
             f"Motion: {motion_source} ({num_motion_frames} frames)",
             output_zip,
             final_preview,
+            None,
         )
 
     except Exception as e:
         import traceback
         traceback.print_exc()
-        yield f"Error: {str(e)}", None, None
+        yield f"Error: {str(e)}", None, None, None
 
 
 # ============================================================
@@ -860,23 +872,26 @@ def web():
     # --- Processing function ---
     def process(image_path, video_path, motion_choice):
         if image_path is None:
-            yield "Error: Please upload a face image", None, None
+            yield "Error: Please upload a face image", None, None, None
             return
 
         # Determine motion source
         effective_video = None
+        selected_motion = None
         if motion_choice == "custom" and video_path:
             effective_video = video_path
         elif motion_choice and motion_choice != "custom":
-            # Using a sample motion - video_path is ignored, flame_params used directly
+            # Using a sample motion - pass name so it's correctly resolved
             effective_video = None
+            selected_motion = motion_choice
 
-        for status, zip_path, preview in _generate_concierge_zip(
+        for status, zip_path, preview, tracked_img in _generate_concierge_zip(
             image_path, effective_video, cfg, lam, flametracking,
+            motion_name=selected_motion,
         ):
             if zip_path:
                 _latest_zip["path"] = zip_path
-            yield status, zip_path, preview
+            yield status, zip_path, preview, tracked_img
 
     # --- Build Gradio Blocks ---
     with gr.Blocks(
@@ -924,10 +939,14 @@ def web():
 
                 gr.HTML(
                     '<div class="tip-box">'
-                    "<b>Tips for best results:</b><br>"
-                    "- Source image: front-facing, good lighting, neutral expression<br>"
-                    "- Motion video: clear face, consistent lighting, 3-10 seconds<br>"
-                    "- The motion video's expressions drive the avatar animation quality"
+                    "<b>IMPORTANT - input image requirements:</b><br>"
+                    "- Must be a <b>real photograph</b> (not illustration/AI art/anime)<br>"
+                    "- Front-facing, good lighting, neutral expression<br>"
+                    "- FLAME face tracking only works on real human faces<br>"
+                    "<br>"
+                    "<b>Motion video tips:</b><br>"
+                    "- Clear face, consistent lighting, 3-10 seconds<br>"
+                    "- The motion video's expressions drive the avatar animation"
                     "</div>"
                 )
 
@@ -946,6 +965,10 @@ def web():
 
             # ---- Right: Outputs ----
             with gr.Column(scale=1):
+                tracked_face = gr.Image(
+                    label="Tracked Face (FLAME output - verify this looks correct!)",
+                    height=200,
+                )
                 preview_video = gr.Video(
                     label="Avatar Preview",
                     height=400,
@@ -968,7 +991,7 @@ def web():
         generate_btn.click(
             fn=process,
             inputs=[input_image, input_video, motion_choice],
-            outputs=[status_text, output_file, preview_video],
+            outputs=[status_text, output_file, preview_video, tracked_face],
         )
 
     # --- Mount Gradio on FastAPI (proper ASGI serving) ---
