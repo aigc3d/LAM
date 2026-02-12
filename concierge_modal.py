@@ -172,11 +172,12 @@ def _download_missing_models():
         )
 
     # LAM assets (template_file.fbx, animation.glb, sample motions)
+    # Use official 3DAIGC/LAM-assets repo (Ethan18/test_model is incomplete).
     # Extract to model_zoo/ so they survive the add_local_dir mount of assets/
     if not os.path.isfile("/root/LAM/model_zoo/sample_oac/template_file.fbx"):
         print("[2/2] Downloading LAM assets (GLB templates)...")
         hf_hub_download(
-            repo_id="Ethan18/test_model",
+            repo_id="3DAIGC/LAM-assets",
             repo_type="model",
             filename="LAM_assets.tar",
             local_dir="/root/LAM/",
@@ -789,6 +790,16 @@ def web():
     import gradio as gr
     from fastapi import FastAPI
     from glob import glob
+
+    # Monkey-patch gradio_client bug: additionalProperties can be a bool,
+    # but _json_schema_to_python_type assumes it's always a dict/schema.
+    import gradio_client.utils as _gc_utils
+    _orig_jst = _gc_utils._json_schema_to_python_type
+    def _safe_jst(schema, defs=None):
+        if isinstance(schema, bool):
+            return "Any"
+        return _orig_jst(schema, defs)
+    _gc_utils._json_schema_to_python_type = _safe_jst
 
     # --- Initialize pipeline (once per container) ---
     os.chdir("/root/LAM")
