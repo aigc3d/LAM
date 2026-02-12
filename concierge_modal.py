@@ -150,7 +150,7 @@ image = (
     )
 )
 
-# Mount local model files into the container.
+# Mount local model files into the container (must be LAST in image build).
 # modal serve must be run from the LAM repo root.
 if _has_model_zoo:
     image = image.add_local_dir("./model_zoo", remote_path="/root/LAM/model_zoo")
@@ -158,16 +158,20 @@ if _has_assets:
     image = image.add_local_dir("./assets", remote_path="/root/LAM/assets")
 
 
-def _setup_paths():
+# ============================================================
+# Pipeline Functions (run inside container)
+# ============================================================
+
+def _setup_model_paths():
     """Create symlinks to bridge local directory layout to what LAM code expects.
 
     Handles two common layouts:
       A) Official: model_zoo/human_parametric_models/flame_assets/flame/flame2023.pkl
       B) User:     assets/human_parametric_models/flame_assets/flame2023.pkl
+
+    Called once at container startup (not during image build).
     """
     import subprocess
-
-    os.chdir("/root/LAM")
 
     hpm_mz = "/root/LAM/model_zoo/human_parametric_models"
     hpm_assets = "/root/LAM/assets/human_parametric_models"
@@ -183,7 +187,6 @@ def _setup_paths():
     flame_subdir = os.path.join(hpm_mz, "flame_assets", "flame")
     flame_assets_dir = os.path.join(hpm_mz, "flame_assets")
     if os.path.isdir(flame_assets_dir) and not os.path.exists(flame_subdir):
-        # Check if flame2023.pkl sits directly in flame_assets/
         if os.path.isfile(os.path.join(flame_assets_dir, "flame2023.pkl")):
             os.symlink(flame_assets_dir, flame_subdir)
             print("Symlink: flame_assets/flame -> flame_assets/ (flat layout)")
@@ -197,16 +200,15 @@ def _setup_paths():
                 print(f"Symlink: flame_vhap -> {os.path.basename(candidate)}")
                 break
 
-    # Also ensure flame_points directory exists (for LAM query points)
+    # Ensure flame_points directory exists (for LAM query points)
     flame_points = os.path.join(hpm_mz, "flame_points")
     if not os.path.isdir(flame_points):
-        # Check in assets/
         alt = "/root/LAM/assets/human_parametric_models/flame_points"
         if os.path.isdir(alt) and not os.path.exists(flame_points):
             os.symlink(alt, flame_points)
             print(f"Symlink: flame_points -> assets/...")
 
-    # Verify critical files by searching
+    # Verify critical files
     print("\n=== Model file verification ===")
     search_dirs = ["/root/LAM/model_zoo", "/root/LAM/assets"]
     for name in [
@@ -229,18 +231,6 @@ def _setup_paths():
         if not found:
             print(f"  MISSING: {name}")
 
-    # Show directory tree for debugging
-    print("\n=== Directory layout ===")
-    for d in ["/root/LAM/model_zoo", "/root/LAM/assets"]:
-        subprocess.run(f"ls -laR {d}/ 2>/dev/null | head -60", shell=True)
-
-
-image = image.run_function(_setup_paths)
-
-
-# ============================================================
-# Pipeline Functions (run inside container)
-# ============================================================
 
 def _init_lam_pipeline():
     """Initialize FLAME tracking and LAM model. Called once per container."""
@@ -248,6 +238,9 @@ def _init_lam_pipeline():
 
     os.chdir("/root/LAM")
     sys.path.insert(0, "/root/LAM")
+
+    # Setup symlinks for model paths (runs once at container startup)
+    _setup_model_paths()
 
     os.environ.update({
         "APP_ENABLED": "1",
