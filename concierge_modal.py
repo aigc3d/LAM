@@ -129,14 +129,9 @@ image = (
         "pip install git+https://github.com/ashawkey/diff-gaussian-rasterization.git --no-build-isolation",
         "pip install git+https://github.com/ShenhanQian/nvdiffrast.git@backface-culling --no-build-isolation",
         # Fix clang narrowing error in nvdiffrast JIT compilation (runtime).
-        # Patch the installed source: uint64_t -> long cast in torch_antialias.cpp:49.
-        "python3 -c \""
-        "p='/usr/local/lib/python3.10/site-packages/nvdiffrast/torch/torch_antialias.cpp';"
-        "t=open(p).read();"
-        "old='(uint64_t)p.allocTriangles * AA_HASH_ELEMENTS_PER_TRIANGLE(p.allocTriangles) * 4';"
-        "t=t.replace(old,'static_cast<long>('+old+')');"
-        "open(p,'w').write(t)"
-        "\"",
+        # Patch ops.py: add -Wno-c++11-narrowing to extra_cflags in the JIT load() call.
+        "sed -i \"s/extra_cflags=common_opts+cc_opts/extra_cflags=common_opts+cc_opts+['-Wno-c++11-narrowing']/\" "
+        "/usr/local/lib/python3.10/site-packages/nvdiffrast/torch/ops.py",
     )
     # Blender 4.2 LTS (needed for GLB generation)
     .run_commands(
