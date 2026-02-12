@@ -171,11 +171,11 @@ def _download_missing_models():
             local_dir_use_symlinks=False,
         )
 
-    # LAM assets (template_file.fbx, animation.glb, sample motions)
-    # Use official 3DAIGC/LAM-assets repo (Ethan18/test_model is incomplete).
+    # LAM assets (sample motions, parametric models, etc.)
+    # Use official 3DAIGC/LAM-assets repo.
     # Extract to model_zoo/ so they survive the add_local_dir mount of assets/
-    if not os.path.isfile("/root/LAM/model_zoo/sample_oac/template_file.fbx"):
-        print("[2/2] Downloading LAM assets (GLB templates)...")
+    if not os.path.isfile("/root/LAM/model_zoo/sample_motion/export/talk/flame_param/00000.npz"):
+        print("[2/3] Downloading LAM assets (sample motions)...")
         hf_hub_download(
             repo_id="3DAIGC/LAM-assets",
             repo_type="model",
@@ -194,6 +194,22 @@ def _download_missing_models():
             if os.path.isdir(src) and not os.path.exists(dst):
                 subprocess.run(["cp", "-r", src, dst], check=True)
                 print(f"  Copied assets/{subdir} -> model_zoo/{subdir}")
+
+    # sample_oac (template_file.fbx, animation.glb) - separate download
+    if not os.path.isfile("/root/LAM/model_zoo/sample_oac/template_file.fbx"):
+        print("[3/3] Downloading sample_oac (FBX/GLB templates)...")
+        subprocess.run(
+            "wget -q https://virutalbuy-public.oss-cn-hangzhou.aliyuncs.com/share/aigc3d/data/LAM/sample_oac.tar"
+            " -O /root/LAM/sample_oac.tar",
+            shell=True, check=True,
+        )
+        subprocess.run(
+            "mkdir -p /root/LAM/model_zoo/sample_oac && "
+            "tar -xf /root/LAM/sample_oac.tar -C /root/LAM/model_zoo/ && "
+            "rm /root/LAM/sample_oac.tar",
+            shell=True, check=True,
+        )
+        print("  Extracted sample_oac -> model_zoo/sample_oac")
 
     print("Model downloads complete.")
 
