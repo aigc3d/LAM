@@ -168,18 +168,68 @@ def _download_missing_models():
     # LAM-20K model weights
     target = "/root/LAM/model_zoo/lam_models/releases/lam/lam-20k/step_045500"
     if not os.path.isfile(os.path.join(target, "model.safetensors")):
-        print("[1/2] Downloading LAM-20K model weights...")
+        print("[1/4] Downloading LAM-20K model weights...")
         snapshot_download(
             repo_id="3DAIGC/LAM-20K",
             local_dir=target,
             local_dir_use_symlinks=False,
         )
 
+    # FLAME tracking models (face detection, landmark, VGGHead, matting)
+    # These are CRITICAL for FlameTrackingSingleImage to work correctly.
+    if not os.path.isfile("/root/LAM/model_zoo/flame_tracking_models/FaceBoxesV2.pth"):
+        print("[2/4] Downloading FLAME tracking models (thirdparty_models.tar)...")
+        hf_hub_download(
+            repo_id="3DAIGC/LAM-assets",
+            repo_type="model",
+            filename="thirdparty_models.tar",
+            local_dir="/root/LAM/",
+        )
+        subprocess.run(
+            "tar -xf thirdparty_models.tar && rm thirdparty_models.tar",
+            shell=True, cwd="/root/LAM", check=True,
+        )
+        # Verify extraction
+        for f in ["FaceBoxesV2.pth", "68_keypoints_model.pkl",
+                   "vgghead/vgg_heads_l.trcd", "matting/stylematte_synth.pt"]:
+            path = f"/root/LAM/model_zoo/flame_tracking_models/{f}"
+            if os.path.isfile(path):
+                print(f"  OK: {path}")
+            else:
+                print(f"  WARNING: missing after extraction: {path}")
+
+    # FLAME parametric model (flame2023.pkl, head mesh, etc.)
+    # LAM_human_model.tar extracts to assets/human_parametric_models/.
+    # IMPORTANT: add_local_dir("./assets") later overwrites /root/LAM/assets/
+    # with the (sparse) local directory. We must copy to model_zoo/ to survive.
+    if not os.path.isfile("/root/LAM/model_zoo/human_parametric_models/flame_assets/flame/flame2023.pkl"):
+        print("[3/4] Downloading FLAME parametric model (LAM_human_model.tar)...")
+        hf_hub_download(
+            repo_id="3DAIGC/LAM-assets",
+            repo_type="model",
+            filename="LAM_human_model.tar",
+            local_dir="/root/LAM/",
+        )
+        subprocess.run(
+            "tar -xf LAM_human_model.tar && rm LAM_human_model.tar",
+            shell=True, cwd="/root/LAM", check=True,
+        )
+        # Copy to model_zoo/ so it survives the add_local_dir mount of assets/
+        src = "/root/LAM/assets/human_parametric_models"
+        dst = "/root/LAM/model_zoo/human_parametric_models"
+        if os.path.isdir(src) and not os.path.exists(dst):
+            subprocess.run(["cp", "-r", src, dst], check=True)
+            print(f"  Copied assets/human_parametric_models -> model_zoo/")
+        if os.path.isfile(f"{dst}/flame_assets/flame/flame2023.pkl"):
+            print("  OK: flame2023.pkl extracted and copied")
+        else:
+            print("  WARNING: flame2023.pkl not found after extraction")
+
     # LAM assets (sample motions, parametric models, etc.)
     # Use official 3DAIGC/LAM-assets repo.
     # Extract to model_zoo/ so they survive the add_local_dir mount of assets/
     if not os.path.isfile("/root/LAM/model_zoo/sample_motion/export/talk/flame_param/00000.npz"):
-        print("[2/3] Downloading LAM assets (sample motions)...")
+        print("[4/4] Downloading LAM assets (sample motions)...")
         hf_hub_download(
             repo_id="3DAIGC/LAM-assets",
             repo_type="model",
@@ -201,7 +251,7 @@ def _download_missing_models():
 
     # sample_oac (template_file.fbx, animation.glb) - separate download
     if not os.path.isfile("/root/LAM/model_zoo/sample_oac/template_file.fbx"):
-        print("[3/3] Downloading sample_oac (FBX/GLB templates)...")
+        print("[+] Downloading sample_oac (FBX/GLB templates)...")
         subprocess.run(
             "wget -q https://virutalbuy-public.oss-cn-hangzhou.aliyuncs.com/share/aigc3d/data/LAM/sample_oac.tar"
             " -O /root/LAM/sample_oac.tar",
