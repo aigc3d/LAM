@@ -129,6 +129,12 @@ image = (
         "pip install git+https://github.com/ashawkey/diff-gaussian-rasterization.git --no-build-isolation",
         "pip install git+https://github.com/ShenhanQian/nvdiffrast.git@backface-culling --no-build-isolation",
     )
+    # FBX SDK Python bindings (needed for OBJ → FBX → GLB avatar export)
+    .run_commands(
+        "wget -q https://virutalbuy-public.oss-cn-hangzhou.aliyuncs.com/share/aigc3d/data/LAM/fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl -O /tmp/fbx.whl",
+        "pip install /tmp/fbx.whl",
+        "rm /tmp/fbx.whl",
+    )
     # Blender 4.2 LTS (needed for GLB generation)
     .run_commands(
         "wget -q https://download.blender.org/release/Blender4.2/blender-4.2.0-linux-x64.tar.xz -O /tmp/blender.tar.xz",
