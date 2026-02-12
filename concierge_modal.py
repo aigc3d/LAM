@@ -20,8 +20,8 @@ Pipeline:
   4. Avatar data   → Blender GLB export → concierge.zip
 
 Prerequisites:
-  - ./assets/human_parametric_models/ directory with FLAME model assets
   - Modal account with GPU access (A10G)
+  - All FLAME model assets are auto-downloaded during container build
 """
 
 import os
@@ -30,15 +30,7 @@ import modal
 
 app = modal.App("concierge-zip-generator")
 
-# ============================================================
-# Local asset check
-# ============================================================
-REQUIRED_ASSET = "./assets/human_parametric_models/flame_assets/flame/flame2023.pkl"
-if __name__ == "__main__":
-    if not os.path.exists(REQUIRED_ASSET):
-        print(f"ERROR: Required FLAME asset not found: {REQUIRED_ASSET}")
-        print("Please ensure ./assets/human_parametric_models/ exists with FLAME models.")
-        sys.exit(1)
+# No local asset check needed - all FLAME models are downloaded during container build
 
 # ============================================================
 # Modal Image Build
@@ -147,24 +139,92 @@ image = (
 )
 
 
-# Download model checkpoints during image build
+# Download all model checkpoints and assets during image build
 def _download_models():
-    from huggingface_hub import snapshot_download
-    print("Downloading LAM-20K checkpoints from HuggingFace...")
+    import subprocess
+    from huggingface_hub import snapshot_download, hf_hub_download
+
+    os.chdir("/root/LAM")
+
+    # 1. LAM-20K model weights
+    print("[1/4] Downloading LAM-20K checkpoints...")
     snapshot_download(
         repo_id="3DAIGC/LAM-20K",
         local_dir="/root/LAM/model_zoo/lam_models/releases/lam/lam-20k/step_045500",
         local_dir_use_symlinks=False,
     )
-    print("Checkpoints downloaded successfully.")
+
+    # 2. FLAME tracking models (face detection, alignment, matting)
+    print("[2/4] Downloading FLAME tracking models...")
+    hf_hub_download(
+        repo_id="yuandong513/flametracking_model",
+        repo_type="model",
+        filename="pretrain_model.tar",
+        local_dir="/root/LAM/",
+    )
+    subprocess.run(
+        "tar -xf pretrain_model.tar && rm pretrain_model.tar",
+        shell=True, cwd="/root/LAM", check=True,
+    )
+
+    # 3. Human parametric models (FLAME mesh, textures, masks)
+    print("[3/4] Downloading FLAME parametric models...")
+    hf_hub_download(
+        repo_id="Ethan18/test_model",
+        repo_type="model",
+        filename="LAM_human_model.tar",
+        local_dir="/root/LAM/",
+    )
+    subprocess.run(
+        "tar -xf LAM_human_model.tar && rm LAM_human_model.tar",
+        shell=True, cwd="/root/LAM", check=True,
+    )
+
+    # 4. LAM assets (sample_oac templates for GLB generation, sample motions)
+    print("[4/4] Downloading LAM assets...")
+    hf_hub_download(
+        repo_id="Ethan18/test_model",
+        repo_type="model",
+        filename="LAM_assets.tar",
+        local_dir="/root/LAM/",
+    )
+    subprocess.run(
+        "tar -xf LAM_assets.tar && rm LAM_assets.tar",
+        shell=True, cwd="/root/LAM", check=True,
+    )
+
+    # Ensure flame_vhap symlink exists for VHAP tracking
+    # VHAP expects model_zoo/human_parametric_models/flame_vhap/
+    # LAM provides model_zoo/human_parametric_models/flame_assets/flame/
+    flame_vhap = "/root/LAM/model_zoo/human_parametric_models/flame_vhap"
+    flame_assets = "/root/LAM/model_zoo/human_parametric_models/flame_assets/flame"
+    if not os.path.isdir(flame_vhap) and os.path.isdir(flame_assets):
+        os.symlink(flame_assets, flame_vhap)
+        print(f"Created symlink: flame_vhap -> flame_assets/flame")
+
+    # Verify critical files
+    critical_files = [
+        "model_zoo/human_parametric_models/flame_assets/flame/flame2023.pkl",
+        "model_zoo/flame_tracking_models/68_keypoints_model.pkl",
+        "model_zoo/flame_tracking_models/vgghead/vgg_heads_l.trcd",
+        "model_zoo/flame_tracking_models/matting/stylematte_synth.pt",
+        "model_zoo/flame_tracking_models/FaceBoxesV2.pth",
+    ]
+    for f in critical_files:
+        path = os.path.join("/root/LAM", f)
+        if os.path.exists(path):
+            print(f"  OK: {f}")
+        else:
+            print(f"  MISSING: {f}")
+
+    # List what we have
+    subprocess.run("ls -la /root/LAM/model_zoo/", shell=True)
+    subprocess.run("ls -la /root/LAM/assets/", shell=True)
+
+    print("All models and assets downloaded.")
 
 
-image = (
-    image
-    .run_function(_download_models)
-    # Copy local FLAME assets into the container
-    .add_local_dir("./assets", remote_path="/root/LAM/model_zoo", copy=True)
-)
+image = image.run_function(_download_models)
 
 
 # ============================================================
@@ -375,21 +435,49 @@ def _track_video_to_motion(video_path, flametracking, working_dir, status_callba
     # --- Step C: VHAP Tracking ---
     report("  Running VHAP FLAME tracking (this may take several minutes)...")
 
-    import tyro
-    from yaml import safe_load
-    from vhap.config.base import BaseTrackingConfig
+    from vhap.config.base import (
+        BaseTrackingConfig, DataConfig, ModelConfig, RenderConfig, LogConfig,
+        ExperimentConfig, LearningRateConfig, LossWeightConfig, PipelineConfig,
+        StageLmkInitRigidConfig, StageLmkInitAllConfig,
+        StageLmkSequentialTrackingConfig, StageLmkGlobalTrackingConfig,
+        StageRgbInitTextureConfig, StageRgbInitAllConfig,
+        StageRgbInitOffsetConfig, StageRgbSequentialTrackingConfig,
+        StageRgbGlobalTrackingConfig,
+    )
     from vhap.model.tracker import GlobalTracker
 
-    with open("configs/vhap_tracking/base_tracking_config.yaml", "r") as f:
-        config_data = safe_load(f)
-    vhap_cfg = tyro.from_yaml(BaseTrackingConfig, config_data)
-
-    # Configure for our video sequence
-    vhap_cfg.data.sequence = sequence_name
-    vhap_cfg.data.root_folder = Path(frames_root)
-
     tracking_output = os.path.join(working_dir, "video_tracking", "tracking")
-    vhap_cfg.exp.output_folder = Path(tracking_output)
+
+    # Build VHAP config programmatically (no YAML dependency)
+    pipeline = PipelineConfig(
+        lmk_init_rigid=StageLmkInitRigidConfig(),
+        lmk_init_all=StageLmkInitAllConfig(),
+        lmk_sequential_tracking=StageLmkSequentialTrackingConfig(),
+        lmk_global_tracking=StageLmkGlobalTrackingConfig(),
+        rgb_init_texture=StageRgbInitTextureConfig(),
+        rgb_init_all=StageRgbInitAllConfig(),
+        rgb_init_offset=StageRgbInitOffsetConfig(),
+        rgb_sequential_tracking=StageRgbSequentialTrackingConfig(),
+        rgb_global_tracking=StageRgbGlobalTrackingConfig(),
+    )
+
+    vhap_cfg = BaseTrackingConfig(
+        data=DataConfig(
+            root_folder=Path(frames_root),
+            sequence=sequence_name,
+            landmark_source="star",
+        ),
+        model=ModelConfig(),
+        render=RenderConfig(),
+        log=LogConfig(),
+        exp=ExperimentConfig(
+            output_folder=Path(tracking_output),
+            photometric=True,
+        ),
+        lr=LearningRateConfig(),
+        w=LossWeightConfig(),
+        pipeline=pipeline,
+    )
 
     tracker = GlobalTracker(vhap_cfg)
     tracker.optimize()
@@ -638,7 +726,6 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking):
     image=image,
     gpu="A10G",
     timeout=3600,
-    allow_concurrent_inputs=1,
 )
 @modal.asgi_app()
 def web():
