@@ -837,6 +837,11 @@ def web():
         return _orig_load(*args, **kwargs)
     _cext.load = _patched_load
 
+    # Suppress torch._dynamo errors so it falls back to eager mode
+    # instead of crashing on unsupported operations.
+    import torch._dynamo
+    torch._dynamo.config.suppress_errors = True
+
     print("Initializing LAM pipeline...")
     cfg, lam, flametracking = _init_lam_pipeline()
     print("Pipeline ready. Starting Gradio UI...")
