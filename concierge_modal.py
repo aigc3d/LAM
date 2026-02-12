@@ -813,6 +813,7 @@ def web():
     """Gradio UI served via ASGI (no subprocess, no patching)."""
     import gradio as gr
     from fastapi import FastAPI
+    from fastapi.responses import FileResponse
     from glob import glob
 
     # Monkey-patch gradio_client bug: additionalProperties can be a bool,
@@ -853,6 +854,9 @@ def web():
     # Discover available sample motions (if any)
     sample_motions = sorted(glob("./model_zoo/sample_motion/export/*/*.mp4"))
 
+    # Track latest ZIP for direct download endpoint
+    _latest_zip = {"path": None}
+
     # --- Processing function ---
     def process(image_path, video_path, motion_choice):
         if image_path is None:
@@ -867,9 +871,12 @@ def web():
             # Using a sample motion - video_path is ignored, flame_params used directly
             effective_video = None
 
-        yield from _generate_concierge_zip(
+        for status, zip_path, preview in _generate_concierge_zip(
             image_path, effective_video, cfg, lam, flametracking,
-        )
+        ):
+            if zip_path:
+                _latest_zip["path"] = zip_path
+            yield status, zip_path, preview
 
     # --- Build Gradio Blocks ---
     with gr.Blocks(
@@ -948,6 +955,10 @@ def web():
                     label="Download concierge.zip",
                 )
                 gr.Markdown(
+                    "If the download button above doesn't work, use the "
+                    "direct link: **[/download-zip](/download-zip)**"
+                )
+                gr.Markdown(
                     "**Usage:** Place the downloaded `concierge.zip` at "
                     "`gourmet-sp/public/avatar/concierge.zip` for the "
                     "LAMAvatar component."
@@ -966,6 +977,15 @@ def web():
     @web_app.get("/health")
     async def health():
         return {"status": "ok", "model": "LAM-20K", "blender": "4.2.0"}
+
+    @web_app.get("/download-zip")
+    async def download_zip():
+        p = _latest_zip.get("path")
+        if p and os.path.isfile(p):
+            return FileResponse(
+                p, media_type="application/zip", filename="concierge.zip",
+            )
+        return {"error": "No ZIP available yet. Run Generate first."}
 
     return gr.mount_gradio_app(web_app, demo, path="/")
 
