@@ -1043,6 +1043,12 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
         zip_size_mb = os.path.getsize(output_zip) / (1024 * 1024)
         num_motion_frames = len(os.listdir(flame_params_dir))
 
+        # Copy ZIP to a stable well-known path so /download-zip always finds it
+        # (the temp working_dir path works for gr.File but the FastAPI endpoint
+        # needs a path that survives across HTTP requests).
+        stable_zip = "/tmp/concierge_latest.zip"
+        shutil.copy2(output_zip, stable_zip)
+
         # Save diagnostics to file for download
         diag_path = os.path.join(working_dir, "diagnostics.txt")
         with open(diag_path, "w") as f:
@@ -1268,11 +1274,13 @@ def web():
 
     @web_app.get("/download-zip")
     async def download_zip():
-        p = _latest_zip.get("path")
-        if p and os.path.isfile(p):
-            return FileResponse(
-                p, media_type="application/zip", filename="concierge.zip",
-            )
+        # Try stable well-known path first, then fall back to in-memory tracker
+        for candidate in ["/tmp/concierge_latest.zip", _latest_zip.get("path")]:
+            if candidate and os.path.isfile(candidate):
+                return FileResponse(
+                    candidate, media_type="application/zip",
+                    filename="concierge.zip",
+                )
         return {"error": "No ZIP available yet. Run Generate first."}
 
     return gr.mount_gradio_app(web_app, demo, path="/")
