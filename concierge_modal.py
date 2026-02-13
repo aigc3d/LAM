@@ -1046,8 +1046,12 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
         # Copy ZIP to a stable well-known path so /download-zip always finds it
         # (the temp working_dir path works for gr.File but the FastAPI endpoint
         # needs a path that survives across HTTP requests).
-        stable_zip = "/tmp/concierge_latest.zip"
+        stable_dir = "/tmp/concierge_output"
+        os.makedirs(stable_dir, exist_ok=True)
+        stable_zip = os.path.join(stable_dir, "concierge.zip")
         shutil.copy2(output_zip, stable_zip)
+        stable_preview = os.path.join(stable_dir, "preview.mp4")
+        shutil.copy2(final_preview, stable_preview)
 
         # Save diagnostics to file for download
         diag_path = os.path.join(working_dir, "diagnostics.txt")
@@ -1055,11 +1059,12 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
             f.write("\n".join(diag))
         print("\n=== DIAGNOSTICS ===\n" + "\n".join(diag) + "\n=== END ===\n")
 
+        # Return STABLE paths so Gradio can serve them reliably
         yield (
             f"concierge.zip generated ({zip_size_mb:.1f} MB) | "
             f"Motion: {motion_source} ({num_motion_frames} frames)",
-            output_zip,
-            final_preview,
+            stable_zip,
+            stable_preview,
             None,
             preproc_vis_path,
         )
@@ -1163,6 +1168,8 @@ def web():
     with gr.Blocks(
         title="Concierge ZIP Generator",
         theme=gr.themes.Soft(),
+        # Allow Gradio to serve files from /tmp (output ZIPs, preview videos, images)
+        allowed_paths=["/tmp"],
         css="""
         .main-title { text-align: center; margin-bottom: 0.5em; }
         .subtitle { text-align: center; color: #666; font-size: 0.95em; margin-bottom: 1.5em; }
@@ -1274,8 +1281,8 @@ def web():
 
     @web_app.get("/download-zip")
     async def download_zip():
-        # Try stable well-known path first, then fall back to in-memory tracker
-        for candidate in ["/tmp/concierge_latest.zip", _latest_zip.get("path")]:
+        # Try stable output path first, then fall back to in-memory tracker
+        for candidate in ["/tmp/concierge_output/concierge.zip", _latest_zip.get("path")]:
             if candidate and os.path.isfile(candidate):
                 return FileResponse(
                     candidate, media_type="application/zip",
