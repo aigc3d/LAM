@@ -20,7 +20,7 @@ Pipeline:
   4. Avatar data   → Blender GLB export → concierge.zip
 
 Prerequisites:
-  - Modal account with GPU access (A10G)
+  - Modal account with GPU access (L4)
   - Run from your LAM repo root where model files are already downloaded
   - Required local directories:
       ./model_zoo/   (LAM weights, flame tracking models)
@@ -1123,22 +1123,132 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
 
 
 # ============================================================
-# Gradio UI + Modal ASGI App
+# GPU Generation Worker (L4 — only active during generation)
 # ============================================================
+# The GPU container loads models once via @modal.enter(), processes
+# requests via the generate() method, and shuts down after 2 min idle.
+# This avoids paying for GPU while the Gradio UI is just waiting.
+
+@app.cls(
+    gpu="L4",
+    image=image,
+    volumes={OUTPUT_VOL_PATH: output_vol},
+    timeout=3600,
+    container_idle_timeout=120,
+)
+class Generator:
+    @modal.enter()
+    def setup(self):
+        """Initialize LAM pipeline once when the GPU container starts."""
+        import shutil as _shutil
+        os.chdir("/root/LAM")
+        sys.path.insert(0, "/root/LAM")
+
+        # Monkey-patch torch.utils.cpp_extension.load to inject
+        # -Wno-c++11-narrowing, fixing nvdiffrast JIT build with clang.
+        import torch.utils.cpp_extension as _cext
+        _orig_load = _cext.load
+        def _patched_load(*args, **kwargs):
+            cflags = list(kwargs.get("extra_cflags", []) or [])
+            if "-Wno-c++11-narrowing" not in cflags:
+                cflags.append("-Wno-c++11-narrowing")
+            kwargs["extra_cflags"] = cflags
+            return _orig_load(*args, **kwargs)
+        _cext.load = _patched_load
+
+        # Suppress torch._dynamo errors so it falls back to eager mode
+        import torch._dynamo
+        torch._dynamo.config.suppress_errors = True
+
+        print("Initializing LAM pipeline on GPU...")
+        self.cfg, self.lam, self.flametracking = _init_lam_pipeline()
+        print("GPU pipeline ready.")
+
+    @modal.method()
+    def generate(self, image_bytes: bytes, video_bytes: bytes, motion_name: str):
+        """Run full pipeline. Yields status dicts to the CPU UI.
+
+        Yields:
+            dict with keys:
+              type: "status" | "done" | "error"
+              msg: status message string
+              has_tracked: bool (for "status" — tracked face saved to Volume)
+              has_preproc: bool (for "status" — preprocessed input saved to Volume)
+        """
+        import shutil
+        import tempfile
+
+        # Save uploaded bytes to temp files on the GPU container
+        upload_dir = tempfile.mkdtemp(prefix="gpu_upload_")
+        image_path = os.path.join(upload_dir, "input.png")
+        with open(image_path, "wb") as f:
+            f.write(image_bytes)
+
+        video_path = None
+        if video_bytes and len(video_bytes) > 0:
+            video_path = os.path.join(upload_dir, "input_video.mp4")
+            with open(video_path, "wb") as f:
+                f.write(video_bytes)
+
+        effective_video = video_path if motion_name == "custom" else None
+        selected_motion = motion_name if motion_name != "custom" else None
+
+        try:
+            vol_dir = OUTPUT_VOL_PATH
+            os.makedirs(vol_dir, exist_ok=True)
+
+            for status, zip_path, preview, tracked_img, preproc_img in _generate_concierge_zip(
+                image_path, effective_video, self.cfg, self.lam, self.flametracking,
+                motion_name=selected_motion,
+            ):
+                # Save intermediate images to Volume for the CPU UI
+                new_vol_files = False
+                if tracked_img and os.path.isfile(tracked_img):
+                    shutil.copy2(tracked_img, os.path.join(vol_dir, "tracked_face.png"))
+                    new_vol_files = True
+                if preproc_img and os.path.isfile(preproc_img):
+                    shutil.copy2(preproc_img, os.path.join(vol_dir, "preproc_input.png"))
+                    new_vol_files = True
+
+                if zip_path:
+                    # ZIP + preview already saved to Volume by _generate_concierge_zip
+                    if new_vol_files:
+                        output_vol.commit()
+                    yield {"type": "done", "msg": status}
+                else:
+                    if new_vol_files:
+                        output_vol.commit()
+                    yield {
+                        "type": "status",
+                        "msg": status,
+                        "has_tracked": bool(tracked_img),
+                        "has_preproc": bool(preproc_img),
+                    }
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield {"type": "error", "msg": str(e)}
+        finally:
+            import shutil as _shutil
+            _shutil.rmtree(upload_dir, ignore_errors=True)
+
+
+# ============================================================
+# Gradio UI (CPU — no GPU needed)
+# ============================================================
+# The UI runs on a cheap CPU container. Generation is delegated
+# to the Generator class above via remote_gen().
 
 @app.function(
     image=image,
-    gpu="A10G",
     timeout=3600,
     volumes={OUTPUT_VOL_PATH: output_vol},
 )
 # Gradio needs all requests (uploads, queue, SSE) on the SAME container.
-# Default concurrency is 1, which forces Modal to spin up new containers
-# per request, breaking Gradio's in-memory file storage and queue state.
 @modal.concurrent(max_inputs=100)
 @modal.asgi_app()
 def web():
-    """Gradio UI served via ASGI (no subprocess, no patching)."""
+    """Gradio UI served via ASGI (CPU only — GPU delegated to Generator)."""
     import gradio as gr
     from fastapi import FastAPI
     from fastapi.responses import FileResponse
@@ -1154,65 +1264,59 @@ def web():
         return _orig_jst(schema, defs)
     _gc_utils._json_schema_to_python_type = _safe_jst
 
-    # --- Initialize pipeline (once per container) ---
+    # Discover available sample motions (no LAM pipeline init needed)
     os.chdir("/root/LAM")
-    sys.path.insert(0, "/root/LAM")
-
-    # Monkey-patch torch.utils.cpp_extension.load to inject
-    # -Wno-c++11-narrowing, fixing nvdiffrast JIT build with clang.
-    import torch.utils.cpp_extension as _cext
-    _orig_load = _cext.load
-    def _patched_load(*args, **kwargs):
-        cflags = list(kwargs.get("extra_cflags", []) or [])
-        if "-Wno-c++11-narrowing" not in cflags:
-            cflags.append("-Wno-c++11-narrowing")
-        kwargs["extra_cflags"] = cflags
-        return _orig_load(*args, **kwargs)
-    _cext.load = _patched_load
-
-    # Suppress torch._dynamo errors so it falls back to eager mode
-    # instead of crashing on unsupported operations.
-    import torch._dynamo
-    torch._dynamo.config.suppress_errors = True
-
-    print("Initializing LAM pipeline...")
-    cfg, lam, flametracking = _init_lam_pipeline()
-    print("Pipeline ready. Starting Gradio UI...")
-
-    # Discover available sample motions (if any)
     sample_motions = sorted(glob("./model_zoo/sample_motion/export/*/*.mp4"))
 
-    # Track latest ZIP for direct download endpoint
-    _latest_zip = {"path": None}
-
-    # --- Processing function ---
+    # --- Processing function (delegates to GPU) ---
     def process(image_path, video_path, motion_choice):
         if image_path is None:
             yield "Error: Please upload a face image", None, None, None, None
             return
 
-        # Determine motion source
-        effective_video = None
-        selected_motion = None
-        if motion_choice == "custom" and video_path:
-            effective_video = video_path
-        elif motion_choice and motion_choice != "custom":
-            # Using a sample motion - pass name so it's correctly resolved
-            effective_video = None
-            selected_motion = motion_choice
+        # Read uploaded files as bytes for cross-container transfer
+        with open(image_path, "rb") as f:
+            image_bytes = f.read()
 
-        for status, zip_path, preview, tracked_img, preproc_img in _generate_concierge_zip(
-            image_path, effective_video, cfg, lam, flametracking,
-            motion_name=selected_motion,
-        ):
-            if zip_path:
-                _latest_zip["path"] = zip_path
-                print(f"[DOWNLOAD] _latest_zip set to: {zip_path} "
-                      f"exists={os.path.isfile(zip_path)}")
-                stable = "/tmp/concierge_output/concierge.zip"
-                print(f"[DOWNLOAD] stable zip: {stable} "
-                      f"exists={os.path.isfile(stable)}")
-            yield status, zip_path, preview, tracked_img, preproc_img
+        video_bytes = b""
+        if motion_choice == "custom" and video_path and os.path.isfile(video_path):
+            with open(video_path, "rb") as f:
+                video_bytes = f.read()
+
+        # Delegate to GPU worker
+        gen = Generator()
+        for update in gen.generate.remote_gen(image_bytes, video_bytes, motion_choice or "custom"):
+            utype = update["type"]
+            msg = update["msg"]
+
+            if utype == "done":
+                output_vol.reload()
+                zip_p = os.path.join(OUTPUT_VOL_PATH, "concierge.zip")
+                preview_p = os.path.join(OUTPUT_VOL_PATH, "preview.mp4")
+                tracked_p = os.path.join(OUTPUT_VOL_PATH, "tracked_face.png")
+                preproc_p = os.path.join(OUTPUT_VOL_PATH, "preproc_input.png")
+                yield (
+                    msg,
+                    zip_p if os.path.isfile(zip_p) else None,
+                    preview_p if os.path.isfile(preview_p) else None,
+                    tracked_p if os.path.isfile(tracked_p) else None,
+                    preproc_p if os.path.isfile(preproc_p) else None,
+                )
+            elif utype == "error":
+                yield f"Error: {msg}", None, None, None, None
+            else:
+                # Status update — show intermediate images if available
+                tracked = None
+                preproc = None
+                if update.get("has_tracked") or update.get("has_preproc"):
+                    output_vol.reload()
+                if update.get("has_tracked"):
+                    p = os.path.join(OUTPUT_VOL_PATH, "tracked_face.png")
+                    tracked = p if os.path.isfile(p) else None
+                if update.get("has_preproc"):
+                    p = os.path.join(OUTPUT_VOL_PATH, "preproc_input.png")
+                    preproc = p if os.path.isfile(p) else None
+                yield msg, None, None, tracked, preproc
 
     # --- Build Gradio Blocks ---
     with gr.Blocks(
@@ -1331,47 +1435,28 @@ def web():
 
     @web_app.get("/download-zip")
     async def download_zip():
-        import glob as _glob
-        # Try stable output path first, then fall back to in-memory tracker
-        candidates = [
-            "/tmp/concierge_output/concierge.zip",
-            _latest_zip.get("path"),
-        ]
-        for candidate in candidates:
-            if candidate and os.path.isfile(candidate):
-                return FileResponse(
-                    candidate, media_type="application/zip",
-                    filename="concierge.zip",
-                )
-        # Return diagnostic info to help debug
-        # Search for any concierge.zip under /tmp
-        found = _glob.glob("/tmp/**/concierge.zip", recursive=True)
-        return {
-            "error": "No ZIP available yet. Run Generate first.",
-            "debug": {
-                "candidates": {c: os.path.isfile(c) if c else "None" for c in candidates},
-                "_latest_zip": _latest_zip.get("path"),
-                "found_zips": found[:5],
-            },
-        }
+        output_vol.reload()
+        p = os.path.join(OUTPUT_VOL_PATH, "concierge.zip")
+        if os.path.isfile(p):
+            return FileResponse(p, media_type="application/zip",
+                                filename="concierge.zip")
+        return {"error": "No ZIP available yet. Run Generate first."}
 
     @web_app.get("/download-preview")
     async def download_preview():
-        p = "/tmp/concierge_output/preview.mp4"
+        output_vol.reload()
+        p = os.path.join(OUTPUT_VOL_PATH, "preview.mp4")
         if os.path.isfile(p):
             return FileResponse(p, media_type="video/mp4", filename="preview.mp4")
         return {"error": "No preview available yet."}
 
-    # Fallback file server for Gradio cached files.
-    # Gradio's built-in /file= serving returns 404 in ASGI-mounted contexts
-    # on this Modal setup. This route catches those requests and serves them.
+    # Fallback file server for Gradio cached files and Volume files.
     import mimetypes
 
     @web_app.api_route("/file={file_path:path}", methods=["GET", "HEAD"])
     async def serve_gradio_file(file_path: str):
         abs_path = file_path if file_path.startswith("/") else ("/" + file_path)
-        # Only serve files under /tmp/ (Gradio cache + our output)
-        if abs_path.startswith("/tmp/") and os.path.isfile(abs_path):
+        if (abs_path.startswith("/tmp/") or abs_path.startswith(OUTPUT_VOL_PATH + "/")) and os.path.isfile(abs_path):
             ctype = mimetypes.guess_type(abs_path)[0] or "application/octet-stream"
             return FileResponse(abs_path, media_type=ctype)
         from starlette.responses import Response
@@ -1379,7 +1464,7 @@ def web():
 
     return gr.mount_gradio_app(
         web_app, demo, path="/",
-        allowed_paths=["/tmp/"],
+        allowed_paths=["/tmp/", OUTPUT_VOL_PATH],
     )
 
 
