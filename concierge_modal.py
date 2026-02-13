@@ -1162,6 +1162,11 @@ def web():
         ):
             if zip_path:
                 _latest_zip["path"] = zip_path
+                print(f"[DOWNLOAD] _latest_zip set to: {zip_path} "
+                      f"exists={os.path.isfile(zip_path)}")
+                stable = "/tmp/concierge_output/concierge.zip"
+                print(f"[DOWNLOAD] stable zip: {stable} "
+                      f"exists={os.path.isfile(stable)}")
             yield status, zip_path, preview, tracked_img, preproc_img
 
     # --- Build Gradio Blocks ---
@@ -1279,14 +1284,29 @@ def web():
 
     @web_app.get("/download-zip")
     async def download_zip():
+        import glob as _glob
         # Try stable output path first, then fall back to in-memory tracker
-        for candidate in ["/tmp/concierge_output/concierge.zip", _latest_zip.get("path")]:
+        candidates = [
+            "/tmp/concierge_output/concierge.zip",
+            _latest_zip.get("path"),
+        ]
+        for candidate in candidates:
             if candidate and os.path.isfile(candidate):
                 return FileResponse(
                     candidate, media_type="application/zip",
                     filename="concierge.zip",
                 )
-        return {"error": "No ZIP available yet. Run Generate first."}
+        # Return diagnostic info to help debug
+        # Search for any concierge.zip under /tmp
+        found = _glob.glob("/tmp/**/concierge.zip", recursive=True)
+        return {
+            "error": "No ZIP available yet. Run Generate first.",
+            "debug": {
+                "candidates": {c: os.path.isfile(c) if c else "None" for c in candidates},
+                "_latest_zip": _latest_zip.get("path"),
+                "found_zips": found[:5],
+            },
+        }
 
     @web_app.get("/download-preview")
     async def download_preview():
