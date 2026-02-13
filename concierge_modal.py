@@ -1134,7 +1134,7 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
     image=image,
     volumes={OUTPUT_VOL_PATH: output_vol},
     timeout=3600,
-    container_idle_timeout=120,
+    scaledown_window=120,
 )
 class Generator:
     @modal.enter()
@@ -1475,7 +1475,10 @@ def web():
 # in the Modal Volume even after the GPU container shuts down.
 # URL: https://<app>.modal.run/download/concierge.zip
 
+dl_image = modal.Image.debian_slim(python_version="3.10").pip_install("fastapi")
+
 @app.function(
+    image=dl_image,
     volumes={OUTPUT_VOL_PATH: output_vol},
     timeout=300,
 )
