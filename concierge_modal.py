@@ -1083,12 +1083,17 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
             f.write("\n".join(diag))
         print("\n=== DIAGNOSTICS ===\n" + "\n".join(diag) + "\n=== END ===\n")
 
-        # Return STABLE paths so Gradio can serve them reliably
+        # Return TEMP paths so Gradio caches them normally via its
+        # built-in mechanism (hash-based URLs).  Passing stable paths
+        # requires allowed_paths and/or a custom /file= handler that
+        # correctly intercepts Gradio's cache URLs — which has been a
+        # recurring source of regressions.  The stable copies above are
+        # only for the /download-zip and /download-preview endpoints.
         yield (
             f"concierge.zip generated ({zip_size_mb:.1f} MB) | "
             f"Motion: {motion_source} ({num_motion_frames} frames)",
-            stable_zip,
-            stable_preview,
+            output_zip,
+            final_preview,
             None,
             preproc_vis_path,
         )
@@ -1354,7 +1359,10 @@ def web():
         from starlette.responses import Response
         return Response(status_code=404)
 
-    return gr.mount_gradio_app(web_app, demo, path="/")
+    return gr.mount_gradio_app(
+        web_app, demo, path="/",
+        allowed_paths=["/tmp/"],
+    )
 
 
 # ============================================================
