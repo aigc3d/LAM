@@ -1029,6 +1029,19 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
         from app_lam import save_images2video
         save_images2video(rgb, preview_path, 30)
 
+        # Re-encode for browser compatibility:
+        #  - yuv420p pixel format (browsers don't support yuv444p)
+        #  - moov atom at start (required for streaming duration detection)
+        preview_browser = os.path.join(working_dir, "preview_browser.mp4")
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", preview_path,
+             "-c:v", "libx264", "-pix_fmt", "yuv420p",
+             "-movflags", "faststart", preview_browser],
+            capture_output=True,
+        )
+        if os.path.isfile(preview_browser) and os.path.getsize(preview_browser) > 0:
+            os.replace(preview_browser, preview_path)
+
         # Add audio if available (from custom video)
         final_preview = preview_path
         if video_path and os.path.isfile(video_path):
@@ -1036,6 +1049,17 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
                 from app_lam import add_audio_to_video
                 preview_with_audio = os.path.join(working_dir, "preview_audio.mp4")
                 add_audio_to_video(preview_path, preview_with_audio, video_path)
+                # Re-encode audio version for browser too
+                preview_audio_browser = os.path.join(working_dir, "preview_audio_browser.mp4")
+                subprocess.run(
+                    ["ffmpeg", "-y", "-i", preview_with_audio,
+                     "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                     "-c:a", "aac", "-movflags", "faststart",
+                     preview_audio_browser],
+                    capture_output=True,
+                )
+                if os.path.isfile(preview_audio_browser) and os.path.getsize(preview_audio_browser) > 0:
+                    os.replace(preview_audio_browser, preview_with_audio)
                 final_preview = preview_with_audio
             except Exception:
                 pass  # Fallback to video without audio
