@@ -1168,8 +1168,6 @@ def web():
     with gr.Blocks(
         title="Concierge ZIP Generator",
         theme=gr.themes.Soft(),
-        # Allow Gradio to serve files from /tmp (output ZIPs, preview videos, images)
-        allowed_paths=["/tmp"],
         css="""
         .main-title { text-align: center; margin-bottom: 0.5em; }
         .subtitle { text-align: center; color: #666; font-size: 0.95em; margin-bottom: 1.5em; }
@@ -1289,6 +1287,28 @@ def web():
                     filename="concierge.zip",
                 )
         return {"error": "No ZIP available yet. Run Generate first."}
+
+    @web_app.get("/download-preview")
+    async def download_preview():
+        p = "/tmp/concierge_output/preview.mp4"
+        if os.path.isfile(p):
+            return FileResponse(p, media_type="video/mp4", filename="preview.mp4")
+        return {"error": "No preview available yet."}
+
+    # Fallback file server for Gradio cached files.
+    # Gradio's built-in /file= serving returns 404 in ASGI-mounted contexts
+    # on this Modal setup. This route catches those requests and serves them.
+    import mimetypes
+
+    @web_app.api_route("/file={file_path:path}", methods=["GET", "HEAD"])
+    async def serve_gradio_file(file_path: str):
+        abs_path = file_path if file_path.startswith("/") else ("/" + file_path)
+        # Only serve files under /tmp/ (Gradio cache + our output)
+        if abs_path.startswith("/tmp/") and os.path.isfile(abs_path):
+            ctype = mimetypes.guess_type(abs_path)[0] or "application/octet-stream"
+            return FileResponse(abs_path, media_type=ctype)
+        from starlette.responses import Response
+        return Response(status_code=404)
 
     return gr.mount_gradio_app(web_app, demo, path="/")
 
