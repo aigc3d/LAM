@@ -33,6 +33,12 @@ import modal
 
 app = modal.App("concierge-zip-generator")
 
+# Persistent storage for generated ZIPs — survives container shutdown.
+# The GPU container writes here after generation; the lightweight CPU
+# download server reads from here.
+output_vol = modal.Volume.from_name("concierge-output", create_if_missing=True)
+OUTPUT_VOL_PATH = "/vol/output"
+
 # Detect which local directories contain model files.
 # These are mounted into the container at build time.
 _has_model_zoo = os.path.isdir("./model_zoo")
@@ -1077,6 +1083,15 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
         stable_preview = os.path.join(stable_dir, "preview.mp4")
         shutil.copy2(final_preview, stable_preview)
 
+        # Persist to Modal Volume — survives container shutdown.
+        # The lightweight /download endpoint reads from here.
+        vol_dir = OUTPUT_VOL_PATH
+        os.makedirs(vol_dir, exist_ok=True)
+        shutil.copy2(output_zip, os.path.join(vol_dir, "concierge.zip"))
+        shutil.copy2(final_preview, os.path.join(vol_dir, "preview.mp4"))
+        output_vol.commit()
+        diag.append(f"[VOLUME] Saved to {vol_dir}/concierge.zip")
+
         # Save diagnostics to file for download
         diag_path = os.path.join(working_dir, "diagnostics.txt")
         with open(diag_path, "w") as f:
@@ -1115,6 +1130,7 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
     image=image,
     gpu="A10G",
     timeout=3600,
+    volumes={OUTPUT_VOL_PATH: output_vol},
 )
 # Gradio needs all requests (uploads, queue, SSE) on the SAME container.
 # Default concurrency is 1, which forces Modal to spin up new containers
@@ -1288,8 +1304,10 @@ def web():
                     label="Download concierge.zip",
                 )
                 gr.Markdown(
-                    "If the download button above doesn't work, use the "
-                    "direct link: **[/download-zip](/download-zip)**"
+                    "**ZIP is auto-saved to persistent storage.**  \n"
+                    "GPU UI を閉じた後でも、軽量 Download Server からDL可能:  \n"
+                    "`modal deploy` 後に表示される `download` の URL  \n"
+                    "Fallback: [/download-zip](/download-zip)"
                 )
                 gr.Markdown(
                     "**Usage:** Place the downloaded `concierge.zip` at "
@@ -1363,6 +1381,73 @@ def web():
         web_app, demo, path="/",
         allowed_paths=["/tmp/"],
     )
+
+
+# ============================================================
+# Lightweight CPU download server (no GPU needed)
+# ============================================================
+# This runs on a separate, cheap container. The generated ZIP persists
+# in the Modal Volume even after the GPU container shuts down.
+# URL: https://<app>.modal.run/download/concierge.zip
+
+@app.function(
+    volumes={OUTPUT_VOL_PATH: output_vol},
+    timeout=300,
+)
+@modal.asgi_app()
+def download():
+    """Lightweight download server — serves ZIP/preview from Modal Volume."""
+    from fastapi import FastAPI
+    from fastapi.responses import FileResponse, HTMLResponse
+    import mimetypes
+
+    dl_app = FastAPI()
+
+    @dl_app.get("/", response_class=HTMLResponse)
+    async def index():
+        output_vol.reload()
+        zip_path = os.path.join(OUTPUT_VOL_PATH, "concierge.zip")
+        preview_path = os.path.join(OUTPUT_VOL_PATH, "preview.mp4")
+        has_zip = os.path.isfile(zip_path)
+        has_preview = os.path.isfile(preview_path)
+        zip_size = ""
+        if has_zip:
+            mb = os.path.getsize(zip_path) / (1024 * 1024)
+            zip_size = f" ({mb:.1f} MB)"
+        return f"""<!DOCTYPE html>
+<html><head><title>Concierge Download</title>
+<style>
+body {{ font-family: system-ui; max-width: 600px; margin: 40px auto; padding: 0 20px; }}
+a {{ display: inline-block; margin: 8px 0; padding: 10px 20px;
+     background: #2563eb; color: white; border-radius: 6px; text-decoration: none; }}
+a:hover {{ background: #1d4ed8; }}
+.empty {{ color: #999; }}
+video {{ max-width: 100%; border-radius: 8px; margin: 12px 0; }}
+</style></head><body>
+<h1>Concierge Download</h1>
+{'<a href="/concierge.zip">Download concierge.zip' + zip_size + '</a>' if has_zip else '<p class="empty">No ZIP generated yet. Run Generate in the Gradio UI first.</p>'}
+{'<h3>Preview</h3><video controls autoplay><source src="/preview.mp4" type="video/mp4"></video>' if has_preview else ''}
+</body></html>"""
+
+    @dl_app.get("/concierge.zip")
+    async def get_zip():
+        output_vol.reload()
+        p = os.path.join(OUTPUT_VOL_PATH, "concierge.zip")
+        if os.path.isfile(p):
+            return FileResponse(p, media_type="application/zip",
+                                filename="concierge.zip")
+        return {"error": "No ZIP available yet."}
+
+    @dl_app.get("/preview.mp4")
+    async def get_preview():
+        output_vol.reload()
+        p = os.path.join(OUTPUT_VOL_PATH, "preview.mp4")
+        if os.path.isfile(p):
+            return FileResponse(p, media_type="video/mp4",
+                                filename="preview.mp4")
+        return {"error": "No preview available yet."}
+
+    return dl_app
 
 
 # ============================================================
