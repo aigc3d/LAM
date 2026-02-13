@@ -1330,7 +1330,10 @@ def web():
         from starlette.responses import Response
         return Response(status_code=404)
 
-    return gr.mount_gradio_app(web_app, demo, path="/")
+    return gr.mount_gradio_app(
+        web_app, demo, path="/",
+        allowed_paths=["/tmp/"],
+    )
 
 
 # ============================================================
