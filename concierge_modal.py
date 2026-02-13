@@ -1084,7 +1084,7 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
 
 @app.function(
     image=image,
-    gpu="A10G",
+    gpu="T4",
     timeout=3600,
 )
 # Gradio needs all requests (uploads, queue, SSE) on the SAME container.
