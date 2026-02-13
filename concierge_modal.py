@@ -1108,7 +1108,7 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
 
 @app.function(
     image=image,
-    gpu="L4",
+    gpu="A10G",
     timeout=3600,
 )
 # Gradio needs all requests (uploads, queue, SSE) on the SAME container.
@@ -1354,10 +1354,7 @@ def web():
         from starlette.responses import Response
         return Response(status_code=404)
 
-    return gr.mount_gradio_app(
-        web_app, demo, path="/",
-        allowed_paths=["/tmp/"],
-    )
+    return gr.mount_gradio_app(web_app, demo, path="/")
 
 
 # ============================================================
