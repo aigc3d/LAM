@@ -19,6 +19,23 @@ def clean_scene():
             collection.remove(item)
 
 
+def strip_materials():
+    """Remove all materials, textures, and images after FBX import.
+
+    The OAC renderer only uses mesh geometry and bone weights.
+    Embedded FBX textures bloat the GLB from ~3.6MB to ~43.5MB.
+    """
+    for obj in bpy.data.objects:
+        if obj.type == 'MESH':
+            obj.data.materials.clear()
+    for mat in list(bpy.data.materials):
+        bpy.data.materials.remove(mat)
+    for tex in list(bpy.data.textures):
+        bpy.data.textures.remove(tex)
+    for img in list(bpy.data.images):
+        bpy.data.images.remove(img)
+
+
 def main():
     try:
         # Parse command line arguments after "--"
@@ -37,6 +54,10 @@ def main():
         print(f"Importing {input_fbx}...")
         bpy.ops.import_scene.fbx(filepath=str(input_fbx))
 
+        # Strip materials/textures — OAC renderer only needs geometry + skins.
+        # FBX templates embed textures that bloat GLB from ~3.6MB to ~43.5MB.
+        strip_materials()
+
         # Export optimized GLB
         # NOTE: Blender 4.2 removed several legacy glTF export kwargs
         # (export_colors, export_texcoords, export_normals).
@@ -46,6 +67,7 @@ def main():
             filepath=str(output_glb),
             export_format='GLB',          # Binary format
             export_skins=True,            # Keep skinning data
+            export_materials='NONE',      # No materials/textures
         )
 
         print("Conversion completed successfully")
