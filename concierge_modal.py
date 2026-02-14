@@ -1165,26 +1165,15 @@ class Generator:
         print("GPU pipeline ready.")
 
     @modal.method()
-    def generate(self, image_bytes: bytes, video_bytes: bytes, motion_name: str):
-        """Run full pipeline. Yields status dicts to the CPU UI.
+    def generate(self, image_bytes: bytes, video_bytes: bytes, motion_name: str, job_id: str):
+        """Run full pipeline. Results are saved to Volume with a status marker.
 
-        The pipeline (especially VHAP tracker.optimize()) can block for 30+
-        minutes without yielding.  To keep the Gradio SSE and Modal gRPC
-        streams alive, we run the pipeline in a thread and emit heartbeat
-        dicts every 10 seconds when no real status update arrives.
-
-        Yields:
-            dict with keys:
-              type: "status" | "heartbeat" | "done" | "error"
-              msg: status message string
-              has_tracked: bool (for "status" — tracked face saved to Volume)
-              has_preproc: bool (for "status" — preprocessed input saved to Volume)
+        No streaming — this is a plain RPC call.  The CPU UI polls the Volume
+        for intermediate images and a status_{job_id}.json completion marker.
         """
         import shutil
         import tempfile
-        import threading
-        import queue
-        import time
+        import json
 
         # Save uploaded bytes to temp files on the GPU container
         upload_dir = tempfile.mkdtemp(prefix="gpu_upload_")
@@ -1201,81 +1190,44 @@ class Generator:
         effective_video = video_path if motion_name == "custom" else None
         selected_motion = motion_name if motion_name != "custom" else None
 
-        # Run pipeline in a thread so we can yield heartbeats while it blocks
-        result_q = queue.Queue()
-
-        def _run_pipeline():
-            try:
-                for item in _generate_concierge_zip(
-                    image_path, effective_video,
-                    self.cfg, self.lam, self.flametracking,
-                    motion_name=selected_motion,
-                ):
-                    result_q.put(("yield", item))
-                result_q.put(("done", None))
-            except Exception as exc:
-                result_q.put(("error", exc))
-
-        thread = threading.Thread(target=_run_pipeline, daemon=True)
-        thread.start()
-        start_time = time.time()
-        last_status_msg = "Processing..."
+        vol_dir = OUTPUT_VOL_PATH
+        os.makedirs(vol_dir, exist_ok=True)
+        status_file = os.path.join(vol_dir, f"status_{job_id}.json")
 
         try:
-            vol_dir = OUTPUT_VOL_PATH
-            os.makedirs(vol_dir, exist_ok=True)
-
-            while True:
-                try:
-                    msg_type, data = result_q.get(timeout=10)
-                except queue.Empty:
-                    # No data for 10 s — send heartbeat to keep SSE alive
-                    elapsed = int(time.time() - start_time)
-                    mins, secs = divmod(elapsed, 60)
-                    yield {
-                        "type": "heartbeat",
-                        "msg": f"{last_status_msg} ({mins}m{secs:02d}s elapsed)",
-                    }
-                    continue
-
-                if msg_type == "error":
-                    import traceback
-                    traceback.print_exc()
-                    yield {"type": "error", "msg": str(data)}
-                    break
-
-                if msg_type == "done":
-                    break
-
-                # msg_type == "yield"
-                status, zip_path, preview, tracked_img, preproc_img = data
-                last_status_msg = status
-
-                # Save intermediate images to Volume for the CPU UI
-                new_vol_files = False
+            final_msg = "Processing..."
+            for status, zip_path, preview, tracked_img, preproc_img in _generate_concierge_zip(
+                image_path, effective_video, self.cfg, self.lam, self.flametracking,
+                motion_name=selected_motion,
+            ):
+                final_msg = status
+                # Save intermediate images to Volume for the CPU UI to discover
+                new_files = False
                 if tracked_img and os.path.isfile(tracked_img):
                     shutil.copy2(tracked_img, os.path.join(vol_dir, "tracked_face.png"))
-                    new_vol_files = True
+                    new_files = True
                 if preproc_img and os.path.isfile(preproc_img):
                     shutil.copy2(preproc_img, os.path.join(vol_dir, "preproc_input.png"))
-                    new_vol_files = True
+                    new_files = True
+                if new_files:
+                    output_vol.commit()
 
-                if zip_path:
-                    if new_vol_files:
-                        output_vol.commit()
-                    yield {"type": "done", "msg": status}
-                else:
-                    if new_vol_files:
-                        output_vol.commit()
-                    yield {
-                        "type": "status",
-                        "msg": status,
-                        "has_tracked": bool(tracked_img),
-                        "has_preproc": bool(preproc_img),
-                    }
+            # Write completion marker (ZIP + preview already saved by _generate_concierge_zip)
+            with open(status_file, "w") as f:
+                json.dump({"type": "done", "msg": final_msg}, f)
+            output_vol.commit()
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            try:
+                with open(status_file, "w") as f:
+                    json.dump({"type": "error", "msg": str(e)}, f)
+                output_vol.commit()
+            except Exception:
+                pass
 
         finally:
-            thread.join(timeout=5)
             shutil.rmtree(upload_dir, ignore_errors=True)
 
 
@@ -1283,7 +1235,7 @@ class Generator:
 # Gradio UI (CPU — no GPU needed)
 # ============================================================
 # The UI runs on a cheap CPU container. Generation is delegated
-# to the Generator class above via remote_gen().
+# to the Generator class above via .remote() + Volume polling.
 
 @app.function(
     image=image,
@@ -1314,8 +1266,10 @@ def web():
     os.chdir("/root/LAM")
     sample_motions = sorted(glob("./model_zoo/sample_motion/export/*/*.mp4"))
 
-    # --- Processing function (delegates to GPU) ---
+    # --- Processing function (delegates to GPU, polls Volume) ---
     def process(image_path, video_path, motion_choice):
+        import time, json, threading, uuid
+
         if image_path is None:
             yield "Error: Please upload a face image", None, None, None, None
             return
@@ -1329,47 +1283,97 @@ def web():
             with open(video_path, "rb") as f:
                 video_bytes = f.read()
 
-        # Delegate to GPU worker.
-        # Track last-known intermediate images so heartbeats don't clear them.
+        # Unique job ID — GPU writes status_{job_id}.json when done
+        job_id = uuid.uuid4().hex[:8]
+        status_file = os.path.join(OUTPUT_VOL_PATH, f"status_{job_id}.json")
+
+        # Launch GPU task in a background thread.
+        # Even if .remote() eventually gets a 504, the GPU will have already
+        # saved results to the Volume — we detect completion via status file.
+        gpu_error = [None]
+        def _call_gpu():
+            try:
+                gen = Generator()
+                gen.generate.remote(
+                    image_bytes, video_bytes, motion_choice or "custom", job_id,
+                )
+            except Exception as e:
+                gpu_error[0] = str(e)
+
+        thread = threading.Thread(target=_call_gpu, daemon=True)
+        thread.start()
+
+        yield "Starting GPU worker...", None, None, None, None
+
+        # Poll Volume for intermediate results and completion marker
+        start = time.time()
+        max_wait = 3600  # 1 hour
         last_tracked = None
         last_preproc = None
 
-        gen = Generator()
-        for update in gen.generate.remote_gen(image_bytes, video_bytes, motion_choice or "custom"):
-            utype = update["type"]
-            msg = update["msg"]
+        while True:
+            time.sleep(5)
+            elapsed = int(time.time() - start)
 
-            if utype == "done":
-                output_vol.reload()
+            if elapsed > max_wait:
+                yield "Error: Generation timed out after 1 hour", None, None, None, None
+                return
+
+            output_vol.reload()
+
+            # Check for intermediate images
+            tracked_p = os.path.join(OUTPUT_VOL_PATH, "tracked_face.png")
+            preproc_p = os.path.join(OUTPUT_VOL_PATH, "preproc_input.png")
+            if os.path.isfile(tracked_p):
+                last_tracked = tracked_p
+            if os.path.isfile(preproc_p):
+                last_preproc = preproc_p
+
+            # Check for completion marker
+            if os.path.isfile(status_file):
+                with open(status_file) as f:
+                    result = json.load(f)
+                # Cleanup
+                try:
+                    os.remove(status_file)
+                    output_vol.commit()
+                except Exception:
+                    pass
+
+                if result["type"] == "error":
+                    yield f"Error: {result['msg']}", None, None, None, None
+                    return
+
+                # Success
                 zip_p = os.path.join(OUTPUT_VOL_PATH, "concierge.zip")
                 preview_p = os.path.join(OUTPUT_VOL_PATH, "preview.mp4")
-                tracked_p = os.path.join(OUTPUT_VOL_PATH, "tracked_face.png")
-                preproc_p = os.path.join(OUTPUT_VOL_PATH, "preproc_input.png")
                 yield (
-                    msg,
+                    result["msg"],
                     zip_p if os.path.isfile(zip_p) else None,
                     preview_p if os.path.isfile(preview_p) else None,
-                    tracked_p if os.path.isfile(tracked_p) else None,
-                    preproc_p if os.path.isfile(preproc_p) else None,
+                    last_tracked,
+                    last_preproc,
                 )
-            elif utype == "error":
-                yield f"Error: {msg}", None, None, None, None
-            elif utype == "heartbeat":
-                # Keep SSE alive — preserve previously displayed images
-                yield msg, None, None, last_tracked, last_preproc
-            else:
-                # Status update — show intermediate images if available
-                if update.get("has_tracked") or update.get("has_preproc"):
-                    output_vol.reload()
-                if update.get("has_tracked"):
-                    p = os.path.join(OUTPUT_VOL_PATH, "tracked_face.png")
-                    if os.path.isfile(p):
-                        last_tracked = p
-                if update.get("has_preproc"):
-                    p = os.path.join(OUTPUT_VOL_PATH, "preproc_input.png")
-                    if os.path.isfile(p):
-                        last_preproc = p
-                yield msg, None, None, last_tracked, last_preproc
+                return
+
+            # GPU thread died but no status file — check if results are in Volume
+            if not thread.is_alive() and gpu_error[0]:
+                # One more reload in case the status was written just before 504
+                output_vol.reload()
+                if os.path.isfile(status_file):
+                    continue  # Will be picked up next iteration
+                yield (
+                    f"Error: GPU connection lost: {gpu_error[0]}",
+                    None, None, None, None,
+                )
+                return
+
+            # Still processing — yield elapsed time to keep Gradio SSE alive
+            mins, secs = divmod(elapsed, 60)
+            yield (
+                f"Processing... ({mins}m{secs:02d}s elapsed)",
+                None, None, last_tracked, last_preproc,
+            )
 
     # --- Build Gradio Blocks ---
     with gr.Blocks(
