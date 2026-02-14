@@ -80,7 +80,7 @@ image = (
         "FORCE_CUDA": "1",
         "CUDA_HOME": "/usr/local/cuda",
         "MAX_JOBS": "4",
-        "TORCH_CUDA_ARCH_LIST": "8.9",
+        "TORCH_CUDA_ARCH_LIST": "8.6",
         "CC": "clang",
         "CXX": "clang++",
     })
