@@ -1015,82 +1015,89 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
         # vertex_order.json is loaded but UNUSED (replaceIndexes=false).
         # Blender may permute vertices during FBX→GLB export, so the
         # FLAME-order offsets must be reordered to GLB vertex order.
-        def _read_glb_positions(glb_path):
-            """Read raw vertex positions from GLB binary, no coord conversion."""
-            import struct as _struct
-            import json as _json2
-            with open(str(glb_path), "rb") as fh:
-                magic, ver, total = _struct.unpack("<III", fh.read(12))
-                assert magic == 0x46546C67, "Not a valid GLB"
-                jlen, jtype = _struct.unpack("<II", fh.read(8))
-                assert jtype == 0x4E4F534A
-                jdata = _json2.loads(fh.read(jlen))
-                blen, btype = _struct.unpack("<II", fh.read(8))
-                assert btype == 0x004E4942
-                bdata = fh.read(blen)
-            prim = jdata["meshes"][0]["primitives"][0]
-            acc = jdata["accessors"][prim["attributes"]["POSITION"]]
-            bv = jdata["bufferViews"][acc["bufferView"]]
-            off = bv.get("byteOffset", 0) + acc.get("byteOffset", 0)
-            cnt = acc["count"]
-            return np.frombuffer(bdata, dtype=np.float32,
-                                 count=cnt * 3, offset=off).reshape(-1, 3).copy()
+        try:
+            def _read_glb_positions(glb_path):
+                """Read raw vertex positions from GLB binary, no coord conversion."""
+                import struct as _struct
+                import json as _json2
+                with open(str(glb_path), "rb") as fh:
+                    magic, ver, total = _struct.unpack("<III", fh.read(12))
+                    assert magic == 0x46546C67, "Not a valid GLB"
+                    jlen, jtype = _struct.unpack("<II", fh.read(8))
+                    assert jtype == 0x4E4F534A
+                    jdata = _json2.loads(fh.read(jlen))
+                    blen, btype = _struct.unpack("<II", fh.read(8))
+                    assert btype == 0x004E4942
+                    bdata = fh.read(blen)
+                prim = jdata["meshes"][0]["primitives"][0]
+                acc = jdata["accessors"][prim["attributes"]["POSITION"]]
+                bv = jdata["bufferViews"][acc["bufferView"]]
+                off = bv.get("byteOffset", 0) + acc.get("byteOffset", 0)
+                cnt = acc["count"]
+                return np.frombuffer(bdata, dtype=np.float32,
+                                     count=cnt * 3, offset=off).reshape(-1, 3).copy()
 
-        _glb_verts = _read_glb_positions(skin_glb_path)
-        _obj_mesh2 = _tmesh.load(saved_head_path, process=False)
-        _obj_verts = np.array(_obj_mesh2.vertices)
-        diag.append(f"[REORDER] GLB verts: {len(_glb_verts)}, "
-                     f"OBJ/FLAME verts: {len(_obj_verts)}")
+            _glb_verts = _read_glb_positions(skin_glb_path)
+            _obj_mesh2 = _tmesh.load(saved_head_path, process=False)
+            _obj_verts = np.array(_obj_mesh2.vertices)
+            diag.append(f"[REORDER] GLB verts: {len(_glb_verts)}, "
+                         f"OBJ/FLAME verts: {len(_obj_verts)}")
 
-        if len(_glb_verts) == len(_obj_verts):
-            from scipy.spatial import cKDTree as _cKDTree
+            if len(_glb_verts) == len(_obj_verts):
+                from scipy.spatial import cKDTree as _cKDTree
 
-            # Build tree on OBJ vertices (FLAME order = PLY order)
-            _tree = _cKDTree(_obj_verts)
-            _dists, _glb_to_flame = _tree.query(_glb_verts)
-            _max_d = float(_dists.max())
+                # Build tree on OBJ vertices (FLAME order = PLY order)
+                _tree = _cKDTree(_obj_verts)
+                _dists, _glb_to_flame = _tree.query(_glb_verts)
+                _max_d = float(_dists.max())
 
-            if _max_d > 0.1:
-                # GLB may be in different coordinate space (Y-up vs Z-up).
-                # Try common axis swaps:
-                for _label, _swap in [
-                    ("Y→Z: (x,z,-y)", lambda v: np.c_[v[:,0], v[:,2], -v[:,1]]),
-                    ("Z→Y: (x,-z,y)", lambda v: np.c_[v[:,0], -v[:,2], v[:,1]]),
-                    ("neg-Y: (x,-y,-z)", lambda v: np.c_[v[:,0], -v[:,1], -v[:,2]]),
-                ]:
-                    _d2, _m2 = _tree.query(_swap(_glb_verts))
-                    if float(_d2.max()) < _max_d:
-                        _dists, _glb_to_flame = _d2, _m2
-                        _max_d = float(_d2.max())
-                        diag.append(f"[REORDER] Coordinate swap helped: {_label}")
-                        if _max_d < 0.01:
-                            break
+                if _max_d > 0.1:
+                    # GLB may be in different coordinate space (Y-up vs Z-up).
+                    # Try common axis swaps:
+                    for _label, _swap in [
+                        ("Y→Z: (x,z,-y)", lambda v: np.c_[v[:,0], v[:,2], -v[:,1]]),
+                        ("Z→Y: (x,-z,y)", lambda v: np.c_[v[:,0], -v[:,2], v[:,1]]),
+                        ("neg-Y: (x,-y,-z)", lambda v: np.c_[v[:,0], -v[:,1], -v[:,2]]),
+                    ]:
+                        _d2, _m2 = _tree.query(_swap(_glb_verts))
+                        if float(_d2.max()) < _max_d:
+                            _dists, _glb_to_flame = _d2, _m2
+                            _max_d = float(_d2.max())
+                            diag.append(f"[REORDER] Coordinate swap helped: {_label}")
+                            if _max_d < 0.01:
+                                break
 
-            _unique = len(set(_glb_to_flame.tolist()))
-            _is_identity = np.all(_glb_to_flame == np.arange(len(_glb_to_flame)))
-            diag.append(f"[REORDER] max_dist={_max_d:.6f} unique={_unique}/{len(_glb_verts)} "
-                        f"identity={_is_identity}")
+                _unique = len(set(_glb_to_flame.tolist()))
+                _is_identity = np.all(_glb_to_flame == np.arange(len(_glb_to_flame)))
+                diag.append(f"[REORDER] max_dist={_max_d:.6f} unique={_unique}/{len(_glb_verts)} "
+                            f"identity={_is_identity}")
 
-            if _is_identity:
-                diag.append("[REORDER] Vertex order matches — no reorder needed")
-            elif _max_d < 0.1 and _unique == len(_glb_verts):
-                # Valid permutation — reorder ALL per-vertex Gaussian attributes
-                _gs = res["cano_gs_lst"][0]
-                _idx = torch.from_numpy(_glb_to_flame.astype(np.int64)).to(_gs.offset.device)
-                _gs.offset = _gs.offset[_idx]
-                _gs.shs = _gs.shs[_idx]
-                _gs.opacity = _gs.opacity[_idx]
-                _gs.scaling = _gs.scaling[_idx]
-                _gs.rotation = _gs.rotation[_idx]
-                diag.append(f"[REORDER] SUCCESS: Reordered {len(_idx)} Gaussians "
-                            "to match GLB vertex order")
+                if _is_identity:
+                    diag.append("[REORDER] Vertex order matches — no reorder needed")
+                elif _max_d < 0.1 and _unique == len(_glb_verts):
+                    # Valid permutation — reorder ALL per-vertex Gaussian attributes
+                    _gs = res["cano_gs_lst"][0]
+                    _idx = torch.from_numpy(_glb_to_flame.astype(np.int64)).to(_gs.offset.device)
+                    _gs.offset = _gs.offset[_idx]
+                    _gs.shs = _gs.shs[_idx]
+                    _gs.opacity = _gs.opacity[_idx]
+                    _gs.scaling = _gs.scaling[_idx]
+                    _gs.rotation = _gs.rotation[_idx]
+                    diag.append(f"[REORDER] SUCCESS: Reordered {len(_idx)} Gaussians "
+                                "to match GLB vertex order")
+                else:
+                    diag.append(f"[REORDER] WARNING: Could not build clean vertex mapping "
+                                f"(max_dist={_max_d:.4f}, unique={_unique}). "
+                                "Saving offset.ply in original FLAME order.")
             else:
-                diag.append(f"[REORDER] WARNING: Could not build clean vertex mapping "
-                            f"(max_dist={_max_d:.4f}, unique={_unique}). "
+                diag.append("[REORDER] WARNING: Vertex count mismatch between GLB and OBJ. "
                             "Saving offset.ply in original FLAME order.")
-        else:
-            diag.append("[REORDER] WARNING: Vertex count mismatch between GLB and OBJ. "
-                        "Saving offset.ply in original FLAME order.")
+        except Exception as _reorder_err:
+            import traceback as _tb
+            _reorder_tb = _tb.format_exc()
+            print(f"[REORDER] FAILED (non-fatal): {_reorder_err}\n{_reorder_tb}", flush=True)
+            diag.append(f"[REORDER] FAILED (non-fatal, falling back to original order): "
+                        f"{_reorder_err}")
 
         # Save offset.ply (now in GLB vertex order if reordering succeeded)
         res["cano_gs_lst"][0].save_ply(
@@ -1226,11 +1233,12 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
 
     except Exception as e:
         import traceback
-        traceback.print_exc()
-        # Include diagnostics in error message
+        tb = traceback.format_exc()
+        print(f"\n{'='*60}\n_generate_concierge_zip ERROR\n{'='*60}\n{tb}\n{'='*60}", flush=True)
+        # Include traceback + diagnostics in error message
         diag_summary = "\n".join(diag[-10:]) if diag else "No diagnostics"
-        print("\n=== DIAGNOSTICS (error) ===\n" + "\n".join(diag) + "\n=== END ===\n")
-        yield f"Error: {str(e)}\n\nDiagnostics:\n{diag_summary}", None, None, None, None
+        print("\n=== DIAGNOSTICS (error) ===\n" + "\n".join(diag) + "\n=== END ===\n", flush=True)
+        yield f"Error: {str(e)}\n\nTraceback:\n{tb}\n\nDiagnostics:\n{diag_summary}", None, None, None, None
 
 
 # ============================================================
@@ -1342,10 +1350,11 @@ class Generator:
 
         except Exception as e:
             import traceback
-            traceback.print_exc()
+            tb = traceback.format_exc()
+            print(f"\n{'='*60}\nGENERATION ERROR\n{'='*60}\n{tb}\n{'='*60}", flush=True)
             try:
                 with open(status_file, "w") as f:
-                    json.dump({"type": "error", "msg": str(e)}, f)
+                    json.dump({"type": "error", "msg": f"{e}\n\nTraceback:\n{tb}"}, f)
                 output_vol.commit()
             except Exception:
                 pass
