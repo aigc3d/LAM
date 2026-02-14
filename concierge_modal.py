@@ -1168,15 +1168,23 @@ class Generator:
     def generate(self, image_bytes: bytes, video_bytes: bytes, motion_name: str):
         """Run full pipeline. Yields status dicts to the CPU UI.
 
+        The pipeline (especially VHAP tracker.optimize()) can block for 30+
+        minutes without yielding.  To keep the Gradio SSE and Modal gRPC
+        streams alive, we run the pipeline in a thread and emit heartbeat
+        dicts every 10 seconds when no real status update arrives.
+
         Yields:
             dict with keys:
-              type: "status" | "done" | "error"
+              type: "status" | "heartbeat" | "done" | "error"
               msg: status message string
               has_tracked: bool (for "status" — tracked face saved to Volume)
               has_preproc: bool (for "status" — preprocessed input saved to Volume)
         """
         import shutil
         import tempfile
+        import threading
+        import queue
+        import time
 
         # Save uploaded bytes to temp files on the GPU container
         upload_dir = tempfile.mkdtemp(prefix="gpu_upload_")
@@ -1193,14 +1201,56 @@ class Generator:
         effective_video = video_path if motion_name == "custom" else None
         selected_motion = motion_name if motion_name != "custom" else None
 
+        # Run pipeline in a thread so we can yield heartbeats while it blocks
+        result_q = queue.Queue()
+
+        def _run_pipeline():
+            try:
+                for item in _generate_concierge_zip(
+                    image_path, effective_video,
+                    self.cfg, self.lam, self.flametracking,
+                    motion_name=selected_motion,
+                ):
+                    result_q.put(("yield", item))
+                result_q.put(("done", None))
+            except Exception as exc:
+                result_q.put(("error", exc))
+
+        thread = threading.Thread(target=_run_pipeline, daemon=True)
+        thread.start()
+        start_time = time.time()
+        last_status_msg = "Processing..."
+
         try:
             vol_dir = OUTPUT_VOL_PATH
             os.makedirs(vol_dir, exist_ok=True)
 
-            for status, zip_path, preview, tracked_img, preproc_img in _generate_concierge_zip(
-                image_path, effective_video, self.cfg, self.lam, self.flametracking,
-                motion_name=selected_motion,
-            ):
+            while True:
+                try:
+                    msg_type, data = result_q.get(timeout=10)
+                except queue.Empty:
+                    # No data for 10 s — send heartbeat to keep SSE alive
+                    elapsed = int(time.time() - start_time)
+                    mins, secs = divmod(elapsed, 60)
+                    yield {
+                        "type": "heartbeat",
+                        "msg": f"{last_status_msg} ({mins}m{secs:02d}s elapsed)",
+                    }
+                    continue
+
+                if msg_type == "error":
+                    import traceback
+                    traceback.print_exc()
+                    yield {"type": "error", "msg": str(data)}
+                    break
+
+                if msg_type == "done":
+                    break
+
+                # msg_type == "yield"
+                status, zip_path, preview, tracked_img, preproc_img = data
+                last_status_msg = status
+
                 # Save intermediate images to Volume for the CPU UI
                 new_vol_files = False
                 if tracked_img and os.path.isfile(tracked_img):
@@ -1211,7 +1261,6 @@ class Generator:
                     new_vol_files = True
 
                 if zip_path:
-                    # ZIP + preview already saved to Volume by _generate_concierge_zip
                     if new_vol_files:
                         output_vol.commit()
                     yield {"type": "done", "msg": status}
@@ -1224,13 +1273,10 @@ class Generator:
                         "has_tracked": bool(tracked_img),
                         "has_preproc": bool(preproc_img),
                     }
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            yield {"type": "error", "msg": str(e)}
+
         finally:
-            import shutil as _shutil
-            _shutil.rmtree(upload_dir, ignore_errors=True)
+            thread.join(timeout=5)
+            shutil.rmtree(upload_dir, ignore_errors=True)
 
 
 # ============================================================
@@ -1283,7 +1329,11 @@ def web():
             with open(video_path, "rb") as f:
                 video_bytes = f.read()
 
-        # Delegate to GPU worker
+        # Delegate to GPU worker.
+        # Track last-known intermediate images so heartbeats don't clear them.
+        last_tracked = None
+        last_preproc = None
+
         gen = Generator()
         for update in gen.generate.remote_gen(image_bytes, video_bytes, motion_choice or "custom"):
             utype = update["type"]
@@ -1304,19 +1354,22 @@ def web():
                 )
             elif utype == "error":
                 yield f"Error: {msg}", None, None, None, None
+            elif utype == "heartbeat":
+                # Keep SSE alive — preserve previously displayed images
+                yield msg, None, None, last_tracked, last_preproc
             else:
                 # Status update — show intermediate images if available
-                tracked = None
-                preproc = None
                 if update.get("has_tracked") or update.get("has_preproc"):
                     output_vol.reload()
                 if update.get("has_tracked"):
                     p = os.path.join(OUTPUT_VOL_PATH, "tracked_face.png")
-                    tracked = p if os.path.isfile(p) else None
+                    if os.path.isfile(p):
+                        last_tracked = p
                 if update.get("has_preproc"):
                     p = os.path.join(OUTPUT_VOL_PATH, "preproc_input.png")
-                    preproc = p if os.path.isfile(p) else None
-                yield msg, None, None, tracked, preproc
+                    if os.path.isfile(p):
+                        last_preproc = p
+                yield msg, None, None, last_tracked, last_preproc
 
     # --- Build Gradio Blocks ---
     with gr.Blocks(
