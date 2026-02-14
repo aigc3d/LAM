@@ -1258,7 +1258,7 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
     gpu="L4",
     image=image,
     volumes={OUTPUT_VOL_PATH: output_vol},
-    timeout=3600,
+    timeout=7200,
     scaledown_window=120,
 )
 class Generator:
@@ -1377,7 +1377,7 @@ class Generator:
 
 @app.function(
     image=image,
-    timeout=3600,
+    timeout=7200,
     volumes={OUTPUT_VOL_PATH: output_vol},
 )
 # Gradio needs all requests (uploads, queue, SSE) on the SAME container.
@@ -1445,7 +1445,7 @@ def web():
 
         # Poll Volume for intermediate results and completion marker
         start = time.time()
-        max_wait = 3600  # 1 hour
+        max_wait = 7200  # 2 hours (VHAP 300 frames can take ~55 min)
         last_tracked = None
         last_preproc = None
 
