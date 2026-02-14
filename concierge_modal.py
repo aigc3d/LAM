@@ -1008,102 +1008,18 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
                     f.unlink()
 
         # --------------------------------------------------------
-        # Reorder Gaussian offsets to match GLB vertex ordering
+        # Vertex order diagnostics (reorder DISABLED)
         # --------------------------------------------------------
-        # The OAC renderer maps PLY vertex i directly to GLB vertex i:
-        #   outCenter[i] = plyOffset[i] + meshVert[i]
-        # vertex_order.json is loaded but UNUSED (replaceIndexes=false).
-        # Blender may permute vertices during FBX→GLB export, so the
-        # FLAME-order offsets must be reordered to GLB vertex order.
-        try:
-            def _read_glb_positions(glb_path):
-                """Read raw vertex positions from GLB binary, no coord conversion."""
-                import struct as _struct
-                import json as _json2
-                with open(str(glb_path), "rb") as fh:
-                    magic, ver, total = _struct.unpack("<III", fh.read(12))
-                    assert magic == 0x46546C67, "Not a valid GLB"
-                    jlen, jtype = _struct.unpack("<II", fh.read(8))
-                    assert jtype == 0x4E4F534A
-                    jdata = _json2.loads(fh.read(jlen))
-                    blen, btype = _struct.unpack("<II", fh.read(8))
-                    assert btype == 0x004E4942
-                    bdata = fh.read(blen)
-                prim = jdata["meshes"][0]["primitives"][0]
-                acc = jdata["accessors"][prim["attributes"]["POSITION"]]
-                bv = jdata["bufferViews"][acc["bufferView"]]
-                off = bv.get("byteOffset", 0) + acc.get("byteOffset", 0)
-                cnt = acc["count"]
-                return np.frombuffer(bdata, dtype=np.float32,
-                                     count=cnt * 3, offset=off).reshape(-1, 3).copy()
+        # The OAC renderer uses vertex_order.json to remap PLY→GLB vertices
+        # internally, so the PLY must remain in original FLAME order.
+        # Reordering here would cause double-remapping and break the renderer.
+        diag.append("[REORDER] Skipped — renderer uses vertex_order.json for mapping")
 
-            _glb_verts = _read_glb_positions(skin_glb_path)
-            _obj_mesh2 = _tmesh.load(saved_head_path, process=False)
-            _obj_verts = np.array(_obj_mesh2.vertices)
-            diag.append(f"[REORDER] GLB verts: {len(_glb_verts)}, "
-                         f"OBJ/FLAME verts: {len(_obj_verts)}")
-
-            if len(_glb_verts) == len(_obj_verts):
-                from scipy.spatial import cKDTree as _cKDTree
-
-                # Build tree on OBJ vertices (FLAME order = PLY order)
-                _tree = _cKDTree(_obj_verts)
-                _dists, _glb_to_flame = _tree.query(_glb_verts)
-                _max_d = float(_dists.max())
-
-                if _max_d > 0.1:
-                    # GLB may be in different coordinate space (Y-up vs Z-up).
-                    # Try common axis swaps:
-                    for _label, _swap in [
-                        ("Y→Z: (x,z,-y)", lambda v: np.c_[v[:,0], v[:,2], -v[:,1]]),
-                        ("Z→Y: (x,-z,y)", lambda v: np.c_[v[:,0], -v[:,2], v[:,1]]),
-                        ("neg-Y: (x,-y,-z)", lambda v: np.c_[v[:,0], -v[:,1], -v[:,2]]),
-                    ]:
-                        _d2, _m2 = _tree.query(_swap(_glb_verts))
-                        if float(_d2.max()) < _max_d:
-                            _dists, _glb_to_flame = _d2, _m2
-                            _max_d = float(_d2.max())
-                            diag.append(f"[REORDER] Coordinate swap helped: {_label}")
-                            if _max_d < 0.01:
-                                break
-
-                _unique = len(set(_glb_to_flame.tolist()))
-                _is_identity = np.all(_glb_to_flame == np.arange(len(_glb_to_flame)))
-                diag.append(f"[REORDER] max_dist={_max_d:.6f} unique={_unique}/{len(_glb_verts)} "
-                            f"identity={_is_identity}")
-
-                if _is_identity:
-                    diag.append("[REORDER] Vertex order matches — no reorder needed")
-                elif _max_d < 0.1 and _unique == len(_glb_verts):
-                    # Valid permutation — reorder ALL per-vertex Gaussian attributes
-                    _gs = res["cano_gs_lst"][0]
-                    _idx = torch.from_numpy(_glb_to_flame.astype(np.int64)).to(_gs.offset.device)
-                    _gs.offset = _gs.offset[_idx]
-                    _gs.shs = _gs.shs[_idx]
-                    _gs.opacity = _gs.opacity[_idx]
-                    _gs.scaling = _gs.scaling[_idx]
-                    _gs.rotation = _gs.rotation[_idx]
-                    diag.append(f"[REORDER] SUCCESS: Reordered {len(_idx)} Gaussians "
-                                "to match GLB vertex order")
-                else:
-                    diag.append(f"[REORDER] WARNING: Could not build clean vertex mapping "
-                                f"(max_dist={_max_d:.4f}, unique={_unique}). "
-                                "Saving offset.ply in original FLAME order.")
-            else:
-                diag.append("[REORDER] WARNING: Vertex count mismatch between GLB and OBJ. "
-                            "Saving offset.ply in original FLAME order.")
-        except Exception as _reorder_err:
-            import traceback as _tb
-            _reorder_tb = _tb.format_exc()
-            print(f"[REORDER] FAILED (non-fatal): {_reorder_err}\n{_reorder_tb}", flush=True)
-            diag.append(f"[REORDER] FAILED (non-fatal, falling back to original order): "
-                        f"{_reorder_err}")
-
-        # Save offset.ply (now in GLB vertex order if reordering succeeded)
+        # Save offset.ply in original FLAME order
         res["cano_gs_lst"][0].save_ply(
             os.path.join(oac_dir, "offset.ply"), rgb2sh=False, offset2xyz=True,
         )
-        diag.append(f"[REORDER] offset.ply saved: "
+        diag.append(f"[PLY] offset.ply saved: "
                      f"{os.path.getsize(os.path.join(oac_dir, 'offset.ply'))} bytes")
 
         # Copy template animation
@@ -1121,6 +1037,24 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
         missing = [f for f in required_files if not os.path.isfile(os.path.join(oac_dir, f))]
         if missing:
             raise RuntimeError(f"OAC export incomplete - missing: {', '.join(missing)}")
+
+        # Log all files in oac_dir (catch unexpected extras)
+        _all_files = []
+        for _r, _d, _f in os.walk(oac_dir):
+            for _fn in _f:
+                _fp = os.path.join(_r, _fn)
+                _all_files.append((_fn, os.path.getsize(_fp)))
+        diag.append(f"[OAC] Files in oac_dir ({len(_all_files)}):")
+        for _fn, _sz in sorted(_all_files):
+            diag.append(f"  {_fn}: {_sz:,} bytes")
+
+        # Read PLY header for diagnostics
+        _ply_path = os.path.join(oac_dir, "offset.ply")
+        with open(_ply_path, "rb") as _pf:
+            _ply_raw = _pf.read(2000)
+            _end = _ply_raw.find(b"end_header\n")
+            if _end > 0:
+                diag.append(f"[PLY] header:\n{_ply_raw[:_end+11].decode('ascii')}")
 
         # ============================================================
         # Step 5: Create ZIP + preview
@@ -1141,6 +1075,14 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
                     fpath = os.path.join(root, fname)
                     arcname = os.path.relpath(fpath, os.path.dirname(oac_dir))
                     zf.write(fpath, arcname)
+
+        # Log final ZIP contents
+        with zipfile.ZipFile(output_zip, "r") as _zr:
+            diag.append(f"[ZIP] concierge.zip entries:")
+            for _zi in _zr.infolist():
+                diag.append(f"  {_zi.filename}: size={_zi.file_size:,} "
+                            f"compressed={_zi.compress_size:,} is_dir={_zi.is_dir()}")
+            diag.append(f"[ZIP] Total ZIP size: {os.path.getsize(output_zip):,} bytes")
 
         # Generate preview video
         preview_path = os.path.join(working_dir, "preview.mp4")
