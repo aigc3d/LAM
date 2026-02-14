@@ -80,7 +80,7 @@ image = (
         "FORCE_CUDA": "1",
         "CUDA_HOME": "/usr/local/cuda",
         "MAX_JOBS": "4",
-        "TORCH_CUDA_ARCH_LIST": "8.6",
+        "TORCH_CUDA_ARCH_LIST": "8.9",
         "CC": "clang",
         "CXX": "clang++",
     })
@@ -891,6 +891,18 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
         )
         assert os.path.isfile(saved_head_path), f"save_shaped_mesh failed: {saved_head_path}"
 
+        # Verify mesh vertex count matches FBX template expectation (20018 verts = 60054 coords)
+        import trimesh as _tmesh
+        _mesh = _tmesh.load(saved_head_path)
+        _n_verts = _mesh.vertices.shape[0]
+        _expected_verts = 60054 // 3  # From template VERTEX_HEADER
+        diag.append(f"[MESH] nature.obj vertices: {_n_verts}, expected: {_expected_verts}")
+        if _n_verts != _expected_verts:
+            diag.append(f"[MESH] WARNING: Vertex count mismatch! "
+                        f"GLB will be corrupted. Check add_teeth / subdivide_num config.")
+        diag.append(f"[MESH] FLAME model vertex_num_upsampled: "
+                    f"{lam.renderer.flame_model.vertex_num_upsampled}")
+
         res["cano_gs_lst"][0].save_ply(
             os.path.join(oac_dir, "offset.ply"), rgb2sh=False, offset2xyz=True,
         )
@@ -1092,10 +1104,16 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
         output_vol.commit()
         diag.append(f"[VOLUME] Saved to {vol_dir}/concierge.zip")
 
-        # Save diagnostics to file for download
+        # Save diagnostics to file for download AND to Volume for post-run analysis
         diag_path = os.path.join(working_dir, "diagnostics.txt")
         with open(diag_path, "w") as f:
             f.write("\n".join(diag))
+        # Also persist to Volume (survives 504 / container shutdown)
+        vol_diag = os.path.join(OUTPUT_VOL_PATH, "diagnostics.txt")
+        os.makedirs(OUTPUT_VOL_PATH, exist_ok=True)
+        with open(vol_diag, "w") as f:
+            f.write("\n".join(diag))
+        output_vol.commit()
         print("\n=== DIAGNOSTICS ===\n" + "\n".join(diag) + "\n=== END ===\n")
 
         # Return TEMP paths so Gradio caches them normally via its
@@ -1159,6 +1177,18 @@ class Generator:
         # Suppress torch._dynamo errors so it falls back to eager mode
         import torch._dynamo
         torch._dynamo.config.suppress_errors = True
+
+        # Verify GPU architecture matches CUDA compilation target
+        import torch
+        if torch.cuda.is_available():
+            gpu_name = torch.cuda.get_device_name(0)
+            gpu_cap = torch.cuda.get_device_capability(0)
+            cuda_arch_env = os.environ.get("TORCH_CUDA_ARCH_LIST", "unset")
+            print(f"[GPU] {gpu_name}, compute capability: {gpu_cap[0]}.{gpu_cap[1]}")
+            print(f"[GPU] TORCH_CUDA_ARCH_LIST={cuda_arch_env}")
+            if f"{gpu_cap[0]}.{gpu_cap[1]}" not in cuda_arch_env:
+                print(f"[GPU] WARNING: CUDA arch mismatch! GPU is sm_{gpu_cap[0]}{gpu_cap[1]} "
+                      f"but TORCH_CUDA_ARCH_LIST={cuda_arch_env}")
 
         print("Initializing LAM pipeline on GPU...")
         self.cfg, self.lam, self.flametracking = _init_lam_pipeline()
@@ -1498,6 +1528,16 @@ def web():
             return FileResponse(p, media_type="application/zip",
                                 filename="concierge.zip")
         return {"error": "No ZIP available yet. Run Generate first."}
+
+    @web_app.get("/diagnostics")
+    async def diagnostics():
+        """Return the latest diagnostics for debugging."""
+        output_vol.reload()
+        p = os.path.join(OUTPUT_VOL_PATH, "diagnostics.txt")
+        if os.path.isfile(p):
+            with open(p) as f:
+                return {"diagnostics": f.read()}
+        return {"diagnostics": "No diagnostics available yet."}
 
     @web_app.get("/download-preview")
     async def download_preview():
