@@ -1129,7 +1129,13 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
         yield f"{step_label}: Creating concierge.zip...", None, None, None, preproc_vis_path
 
         output_zip = os.path.join(working_dir, "concierge.zip")
+        folder_name = os.path.basename(oac_dir)  # "concierge"
         with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+            # Add explicit directory entry — the OAC renderer (gaussian-splat-
+            # renderer-for-lam) looks for an is_dir entry to locate the folder.
+            # Without it the renderer throws "file fold is not found".
+            dir_info = zipfile.ZipInfo(folder_name + "/")
+            zf.writestr(dir_info, "")
             for root, _dirs, files in os.walk(oac_dir):
                 for fname in files:
                     fpath = os.path.join(root, fname)
