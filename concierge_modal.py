@@ -923,12 +923,50 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
         template_fbx = Path("./model_zoo/sample_oac/template_file.fbx")
         blender_exec = Path("/usr/local/bin/blender")
 
-        # Resolve Blender helper scripts — try several locations
-        _script_candidates = [
-            Path("/root/LAM/tools/convertFBX2GLB.py"),       # git clone
-            Path(os.getcwd()) / "tools" / "convertFBX2GLB.py",  # CWD
-        ]
-        convert_script = next((p for p in _script_candidates if p.exists()), None)
+        # Write convertFBX2GLB.py inline to bypass Modal image cache issues.
+        # The add_local_dir("./tools") layer may serve a stale cached version
+        # of the script, so we generate it fresh at runtime from this source.
+        convert_script = Path(os.path.join(working_dir, "convertFBX2GLB.py"))
+        convert_script.write_text('''\
+import bpy, sys
+from pathlib import Path
+
+def clean_scene():
+    bpy.ops.object.select_all(action='SELECT')
+    bpy.ops.object.delete()
+    for c in [bpy.data.meshes, bpy.data.materials, bpy.data.textures]:
+        for item in c:
+            c.remove(item)
+
+def strip_materials():
+    for obj in bpy.data.objects:
+        if obj.type == 'MESH':
+            obj.data.materials.clear()
+    for mat in list(bpy.data.materials):
+        bpy.data.materials.remove(mat)
+    for tex in list(bpy.data.textures):
+        bpy.data.textures.remove(tex)
+    for img in list(bpy.data.images):
+        bpy.data.images.remove(img)
+
+argv = sys.argv[sys.argv.index("--") + 1:]
+input_fbx, output_glb = Path(argv[0]), Path(argv[1])
+clean_scene()
+bpy.ops.import_scene.fbx(filepath=str(input_fbx))
+strip_materials()
+bpy.ops.export_scene.gltf(
+    filepath=str(output_glb),
+    export_format='GLB',
+    export_skins=True,
+    export_materials='NONE',
+    export_normals=False,
+    export_texcoords=False,
+    export_morph_normal=False,
+)
+print("Conversion completed successfully")
+''')
+        diag.append(f"[GLB] convertFBX2GLB.py written inline to {convert_script}")
+
         vtx_script_candidates = [
             Path("/root/LAM/tools/generateVertexIndices.py"),
             Path(os.getcwd()) / "tools" / "generateVertexIndices.py",
@@ -940,14 +978,9 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
         diag.append(f"[GLB] blender exists: {blender_exec.exists()}")
         diag.append(f"[GLB] template_fbx exists: {template_fbx.exists()}")
         diag.append(f"[GLB] saved_head_path exists: {os.path.isfile(saved_head_path)}")
-        diag.append(f"[GLB] convertFBX2GLB.py: {convert_script}")
+        diag.append(f"[GLB] convertFBX2GLB.py: {convert_script} (inline)")
         diag.append(f"[GLB] generateVertexIndices.py: {vtx_script}")
 
-        if not convert_script:
-            raise FileNotFoundError(
-                "convertFBX2GLB.py not found in any expected location: "
-                + ", ".join(str(p) for p in _script_candidates)
-            )
         if not vtx_script:
             raise FileNotFoundError(
                 "generateVertexIndices.py not found in any expected location: "
