@@ -1351,7 +1351,7 @@ class Generator:
 # to the Generator class above via .remote() + Volume polling.
 
 @app.function(
-    image=image,
+    image=ui_image,
     timeout=7200,
     volumes={OUTPUT_VOL_PATH: output_vol},
 )
@@ -1359,7 +1359,9 @@ class Generator:
 @modal.concurrent(max_inputs=100)
 @modal.asgi_app()
 def web():
-    """Gradio UI served via ASGI (CPU only — GPU delegated to Generator)."""
+    """Gradio UI served via ASGI (CPU only — GPU delegated to Generator).
+    Uses lightweight ui_image (no CUDA/PyTorch/Blender) to minimize costs.
+    """
     import gradio as gr
     from fastapi import FastAPI
     from fastapi.responses import FileResponse
@@ -1375,9 +1377,12 @@ def web():
         return _orig_jst(schema, defs)
     _gc_utils._json_schema_to_python_type = _safe_jst
 
-    # Discover available sample motions (no LAM pipeline init needed)
-    os.chdir("/root/LAM")
-    sample_motions = sorted(glob("./model_zoo/sample_motion/export/*/*.mp4"))
+    # Discover available sample motions (no LAM pipeline init needed).
+    # In the lightweight ui_image, /root/LAM may only have sample_motion/.
+    lam_root = "/root/LAM"
+    if os.path.isdir(lam_root):
+        os.chdir(lam_root)
+    sample_motions = sorted(glob(f"{lam_root}/model_zoo/sample_motion/export/*/*.mp4"))
 
     # --- Processing function (delegates to GPU, polls Volume) ---
     def process(image_path, video_path, motion_choice):
@@ -1656,6 +1661,21 @@ def web():
 # URL: https://<app>.modal.run/download/concierge.zip
 
 dl_image = modal.Image.debian_slim(python_version="3.10").pip_install("fastapi")
+
+# Lightweight image for Gradio UI — no CUDA, no PyTorch, no Blender.
+# This drastically reduces credit consumption since the ASGI web server
+# runs 24/7 while deployed.  The heavy GPU image is only used by Generator.
+ui_image = modal.Image.debian_slim(python_version="3.10").pip_install(
+    "gradio>=4.0",
+    "fastapi",
+    "uvicorn",
+)
+# Mount sample motion files if available locally (for UI dropdown choices).
+if os.path.isdir("./model_zoo/sample_motion"):
+    ui_image = ui_image.add_local_dir(
+        "./model_zoo/sample_motion",
+        remote_path="/root/LAM/model_zoo/sample_motion",
+    )
 
 @app.function(
     image=dl_image,
