@@ -426,8 +426,15 @@ def _init_lam_pipeline():
     print(f"Loading checkpoint: {ckpt_path}")
     if not os.path.isfile(ckpt_path):
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
-    ckpt_size_mb = os.path.getsize(ckpt_path) / (1024 * 1024)
-    print(f"Checkpoint file size: {ckpt_size_mb:.1f} MB")
+    ckpt_size = os.path.getsize(ckpt_path)
+    ckpt_size_mb = ckpt_size / (1024 * 1024)
+    EXPECTED_CKPT_BYTES = 2_356_560_889  # from HuggingFace 3DAIGC/LAM-20K
+    print(f"Checkpoint file size: {ckpt_size_mb:.1f} MB ({ckpt_size:,} bytes)")
+    if ckpt_size != EXPECTED_CKPT_BYTES:
+        print(f"  WARNING: Expected {EXPECTED_CKPT_BYTES:,} bytes "
+              f"(diff: {ckpt_size - EXPECTED_CKPT_BYTES:+,} bytes)")
+    else:
+        print(f"  OK: matches expected HuggingFace LAM-20K size")
     ckpt = _load_safetensors(ckpt_path, device="cpu")
 
     # ---- Use load_state_dict for strict key matching ----
