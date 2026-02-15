@@ -923,12 +923,24 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
         template_fbx = Path("./model_zoo/sample_oac/template_file.fbx")
         blender_exec = Path("/usr/local/bin/blender")
 
-        # Write convertFBX2GLB.py inline to bypass Modal image cache issues.
-        # The add_local_dir("./tools") layer may serve a stale cached version
-        # of the script, so we generate it fresh at runtime from this source.
-        convert_script = Path(os.path.join(working_dir, "convertFBX2GLB.py"))
+        # Write combined Blender script inline: GLB export + vertex_order.json
+        # generation in a SINGLE Blender session.
+        #
+        # CRITICAL: The old pipeline ran TWO separate Blender processes:
+        #   1) convertFBX2GLB.py  — imports FBX → exports GLB
+        #   2) generateVertexIndices.py — imports OBJ → sorts by Z → vertex_order.json
+        #
+        # This caused a vertex order MISMATCH because:
+        #   - FBX import applies automatic Y-up→Z-up axis conversion
+        #   - OBJ import + manual 90° rotation produces different Z coordinates
+        #   - Different Z values → different sort order → wrong vertex mapping
+        #   - Result: "bird monster" rendering in the frontend
+        #
+        # Fix: Do everything in ONE Blender session from the SAME imported FBX mesh.
+        # This guarantees vertex_order.json matches the actual GLB vertex ordering.
+        convert_script = Path(os.path.join(working_dir, "convert_and_order.py"))
         convert_script.write_text('''\
-import bpy, sys
+import bpy, sys, json
 from pathlib import Path
 
 def clean_scene():
@@ -950,9 +962,35 @@ def strip_materials():
         bpy.data.images.remove(img)
 
 argv = sys.argv[sys.argv.index("--") + 1:]
-input_fbx, output_glb = Path(argv[0]), Path(argv[1])
+input_fbx = Path(argv[0])
+output_glb = Path(argv[1])
+output_vertex_order = Path(argv[2])
+
+# Import FBX
 clean_scene()
 bpy.ops.import_scene.fbx(filepath=str(input_fbx))
+
+# Generate vertex_order.json from the SAME mesh that will be exported as GLB.
+# This ensures the Z-sort matches the actual GLB vertex ordering.
+mesh_objects = [obj for obj in bpy.context.scene.objects if obj.type == 'MESH']
+if len(mesh_objects) != 1:
+    raise ValueError(f"Expected 1 mesh, found {len(mesh_objects)}")
+mesh_obj = mesh_objects[0]
+
+# Apply all transforms so vertex coordinates are in world space
+bpy.context.view_layer.objects.active = mesh_obj
+mesh_obj.select_set(True)
+bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+
+vertices = [(i, v.co.z) for i, v in enumerate(mesh_obj.data.vertices)]
+sorted_vertices = sorted(vertices, key=lambda x: x[1])
+sorted_vertex_indices = [idx for idx, z in sorted_vertices]
+
+with open(str(output_vertex_order), "w") as f:
+    json.dump(sorted_vertex_indices, f)
+print(f"vertex_order.json: {len(sorted_vertex_indices)} vertices")
+
+# Strip materials and export GLB
 strip_materials()
 bpy.ops.export_scene.gltf(
     filepath=str(output_glb),
@@ -963,29 +1001,15 @@ bpy.ops.export_scene.gltf(
     export_texcoords=False,
     export_morph_normal=False,
 )
-print("Conversion completed successfully")
+print("GLB + vertex_order export completed successfully")
 ''')
-        diag.append(f"[GLB] convertFBX2GLB.py written inline to {convert_script}")
-
-        vtx_script_candidates = [
-            Path("/root/LAM/tools/generateVertexIndices.py"),
-            Path(os.getcwd()) / "tools" / "generateVertexIndices.py",
-        ]
-        vtx_script = next((p for p in vtx_script_candidates if p.exists()), None)
+        diag.append(f"[GLB] convert_and_order.py written inline to {convert_script}")
 
         # Validate prerequisites before starting the pipeline
         diag.append(f"[GLB] CWD={os.getcwd()}")
         diag.append(f"[GLB] blender exists: {blender_exec.exists()}")
         diag.append(f"[GLB] template_fbx exists: {template_fbx.exists()}")
         diag.append(f"[GLB] saved_head_path exists: {os.path.isfile(saved_head_path)}")
-        diag.append(f"[GLB] convertFBX2GLB.py: {convert_script} (inline)")
-        diag.append(f"[GLB] generateVertexIndices.py: {vtx_script}")
-
-        if not vtx_script:
-            raise FileNotFoundError(
-                "generateVertexIndices.py not found in any expected location: "
-                + ", ".join(str(p) for p in vtx_script_candidates)
-            )
 
         # Use working_dir for temp files (avoid CWD collision across requests)
         temp_ascii = Path(os.path.join(working_dir, "temp_ascii.fbx"))
@@ -1020,20 +1044,21 @@ print("Conversion completed successfully")
             assert temp_binary.exists(), f"convert_ascii_to_binary produced no output: {temp_binary}"
             diag.append(f"[GLB] Binary FBX size: {temp_binary.stat().st_size} bytes")
 
-            _run_blender(convert_script, [temp_binary, skin_glb_path], "FBX→GLB")
+            # Single Blender call: GLB export + vertex_order.json from same mesh
+            _run_blender(convert_script,
+                         [temp_binary, skin_glb_path, vertex_order_path],
+                         "FBX→GLB+VertexOrder")
             if not skin_glb_path.exists():
                 raise RuntimeError(
                     f"Blender exited OK but {skin_glb_path} was not created. "
                     "Check [GLB] stdout/stderr above."
                 )
-            diag.append(f"[GLB] skin.glb size: {skin_glb_path.stat().st_size} bytes")
-
-            _run_blender(vtx_script, [saved_head_path, vertex_order_path], "VertexOrder")
             if not vertex_order_path.exists():
                 raise RuntimeError(
                     f"Blender exited OK but {vertex_order_path} was not created. "
                     "Check [GLB] stdout/stderr above."
                 )
+            diag.append(f"[GLB] skin.glb size: {skin_glb_path.stat().st_size} bytes")
             diag.append(f"[GLB] vertex_order.json size: {vertex_order_path.stat().st_size} bytes")
         finally:
             for f in [temp_ascii, temp_binary]:
