@@ -921,6 +921,20 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
 
         motion_seq["flame_params"]["betas"] = shape_param.unsqueeze(0)
         device = "cuda"
+
+        # Quick encoder sanity check — are DINOv2 features reasonable?
+        with torch.no_grad():
+            _img_in = image_tensor.to(device, torch.float32)
+            _enc_feats = lam.forward_encode_image(_img_in)
+            diag.append(_log_tensor("encoder_feats", _enc_feats))
+            _ef = _enc_feats.detach().cpu().float()
+            _has_nan = bool(torch.isnan(_ef).any().item())
+            _has_inf = bool(torch.isinf(_ef).any().item())
+            diag.append(f"[ENCODER] has_nan={_has_nan} has_inf={_has_inf} "
+                        f"abs_max={float(_ef.abs().max().item()):.4f}")
+            if _has_nan or _has_inf:
+                diag.append("[ENCODER] !!! CRITICAL: NaN/Inf in encoder features !!!")
+
         with torch.no_grad():
             res = lam.infer_single_view(
                 image_tensor.unsqueeze(0).to(device, torch.float32),
