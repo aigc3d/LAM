@@ -382,8 +382,6 @@ def _setup_model_paths():
 def _init_lam_pipeline():
     """Initialize FLAME tracking and LAM model. Called once per container."""
     import torch
-    import io
-    from contextlib import redirect_stdout
 
     os.chdir("/root/LAM")
     sys.path.insert(0, "/root/LAM")
@@ -408,31 +406,71 @@ def _init_lam_pipeline():
     torch._dynamo.config.disable = True
 
     # Parse config
-    from app_lam import parse_configs, _build_model
+    from app_lam import parse_configs
     cfg, _ = parse_configs()
 
-    # Build and load LAM model - capture warnings from weight loading
+    # Build and load LAM model with comprehensive weight validation.
+    # The original _build_model() silently skips model params that are
+    # MISSING from the checkpoint — those remain randomly initialised and
+    # produce garbage Gaussian attributes (e.g. 83 % opacity blob).
+    # We replace the manual loop with load_state_dict(strict=False) which
+    # reports both missing and unexpected keys.
     print("Loading LAM model...")
-    build_log = io.StringIO()
-    with redirect_stdout(build_log):
-        lam = _build_model(cfg)
-    build_output = build_log.getvalue()
-    # Print captured output and flag any warnings
-    print(build_output)
-    warn_lines = [l for l in build_output.splitlines() if "WARN" in l]
-    if warn_lines:
-        print(f"\n!!! MODEL LOADING: {len(warn_lines)} weight warnings detected !!!")
-        for w in warn_lines:
-            print(f"  {w}")
-    else:
-        print("Model loading: all weights matched successfully.")
+    from lam.models import ModelLAM
+    from safetensors.torch import load_file as _load_safetensors
+
+    model_cfg = cfg.model
+    lam = ModelLAM(**model_cfg)
+
+    ckpt_path = os.path.join(cfg.model_name, "model.safetensors")
+    print(f"Loading checkpoint: {ckpt_path}")
+    if not os.path.isfile(ckpt_path):
+        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+    ckpt_size_mb = os.path.getsize(ckpt_path) / (1024 * 1024)
+    print(f"Checkpoint file size: {ckpt_size_mb:.1f} MB")
+    ckpt = _load_safetensors(ckpt_path, device="cpu")
+
+    # ---- Use load_state_dict for strict key matching ----
+    missing_keys, unexpected_keys = lam.load_state_dict(ckpt, strict=False)
+
+    print(f"Checkpoint keys: {len(ckpt)}")
+    print(f"Model     keys: {len(lam.state_dict())}")
+    print(f"Missing   keys: {len(missing_keys)}  (in model, NOT in checkpoint)")
+    print(f"Unexpected keys: {len(unexpected_keys)}  (in checkpoint, NOT in model)")
+
+    weight_issues = []
+    if missing_keys:
+        print("\n!!! MISSING KEYS (randomly initialised — likely cause of bad output) !!!")
+        for k in missing_keys:
+            msg = f"  MISSING: {k}"
+            print(msg)
+            weight_issues.append(msg)
+    if unexpected_keys:
+        print("\n!!! UNEXPECTED KEYS (in checkpoint but not loaded) !!!")
+        for k in unexpected_keys:
+            msg = f"  UNEXPECTED: {k}"
+            print(msg)
+            weight_issues.append(msg)
+
+    # ---- Spot-check critical GS decoder layers ----
+    sd = lam.state_dict()
+    for pattern in ["renderer.gs_net", "renderer.mlp_net", "opacity", "shs"]:
+        matched = [k for k in sd if pattern in k.lower()]
+        for k in matched[:3]:  # first 3 matches per pattern
+            t = sd[k]
+            print(f"  CHECK {k}: shape={list(t.shape)} mean={t.float().mean():.6f} std={t.float().std():.6f}")
+
+    if not missing_keys and not unexpected_keys:
+        print("Model loading: ALL weights matched successfully (0 missing, 0 unexpected).")
 
     lam.to("cuda")
     lam.eval()
     print("LAM model loaded.")
 
-    # Store warnings for diagnostics
-    lam._build_warnings = warn_lines
+    # Store diagnostics for later reporting
+    lam._build_warnings = weight_issues
+    lam._missing_keys = missing_keys
+    lam._unexpected_keys = unexpected_keys
 
     # Initialize FLAME tracking (reused for both image and video frames)
     from tools.flame_tracking_single_image import FlameTrackingSingleImage
@@ -898,6 +936,24 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
         # --- Diagnostics: model output ---
         diag.append(_log_tensor("comp_rgb", res["comp_rgb"]))
         diag.append(_log_tensor("comp_mask", res["comp_mask"]))
+
+        # Save first rendered frame for visual inspection (is model output OK?)
+        _frame0 = res["comp_rgb"][0].detach().cpu().numpy()  # [H, W, 3]
+        _frame0 = (np.clip(_frame0, 0, 1.0) * 255).astype(np.uint8)
+        _frame0_path = os.path.join(working_dir, "rendered_frame0.png")
+        Image.fromarray(_frame0).save(_frame0_path)
+        diag.append(f"[RENDER] Saved first rendered frame to: {_frame0_path}")
+
+        # Include weight loading issues in generation diagnostics
+        if hasattr(lam, "_missing_keys") and lam._missing_keys:
+            diag.append(f"[WEIGHTS] !!! {len(lam._missing_keys)} MISSING keys "
+                        "(params with random init) !!!")
+            for mk in lam._missing_keys[:20]:
+                diag.append(f"  MISSING: {mk}")
+        if hasattr(lam, "_unexpected_keys") and lam._unexpected_keys:
+            diag.append(f"[WEIGHTS] {len(lam._unexpected_keys)} unexpected keys")
+            for uk in lam._unexpected_keys[:20]:
+                diag.append(f"  UNEXPECTED: {uk}")
 
         # --- Gaussian quality validation ---
         # Check canonical Gaussian attributes for signs of bad inference.
