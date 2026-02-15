@@ -917,10 +917,9 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
         diag.append(f"[MESH] FLAME model vertex_num_upsampled: "
                     f"{lam.renderer.flame_model.vertex_num_upsampled}")
 
-        # NOTE: offset.ply is saved AFTER GLB generation so we can reorder
-        # Gaussian attributes to match Blender's GLB vertex ordering.
-        # The OAC renderer assumes PLY vertex i == GLB vertex i, but Blender
-        # may reorder vertices during FBX→GLB export.
+        # NOTE: The renderer uses direct 1:1 mapping: ply[i] + glb_mesh[i].
+        # Blender preserves FBX vertex order in GLB export (no splitting occurs
+        # because we export with no normals, no UVs, no materials).
 
         # Generate GLB via Blender (with per-request temp dir to avoid conflicts)
         # NOTE: We only import update_flame_shape and convert_ascii_to_binary from
@@ -940,18 +939,16 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
         # Write combined Blender script inline: GLB export + vertex_order.json
         # generation in a SINGLE Blender session.
         #
-        # CRITICAL: The old pipeline ran TWO separate Blender processes:
-        #   1) convertFBX2GLB.py  — imports FBX → exports GLB
-        #   2) generateVertexIndices.py — imports OBJ → sorts by Z → vertex_order.json
+        # CRITICAL: Must NOT call transform_apply() on the skinned FBX mesh.
+        # It bakes the axis-conversion rotation into vertex positions while
+        # leaving armature bones unchanged, which destroys the skin binding.
+        # The original tools/convertFBX2GLB.py correctly omits transform_apply.
         #
-        # This caused a vertex order MISMATCH because:
-        #   - FBX import applies automatic Y-up→Z-up axis conversion
-        #   - OBJ import + manual 90° rotation produces different Z coordinates
-        #   - Different Z values → different sort order → wrong vertex mapping
-        #   - Result: "bird monster" rendering in the frontend
-        #
-        # Fix: Do everything in ONE Blender session from the SAME imported FBX mesh.
-        # This guarantees vertex_order.json matches the actual GLB vertex ordering.
+        # NOTE: The renderer (gaussian-splat-renderer-for-lam) has
+        # replaceIndexes=false, so vertex_order.json is loaded but NOT used
+        # for vertex remapping.  The renderer does direct 1:1 mapping:
+        #   final_pos[i] = ply_offset[i] + morphedMesh[i]
+        # Both PLY and GLB must be in FLAME vertex order.
         convert_script = Path(os.path.join(working_dir, "convert_and_order.py"))
         convert_script.write_text('''\
 import bpy, sys, json
@@ -985,18 +982,18 @@ clean_scene()
 bpy.ops.import_scene.fbx(filepath=str(input_fbx))
 
 # Generate vertex_order.json from the SAME mesh that will be exported as GLB.
-# This ensures the Z-sort matches the actual GLB vertex ordering.
 mesh_objects = [obj for obj in bpy.context.scene.objects if obj.type == 'MESH']
 if len(mesh_objects) != 1:
     raise ValueError(f"Expected 1 mesh, found {len(mesh_objects)}")
 mesh_obj = mesh_objects[0]
 
-# Apply all transforms so vertex coordinates are in world space
-bpy.context.view_layer.objects.active = mesh_obj
-mesh_obj.select_set(True)
-bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
-
-vertices = [(i, v.co.z) for i, v in enumerate(mesh_obj.data.vertices)]
+# DO NOT call transform_apply() on skinned meshes!  It bakes the FBX
+# axis-conversion rotation into vertex positions but leaves armature
+# bones unchanged, destroying the skin binding.  The glTF exporter
+# handles the object transform correctly during export.
+# Use matrix_world to read world-space Z for the sort instead.
+world_matrix = mesh_obj.matrix_world
+vertices = [(i, (world_matrix @ v.co).z) for i, v in enumerate(mesh_obj.data.vertices)]
 sorted_vertices = sorted(vertices, key=lambda x: x[1])
 sorted_vertex_indices = [idx for idx, z in sorted_vertices]
 
@@ -1080,14 +1077,11 @@ print("GLB + vertex_order export completed successfully")
                     f.unlink()
 
         # --------------------------------------------------------
-        # Vertex order diagnostics (reorder DISABLED)
+        # PLY saved in FLAME order — renderer uses direct 1:1 mapping
         # --------------------------------------------------------
-        # The OAC renderer uses vertex_order.json to remap PLY→GLB vertices
-        # internally, so the PLY must remain in original FLAME order.
-        # Reordering here would cause double-remapping and break the renderer.
-        diag.append("[REORDER] Skipped — renderer uses vertex_order.json for mapping")
-
-        # Save offset.ply in original FLAME order
+        # The renderer does: final_pos[i] = ply_offset[i] + morphedMesh[i]
+        # with replaceIndexes=false (vertex_order.json is NOT used for remapping).
+        # Both PLY and GLB must be in FLAME vertex order, which is the default.
         res["cano_gs_lst"][0].save_ply(
             os.path.join(oac_dir, "offset.ply"), rgb2sh=False, offset2xyz=True,
         )
