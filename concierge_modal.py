@@ -10,8 +10,10 @@ VHAP FLAME tracking to extract per-frame expression/pose parameters, then used
 with LAM inference to generate a high-quality concierge.zip.
 
 Usage:
-  modal serve concierge_modal.py   # Development mode (hot reload)
-  modal deploy concierge_modal.py  # Production deployment
+  modal run concierge_modal.py                              # Gradio UI (recommended)
+  modal run concierge_modal.py --image f.png --video m.mp4  # Headless CLI
+  modal serve concierge_modal.py                            # Dev mode (hot reload)
+  modal deploy concierge_modal.py                           # Production (24/7)
 
 Pipeline:
   1. Source Image  → FlameTrackingSingleImage → shape parameters
@@ -1774,34 +1776,44 @@ def read_volume_file(filename: str) -> bytes:
 
 
 # ============================================================
-# CLI mode: one-shot generate + auto-download + auto-stop
+# CLI entrypoint
 # ============================================================
 # Usage:
-#   modal run concierge_modal.py --image face.png --video motion.mp4
-#   modal run concierge_modal.py --image face.png --motion talk
+#   modal run concierge_modal.py                         # → Gradio UI (upload via browser)
+#   modal run concierge_modal.py --image f.png --video m.mp4  # → headless CLI mode
 #
-# This is the RECOMMENDED way to use this tool:
-#   - GPU spins up only for generation (~5-15 min)
-#   - ZIP is downloaded to local disk automatically
-#   - Everything stops when done → zero ongoing charges
-#
-# Compare with `modal deploy` which keeps the Gradio UI running 24/7.
+# In UI mode the Gradio web endpoint stays alive until you press Ctrl+C.
+# In CLI mode files are read locally, sent to GPU, and the result is
+# downloaded automatically — everything stops when done.
 
 @app.local_entrypoint()
 def main(
-    image: str,
+    image: str = "",
     video: str = "",
     motion: str = "custom",
     output: str = "./concierge.zip",
 ):
-    """Generate concierge.zip and download locally. Auto-stops when done."""
-    import uuid
+    """Launch Gradio UI, or generate headlessly when --image is provided."""
     import time
+
+    # ── UI mode (no local files) ──────────────────────────
+    if not image:
+        print("\n  Gradio UI is running — open the URL above in your browser.")
+        print("  Upload face image + motion video, then click Generate.")
+        print("  Press Ctrl+C to stop.\n")
+        try:
+            while True:
+                time.sleep(60)
+        except KeyboardInterrupt:
+            print("\nStopping...")
+        return
+
+    # ── CLI mode (local files) ────────────────────────────
+    import uuid
 
     image = os.path.abspath(image)
     if not os.path.isfile(image):
         print(f"Error: Image file not found: {image}")
-        print(f"  (Provide an absolute path or place the file in your current directory)")
         sys.exit(1)
 
     with open(image, "rb") as f:
