@@ -399,6 +399,14 @@ def _init_lam_pipeline():
         "NUMBA_THREADING_LAYER": "omp",
     })
 
+    # Disable torch.compile / dynamo.  The model code has @torch.compile
+    # decorators on forward_latent_points and the DINOv2 encoder, but
+    # torch.compile can produce numerically different results on different
+    # GPU architectures (e.g. Modal's shared GPU pool).  The official
+    # inference runner (base_inferrer.py) also disables dynamo.
+    import torch._dynamo
+    torch._dynamo.config.disable = True
+
     # Parse config
     from app_lam import parse_configs, _build_model
     cfg, _ = parse_configs()
@@ -890,6 +898,28 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
         # --- Diagnostics: model output ---
         diag.append(_log_tensor("comp_rgb", res["comp_rgb"]))
         diag.append(_log_tensor("comp_mask", res["comp_mask"]))
+
+        # --- Gaussian quality validation ---
+        # Check canonical Gaussian attributes for signs of bad inference.
+        # Working models produce ~4-5% splats with opacity > 0.9 and small
+        # offsets (mean magnitude ~0.02).  Bad inference produces >50% opaque
+        # splats, large offsets, and dark colors — rendering as a "blob".
+        gs_model = res["cano_gs_lst"][0]
+        _opacity = gs_model.opacity.detach().cpu()
+        _offset_mag = torch.norm(gs_model.offset.detach().cpu(), dim=-1)
+        _opacity_high_pct = (_opacity > 0.9).float().mean().item() * 100
+        _offset_mean = _offset_mag.mean().item()
+        _rgb_mean = gs_model.shs.detach().cpu()[:, :3].mean(dim=0).tolist()
+        diag.append(f"[GS_QUALITY] opacity>0.9: {_opacity_high_pct:.1f}%, "
+                    f"offset_mag_mean: {_offset_mean:.4f}, "
+                    f"rgb_mean: ({_rgb_mean[0]:.3f}, {_rgb_mean[1]:.3f}, {_rgb_mean[2]:.3f})")
+        if _opacity_high_pct > 50:
+            diag.append(f"[GS_QUALITY] WARNING: {_opacity_high_pct:.0f}% of splats are highly opaque "
+                        f"(expected <10%). The avatar may render as a distorted blob. "
+                        f"Try a different input image with clearer face, or check torch.compile/dynamo status.")
+        if _offset_mean > 0.035:
+            diag.append(f"[GS_QUALITY] WARNING: Large mean offset ({_offset_mean:.4f}, expected <0.025). "
+                        f"Gaussians are far from mesh surface.")
 
         # ============================================================
         # Step 4: Generate GLB + ZIP
