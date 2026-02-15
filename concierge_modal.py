@@ -804,6 +804,15 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
     base_iid = "concierge"
     diag = []  # Collect diagnostic messages
 
+    # Report environment versions (visible in DIAGNOSTICS output)
+    import torch
+    diag.append(f"[ENV] PyTorch={torch.__version__}, CUDA={torch.version.cuda}")
+    try:
+        import xformers
+        diag.append(f"[ENV] xformers={xformers.__version__} — DINOv2 uses memory_efficient_attention")
+    except ImportError:
+        diag.append("[ENV] !!! xformers NOT INSTALLED — DINOv2 uses FALLBACK attention (WRONG) !!!")
+
     # Report model loading warnings
     build_warnings = getattr(lam, "_build_warnings", [])
     if build_warnings:
