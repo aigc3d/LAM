@@ -1739,20 +1739,95 @@ video {{ max-width: 100%; border-radius: 8px; margin: 12px 0; }}
 
 
 # ============================================================
-# Local entry point
+# Volume reader (runs on a tiny CPU container to fetch ZIP bytes)
 # ============================================================
-if __name__ == "__main__":
-    print("Concierge ZIP Generator - Modal Deployment")
-    print("=" * 50)
-    print()
-    print("Usage:")
-    print("  modal serve concierge_modal.py   # Dev mode (hot reload)")
-    print("  modal deploy concierge_modal.py  # Production")
-    print()
-    print("The Gradio UI will be available at the URL shown by Modal.")
-    print()
-    print("Pipeline:")
-    print("  1. Upload source face image")
-    print("  2. Upload custom motion video (or select sample)")
-    print("  3. Click Generate")
-    print("  4. Download concierge.zip")
+
+@app.function(image=dl_image, volumes={OUTPUT_VOL_PATH: output_vol})
+def read_volume_file(filename: str) -> bytes:
+    """Read a file from the Volume and return its bytes."""
+    output_vol.reload()
+    path = os.path.join(OUTPUT_VOL_PATH, filename)
+    if os.path.isfile(path):
+        with open(path, "rb") as f:
+            return f.read()
+    return b""
+
+
+# ============================================================
+# CLI mode: one-shot generate + auto-download + auto-stop
+# ============================================================
+# Usage:
+#   modal run concierge_modal.py --image face.png --video motion.mp4
+#   modal run concierge_modal.py --image face.png --motion talk
+#
+# This is the RECOMMENDED way to use this tool:
+#   - GPU spins up only for generation (~5-15 min)
+#   - ZIP is downloaded to local disk automatically
+#   - Everything stops when done → zero ongoing charges
+#
+# Compare with `modal deploy` which keeps the Gradio UI running 24/7.
+
+@app.local_entrypoint()
+def main(
+    image: str,
+    video: str = "",
+    motion: str = "custom",
+    output: str = "./concierge.zip",
+):
+    """Generate concierge.zip and download locally. Auto-stops when done."""
+    import uuid
+    import time
+
+    if not os.path.isfile(image):
+        print(f"Error: Image file not found: {image}")
+        sys.exit(1)
+
+    with open(image, "rb") as f:
+        image_bytes = f.read()
+    print(f"Image: {image} ({len(image_bytes):,} bytes)")
+
+    video_bytes = b""
+    if motion == "custom":
+        if not video or not os.path.isfile(video):
+            print("Error: --video is required when --motion is 'custom'")
+            sys.exit(1)
+        with open(video, "rb") as f:
+            video_bytes = f.read()
+        print(f"Video: {video} ({len(video_bytes):,} bytes)")
+    else:
+        print(f"Motion: {motion} (sample)")
+
+    job_id = uuid.uuid4().hex[:8]
+    print(f"\nStarting GPU generation (job {job_id})...")
+    print("This typically takes 5-15 minutes. GPU charges only during this time.\n")
+
+    start = time.time()
+
+    # Call GPU — blocks until complete
+    gen = Generator()
+    gen.generate.remote(image_bytes, video_bytes, motion, job_id)
+
+    elapsed = time.time() - start
+    mins, secs = divmod(int(elapsed), 60)
+    print(f"\nGeneration completed in {mins}m{secs:02d}s")
+
+    # Download ZIP from Volume via a tiny CPU container
+    print("Downloading ZIP from Volume...")
+    zip_data = read_volume_file.remote("concierge.zip")
+
+    if not zip_data:
+        print("Error: ZIP not found in Volume. Check logs above for errors.")
+        # Try to get diagnostics
+        diag_data = read_volume_file.remote("diagnostics.txt")
+        if diag_data:
+            print("\n=== DIAGNOSTICS ===")
+            print(diag_data.decode("utf-8", errors="replace"))
+        sys.exit(1)
+
+    with open(output, "wb") as f:
+        f.write(zip_data)
+
+    mb = len(zip_data) / (1024 * 1024)
+    print(f"Saved: {output} ({mb:.1f} MB)")
+    print(f"\nDone! All containers will shut down automatically.")
+    print(f"Place this file at: gourmet-sp/public/avatar/concierge.zip")
