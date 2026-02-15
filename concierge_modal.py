@@ -72,9 +72,19 @@ image = (
         "python -m pip install --upgrade pip setuptools wheel",
         "pip install 'numpy==1.23.5'",
     )
-    # PyTorch 2.2.0 + CUDA 11.8
+    # PyTorch 2.3.0 + CUDA 11.8 (matches official scripts/install/install_cu118.sh)
     .run_commands(
-        "pip install torch==2.2.0 torchvision==0.17.0 torchaudio==2.2.0 "
+        "pip install torch==2.3.0 torchvision==0.18.0 torchaudio==2.3.0 "
+        "--index-url https://download.pytorch.org/whl/cu118"
+    )
+    # xformers — CRITICAL for correct DINOv2 attention computation.
+    # DINOv2's MemEffAttention uses xformers.ops.memory_efficient_attention when
+    # available, falling back to standard attention (Attention.forward) when not.
+    # The model was TRAINED with xformers; without it, the fallback attention
+    # produces different features that compound across 24 ViT layers, causing
+    # the GS decoder to output ~83% opacity > 0.9 (should be ~4%) = "bird monster".
+    .run_commands(
+        "pip install xformers==0.0.26.post1 "
         "--index-url https://download.pytorch.org/whl/cu118"
     )
     # CUDA build environment
@@ -89,7 +99,8 @@ image = (
     # CUDA extensions (require no-build-isolation)
     .run_commands(
         "pip install chumpy==0.70 --no-build-isolation",
-        "pip install git+https://github.com/facebookresearch/pytorch3d.git@v0.7.7 --no-build-isolation",
+        # pytorch3d: use latest (official requirements.txt does not pin version)
+        "pip install git+https://github.com/facebookresearch/pytorch3d.git --no-build-isolation",
     )
     # Python dependencies
     .pip_install(
@@ -396,6 +407,18 @@ def _init_lam_pipeline():
         "APP_TYPE": "infer.lam",
         "NUMBA_THREADING_LAYER": "omp",
     })
+
+    # Verify xformers is available — DINOv2 attention requires it.
+    # Without xformers, MemEffAttention falls back to standard attention
+    # which produces wrong features → bird monster output.
+    try:
+        import xformers.ops
+        print(f"xformers {xformers.__version__} available — "
+              f"DINOv2 will use memory_efficient_attention")
+    except ImportError:
+        print("!!! CRITICAL: xformers NOT installed !!!")
+        print("DINOv2 will fall back to standard attention, producing wrong output.")
+        print("Install: pip install xformers==0.0.26.post1 --index-url https://download.pytorch.org/whl/cu118")
 
     # Disable torch.compile / dynamo.  The model code has @torch.compile
     # decorators on forward_latent_points and the DINOv2 encoder, but
