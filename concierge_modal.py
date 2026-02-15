@@ -905,21 +905,26 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
         # offsets (mean magnitude ~0.02).  Bad inference produces >50% opaque
         # splats, large offsets, and dark colors — rendering as a "blob".
         gs_model = res["cano_gs_lst"][0]
-        _opacity = gs_model.opacity.detach().cpu()
-        _offset_mag = torch.norm(gs_model.offset.detach().cpu(), dim=-1)
-        _opacity_high_pct = (_opacity > 0.9).float().mean().item() * 100
-        _offset_mean = _offset_mag.mean().item()
-        _rgb_mean = gs_model.shs.detach().cpu()[:, :3].mean(dim=0).tolist()
-        diag.append(f"[GS_QUALITY] opacity>0.9: {_opacity_high_pct:.1f}%, "
-                    f"offset_mag_mean: {_offset_mean:.4f}, "
-                    f"rgb_mean: ({_rgb_mean[0]:.3f}, {_rgb_mean[1]:.3f}, {_rgb_mean[2]:.3f})")
+        _opacity = gs_model.opacity.detach().cpu().float()
+        _offset_mag = torch.norm(gs_model.offset.detach().cpu().float(), dim=-1)
+        _opacity_high_pct = float((_opacity > 0.9).float().mean().item()) * 100
+        _offset_mean = float(_offset_mag.mean().item())
+        # shs can be [N, 3] (use_rgb) or [N, K, 3] (SH) — flatten to [N, C] first
+        _shs_flat = gs_model.shs.detach().cpu().float().reshape(gs_model.shs.shape[0], -1)
+        _rgb_r = float(_shs_flat[:, 0].mean().item())
+        _rgb_g = float(_shs_flat[:, 1].mean().item()) if _shs_flat.shape[1] > 1 else 0.0
+        _rgb_b = float(_shs_flat[:, 2].mean().item()) if _shs_flat.shape[1] > 2 else 0.0
+        diag.append("[GS_QUALITY] opacity>0.9: %.1f%%, offset_mag_mean: %.4f, "
+                    "rgb_mean: (%.3f, %.3f, %.3f)" % (
+                        _opacity_high_pct, _offset_mean, _rgb_r, _rgb_g, _rgb_b))
         if _opacity_high_pct > 50:
-            diag.append(f"[GS_QUALITY] WARNING: {_opacity_high_pct:.0f}% of splats are highly opaque "
-                        f"(expected <10%). The avatar may render as a distorted blob. "
-                        f"Try a different input image with clearer face, or check torch.compile/dynamo status.")
+            diag.append("[GS_QUALITY] WARNING: %.0f%% of splats are highly opaque "
+                        "(expected <10%%). The avatar may render as a distorted blob. "
+                        "Try a different input image with clearer face, or check "
+                        "torch.compile/dynamo status." % _opacity_high_pct)
         if _offset_mean > 0.035:
-            diag.append(f"[GS_QUALITY] WARNING: Large mean offset ({_offset_mean:.4f}, expected <0.025). "
-                        f"Gaussians are far from mesh surface.")
+            diag.append("[GS_QUALITY] WARNING: Large mean offset (%.4f, expected <0.025). "
+                        "Gaussians are far from mesh surface." % _offset_mean)
 
         # ============================================================
         # Step 4: Generate GLB + ZIP
