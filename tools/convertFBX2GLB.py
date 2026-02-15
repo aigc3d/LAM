@@ -58,16 +58,21 @@ def main():
         # FBX templates embed textures that bloat GLB from ~3.6MB to ~43.5MB.
         strip_materials()
 
-        # Export optimized GLB
-        # NOTE: Blender 4.2 removed several legacy glTF export kwargs
-        # (export_colors, export_texcoords, export_normals).
-        # Use only parameters supported across Blender 3.x–4.2+.
+        # Export optimized GLB — OAC renderer only needs positions + skin weights.
+        # NOTE: Blender 4.2 renamed export_colors → export_vertex_color but
+        # export_normals and export_texcoords are still valid.
+        # CRITICAL: export_morph_normal defaults to True and exports normals
+        # for every morph target (blend shape). With 100+ FLAME blend shapes
+        # this adds ~48MB. Setting it to False is the primary size fix.
         print(f"Exporting to {output_glb}...")
         bpy.ops.export_scene.gltf(
             filepath=str(output_glb),
             export_format='GLB',          # Binary format
             export_skins=True,            # Keep skinning data
             export_materials='NONE',      # No materials/textures
+            export_normals=False,         # OAC renderer doesn't use normals
+            export_texcoords=False,       # No UV maps needed
+            export_morph_normal=False,    # Morph target normals cause massive bloat
         )
 
         print("Conversion completed successfully")
