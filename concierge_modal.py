@@ -447,13 +447,21 @@ def _init_lam_pipeline():
 
     weight_issues = []
     if missing_keys:
-        print("\n!!! MISSING KEYS (randomly initialised — likely cause of bad output) !!!")
-        for k in missing_keys:
-            msg = f"  MISSING: {k}"
-            print(msg)
-            weight_issues.append(msg)
+        # FLAME model buffers are loaded from .pkl files during init, so they're
+        # expected to be absent from the checkpoint.  Separate them from real issues.
+        flame_missing = [k for k in missing_keys if "flame_model" in k]
+        real_missing = [k for k in missing_keys if "flame_model" not in k]
+        if flame_missing:
+            print(f"\n  [{len(flame_missing)} FLAME buffer keys missing from checkpoint — expected, loaded from .pkl]")
+        if real_missing:
+            print(f"\n!!! {len(real_missing)} CRITICAL MISSING KEYS "
+                  "(randomly initialised — likely cause of bad output) !!!")
+            for k in real_missing:
+                msg = f"  MISSING: {k}"
+                print(msg)
+                weight_issues.append(msg)
     if unexpected_keys:
-        print("\n!!! UNEXPECTED KEYS (in checkpoint but not loaded) !!!")
+        print(f"\n!!! {len(unexpected_keys)} UNEXPECTED KEYS (in checkpoint but not loaded) !!!")
         for k in unexpected_keys:
             msg = f"  UNEXPECTED: {k}"
             print(msg)
@@ -467,8 +475,10 @@ def _init_lam_pipeline():
             t = sd[k]
             print(f"  CHECK {k}: shape={list(t.shape)} mean={t.float().mean():.6f} std={t.float().std():.6f}")
 
-    if not missing_keys and not unexpected_keys:
-        print("Model loading: ALL weights matched successfully (0 missing, 0 unexpected).")
+    real_missing = [k for k in missing_keys if "flame_model" not in k]
+    if not real_missing and not unexpected_keys:
+        print("Model loading: ALL trainable weights matched successfully "
+              f"({len([k for k in missing_keys if 'flame_model' in k])} FLAME buffers loaded from .pkl).")
 
     lam.to("cuda")
     lam.eval()
@@ -476,7 +486,7 @@ def _init_lam_pipeline():
 
     # Store diagnostics for later reporting
     lam._build_warnings = weight_issues
-    lam._missing_keys = missing_keys
+    lam._missing_keys = real_missing  # Only non-FLAME missing keys (actual issues)
     lam._unexpected_keys = unexpected_keys
 
     # Initialize FLAME tracking (reused for both image and video frames)
