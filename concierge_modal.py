@@ -1498,6 +1498,201 @@ class Generator:
         finally:
             shutil.rmtree(upload_dir, ignore_errors=True)
 
+    @modal.method()
+    def smoke_test(self, image_bytes: bytes = b"") -> str:
+        """Minimal model inference test — bypasses our pipeline entirely.
+
+        Uses app_lam.py's core inference code directly to determine if:
+        - Model weights are loaded correctly
+        - Gaussian attributes are reasonable
+        - The issue is in our pipeline code or the Modal environment
+
+        Returns a plain-text report.
+        """
+        import torch
+        import tempfile
+        import numpy as np
+        from PIL import Image
+        from glob import glob
+
+        lines = []
+        def log(msg):
+            print(msg)
+            lines.append(msg)
+
+        log("=" * 60)
+        log("SMOKE TEST: Direct model inference (bypasses our pipeline)")
+        log("=" * 60)
+
+        lam = self.lam
+        cfg = self.cfg
+        flametracking = self.flametracking
+
+        # ---- 1. Weight loading report ----
+        log(f"\n[1] Weight loading report:")
+        if hasattr(lam, "_missing_keys"):
+            log(f"  Critical missing keys: {len(lam._missing_keys)}")
+            for k in lam._missing_keys[:10]:
+                log(f"    {k}")
+        if hasattr(lam, "_unexpected_keys"):
+            log(f"  Unexpected keys: {len(lam._unexpected_keys)}")
+            for k in lam._unexpected_keys[:10]:
+                log(f"    {k}")
+        if not getattr(lam, "_missing_keys", []) and not getattr(lam, "_unexpected_keys", []):
+            log("  ALL weights loaded OK")
+
+        # ---- 2. Find or create test image ----
+        log(f"\n[2] Preparing test image...")
+        test_image_path = None
+
+        # Try to use user-provided image
+        if image_bytes and len(image_bytes) > 100:
+            tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+            tmp.write(image_bytes)
+            tmp.close()
+            test_image_path = tmp.name
+            log(f"  Using provided image ({len(image_bytes):,} bytes)")
+
+        # Otherwise look for sample inputs on the container
+        if not test_image_path:
+            candidates = glob("./assets/sample_input/*/images/00000_00.png")
+            if candidates:
+                test_image_path = candidates[0]
+                log(f"  Using sample input: {test_image_path}")
+
+        if not test_image_path:
+            log("  ERROR: No test image available. Provide --image.")
+            return "\n".join(lines)
+
+        # ---- 3. FLAME tracking (same as app_lam.py) ----
+        log(f"\n[3] Running FLAME tracking...")
+        import shutil
+        tracking_root = os.path.join(os.getcwd(), "output", "tracking")
+        if os.path.isdir(tracking_root):
+            for subdir in ["preprocess", "tracking", "export"]:
+                stale = os.path.join(tracking_root, subdir)
+                if os.path.isdir(stale):
+                    shutil.rmtree(stale)
+
+        raw_path = "/tmp/smoke_test_raw.png"
+        with Image.open(test_image_path).convert("RGB") as img:
+            log(f"  Input image size: {img.size}")
+            img.save(raw_path)
+
+        ret = flametracking.preprocess(raw_path)
+        assert ret == 0, f"FLAME preprocess failed (code {ret})"
+        ret = flametracking.optimize()
+        assert ret == 0, f"FLAME optimize failed (code {ret})"
+        ret, output_dir = flametracking.export()
+        assert ret == 0, f"FLAME export failed (code {ret})"
+
+        tracked_image = os.path.join(output_dir, "images/00000_00.png")
+        mask_path = os.path.join(output_dir, "fg_masks/00000_00.png")
+        log(f"  Tracked image: {tracked_image} (exists={os.path.isfile(tracked_image)})")
+
+        # ---- 4. Inference — using app_lam.py's exact code ----
+        log(f"\n[4] Running inference (app_lam.py code path)...")
+        from lam.runners.infer.head_utils import prepare_motion_seqs, preprocess_image
+
+        source_size = cfg.source_size
+        render_size = cfg.render_size
+        log(f"  source_size={source_size}, render_size={render_size}")
+
+        image_tensor, _, _, shape_param = preprocess_image(
+            tracked_image, mask_path=mask_path, intr=None,
+            pad_ratio=0, bg_color=1.0, max_tgt_size=None,
+            aspect_standard=1.0, enlarge_ratio=[1.0, 1.0],
+            render_tgt_size=source_size, multiply=14,
+            need_mask=True, get_shape_param=True,
+        )
+        log(f"  image_tensor: shape={list(image_tensor.shape)} "
+            f"min={image_tensor.min():.3f} max={image_tensor.max():.3f}")
+        log(f"  shape_param: shape={list(shape_param.shape)}")
+
+        # Use sample motion
+        sample_motions = glob("./model_zoo/sample_motion/export/*/flame_param")
+        if not sample_motions:
+            log("  ERROR: No sample motion found")
+            return "\n".join(lines)
+        flame_params_dir = sample_motions[0]
+        log(f"  motion: {flame_params_dir}")
+
+        src = tracked_image.split("/")[-3]
+        driven = flame_params_dir.split("/")[-2]
+        motion_seq = prepare_motion_seqs(
+            flame_params_dir, None, save_root="/tmp", fps=30,
+            bg_color=1.0, aspect_standard=1.0, enlarge_ratio=[1.0, 1.0],
+            render_image_res=render_size, multiply=16,
+            need_mask=False, vis_motion=False,
+            shape_param=shape_param, test_sample=False,
+            cross_id=False, src_driven=[src, driven],
+        )
+
+        motion_seq["flame_params"]["betas"] = shape_param.unsqueeze(0)
+        device = "cuda"
+        with torch.no_grad():
+            res = lam.infer_single_view(
+                image_tensor.unsqueeze(0).to(device, torch.float32),
+                None, None,
+                render_c2ws=motion_seq["render_c2ws"].to(device),
+                render_intrs=motion_seq["render_intrs"].to(device),
+                render_bg_colors=motion_seq["render_bg_colors"].to(device),
+                flame_params={
+                    k: v.to(device) for k, v in motion_seq["flame_params"].items()
+                },
+            )
+
+        # ---- 5. Gaussian quality report ----
+        log(f"\n[5] Gaussian quality report:")
+        gs = res["cano_gs_lst"][0]
+        opacity = gs.opacity.detach().cpu().float()
+        offset_mag = torch.norm(gs.offset.detach().cpu().float(), dim=-1)
+        shs_flat = gs.shs.detach().cpu().float().reshape(gs.shs.shape[0], -1)
+
+        op_high = float((opacity > 0.9).float().mean().item()) * 100
+        op_low = float((opacity < 0.1).float().mean().item()) * 100
+        op_mean = float(opacity.mean().item())
+        off_mean = float(offset_mag.mean().item())
+        rgb_r = float(shs_flat[:, 0].mean().item())
+        rgb_g = float(shs_flat[:, 1].mean().item()) if shs_flat.shape[1] > 1 else 0
+        rgb_b = float(shs_flat[:, 2].mean().item()) if shs_flat.shape[1] > 2 else 0
+        scale_mean = float(gs.scaling.detach().cpu().float().mean().item())
+
+        log(f"  Opacity > 0.9:   {op_high:.1f}%  (good: ~4-5%)")
+        log(f"  Opacity < 0.1:   {op_low:.1f}%   (good: ~40-50%)")
+        log(f"  Opacity mean:    {op_mean:.4f}")
+        log(f"  Offset mag mean: {off_mean:.4f}  (good: ~0.02)")
+        log(f"  RGB mean:        ({rgb_r:.3f}, {rgb_g:.3f}, {rgb_b:.3f})")
+        log(f"  Scale mean:      {scale_mean:.6f}")
+
+        # comp_rgb stats
+        comp_rgb = res["comp_rgb"].detach().cpu()
+        log(f"  comp_rgb: shape={list(comp_rgb.shape)} mean={comp_rgb.mean():.4f}")
+
+        # ---- 6. Verdict ----
+        log(f"\n[6] VERDICT:")
+        if op_high > 50:
+            log(f"  *** BAD: {op_high:.0f}% splats opaque — model produces garbage on this environment ***")
+            log(f"  The issue is NOT in our pipeline code.")
+            log(f"  Root cause is in: model weights, GPU, or PyTorch version.")
+        elif op_high > 15:
+            log(f"  ** MARGINAL: {op_high:.0f}% opaque — somewhat elevated")
+        else:
+            log(f"  OK: {op_high:.1f}% opaque — model output looks reasonable")
+            log(f"  If the OAC renderer still shows a bird monster,")
+            log(f"  the issue is in the PLY/GLB export, not model inference.")
+
+        log("=" * 60)
+        report = "\n".join(lines)
+
+        # Save report to volume
+        report_path = os.path.join(OUTPUT_VOL_PATH, "smoke_test_report.txt")
+        os.makedirs(OUTPUT_VOL_PATH, exist_ok=True)
+        with open(report_path, "w") as f:
+            f.write(report)
+        output_vol.commit()
+
+        return report
 
 # ============================================================
 # Gradio UI (CPU — no GPU needed)
@@ -1908,9 +2103,31 @@ def main(
     video: str = "",
     motion: str = "custom",
     output: str = "./concierge.zip",
+    smoke_test: bool = False,
 ):
     """Launch Gradio UI, or generate headlessly when --image is provided."""
     import time
+
+    # ── Smoke test mode ─────────────────────────────────
+    if smoke_test:
+        print("\n  Running smoke test on GPU...")
+        print("  This tests model inference directly, bypassing our pipeline.")
+        print("  Typically takes 2-3 minutes.\n")
+
+        image_bytes = b""
+        if image:
+            p = os.path.abspath(image)
+            if os.path.isfile(p):
+                with open(p, "rb") as f:
+                    image_bytes = f.read()
+                print(f"  Using image: {p} ({len(image_bytes):,} bytes)")
+            else:
+                print(f"  Image not found: {p}, will use sample input on container")
+
+        gen = Generator()
+        report = gen.smoke_test.remote(image_bytes)
+        print("\n" + report)
+        return
 
     # ── UI mode (no local files) ──────────────────────────
     if not image:
