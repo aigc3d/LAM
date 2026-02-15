@@ -1798,8 +1798,10 @@ def main(
     import uuid
     import time
 
+    image = os.path.abspath(image)
     if not os.path.isfile(image):
         print(f"Error: Image file not found: {image}")
+        print(f"  (Provide an absolute path or place the file in your current directory)")
         sys.exit(1)
 
     with open(image, "rb") as f:
@@ -1808,8 +1810,13 @@ def main(
 
     video_bytes = b""
     if motion == "custom":
-        if not video or not os.path.isfile(video):
+        if not video:
             print("Error: --video is required when --motion is 'custom'")
+            sys.exit(1)
+        video = os.path.abspath(video)
+        if not os.path.isfile(video):
+            print(f"Error: Video file not found: {video}")
+            print(f"  (Provide an absolute path or place the file in your current directory)")
             sys.exit(1)
         with open(video, "rb") as f:
             video_bytes = f.read()
