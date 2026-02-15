@@ -1369,6 +1369,24 @@ class Generator:
             shutil.rmtree(upload_dir, ignore_errors=True)
 
 
+dl_image = modal.Image.debian_slim(python_version="3.10").pip_install("fastapi")
+
+# Lightweight image for Gradio UI — no CUDA, no PyTorch, no Blender.
+# This drastically reduces credit consumption since the ASGI web server
+# runs 24/7 while deployed.  The heavy GPU image is only used by Generator.
+ui_image = modal.Image.debian_slim(python_version="3.10").pip_install(
+    "gradio>=4.0",
+    "fastapi",
+    "uvicorn",
+)
+# Mount sample motion files if available locally (for UI dropdown choices).
+if os.path.isdir("./model_zoo/sample_motion"):
+    ui_image = ui_image.add_local_dir(
+        "./model_zoo/sample_motion",
+        remote_path="/root/LAM/model_zoo/sample_motion",
+    )
+
+
 # ============================================================
 # Gradio UI (CPU — no GPU needed)
 # ============================================================
@@ -1684,23 +1702,6 @@ def web():
 # This runs on a separate, cheap container. The generated ZIP persists
 # in the Modal Volume even after the GPU container shuts down.
 # URL: https://<app>.modal.run/download/concierge.zip
-
-dl_image = modal.Image.debian_slim(python_version="3.10").pip_install("fastapi")
-
-# Lightweight image for Gradio UI — no CUDA, no PyTorch, no Blender.
-# This drastically reduces credit consumption since the ASGI web server
-# runs 24/7 while deployed.  The heavy GPU image is only used by Generator.
-ui_image = modal.Image.debian_slim(python_version="3.10").pip_install(
-    "gradio>=4.0",
-    "fastapi",
-    "uvicorn",
-)
-# Mount sample motion files if available locally (for UI dropdown choices).
-if os.path.isdir("./model_zoo/sample_motion"):
-    ui_image = ui_image.add_local_dir(
-        "./model_zoo/sample_motion",
-        remote_path="/root/LAM/model_zoo/sample_motion",
-    )
 
 @app.function(
     image=dl_image,
