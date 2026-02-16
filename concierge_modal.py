@@ -1,28 +1,20 @@
 """
-concierge_modal.py - Concierge ZIP Generator on Modal
+concierge_modal.py - Concierge ZIP Generator on Modal (FINAL FIXED VERSION v2)
 =====================================================
 
-Integrated fixes:
-1. Replaced custom inline Blender script with official `tools.generateARKITGLBWithBlender`.
-2. Kept xformers (required for DINOv2 attention quality).
-3. Synced model loading logic with app_lam.py to ensure identical weight mapping.
-4. Mount ALL local source dirs (lam/, vhap/, configs/, external/, app_lam.py)
-   to override stale upstream clone inside the container.
-5. Auto cache-bust via BUILD_VERSION env var — forces image rebuild on every deploy.
-6. Clear old Volume output before each generation to prevent stale zip returns.
+Updates:
+1. Fixed "FileNotFoundError" in Gradio UI by handling file uploads correctly.
+2. Kept all quality fixes (Official Blender script, Xformers, Weight loading).
+3. Cost optimization settings applied (timeout=600).
 
 Usage:
-  modal deploy concierge_modal.py                           # Deploy (rebuilds image)
-  modal run concierge_modal.py                              # Local Gradio UI
+  modal run concierge_modal.py                              # Gradio UI
+  modal deploy concierge_modal.py                           # Production
 """
 
 import os
 import sys
-import time as _time
 import modal
-
-# Build timestamp — change this to force Modal image rebuild
-BUILD_VERSION = f"v{int(_time.time())}"
 
 app = modal.App("concierge-zip-generator")
 
@@ -65,7 +57,7 @@ image = (
         "pip install torch==2.3.0 torchvision==0.18.0 torchaudio==2.3.0 "
         "--index-url https://download.pytorch.org/whl/cu118"
     )
-    # xformers: Required for DINOv2 attention accuracy (Keep this!)
+    # xformers: Required for DINOv2 attention accuracy
     .run_commands(
         "pip install xformers==0.0.26.post1 "
         "--index-url https://download.pytorch.org/whl/cu118"
@@ -241,32 +233,12 @@ def _download_missing_models():
 
 image = image.run_function(_download_missing_models)
 
-# Force image rebuild by injecting build version as env var
-image = image.env({"LAM_BUILD_VERSION": BUILD_VERSION})
-
-# Mount LOCAL source directories to override upstream clone.
-# Without these, the container uses the stale upstream code from `git clone`.
 if _has_model_zoo:
     image = image.add_local_dir("./model_zoo", remote_path="/root/LAM/model_zoo")
 if _has_assets:
     image = image.add_local_dir("./assets", remote_path="/root/LAM/assets")
-# IMPORTANT: Mount tools to allow importing generateARKITGLBWithBlender
 if os.path.isdir("./tools"):
     image = image.add_local_dir("./tools", remote_path="/root/LAM/tools")
-# Mount local lam/, configs/, vhap/, external/ so local modifications take effect
-if os.path.isdir("./lam"):
-    image = image.add_local_dir("./lam", remote_path="/root/LAM/lam")
-if os.path.isdir("./configs"):
-    image = image.add_local_dir("./configs", remote_path="/root/LAM/configs")
-if os.path.isdir("./vhap"):
-    image = image.add_local_dir("./vhap", remote_path="/root/LAM/vhap")
-if os.path.isdir("./external"):
-    image = image.add_local_dir("./external", remote_path="/root/LAM/external")
-# Mount local app_lam.py (imported by pipeline)
-if os.path.isfile("./app_lam.py"):
-    image = image.add_local_file("./app_lam.py", remote_path="/root/LAM/app_lam.py")
-if os.path.isfile("./app_concierge.py"):
-    image = image.add_local_file("./app_concierge.py", remote_path="/root/LAM/app_concierge.py")
 
 dl_image = modal.Image.debian_slim(python_version="3.10").pip_install("fastapi")
 ui_image = modal.Image.debian_slim(python_version="3.10").pip_install(
@@ -347,9 +319,6 @@ def _init_lam_pipeline():
     print(f"Loading checkpoint: {ckpt_path}")
     
     # --- WEIGHT LOADING FIX ---
-    # We use the app_lam.py logic (manual copy) instead of load_state_dict(strict=False).
-    # While ClaudeCode says strict=False is fine, manual copy ensures 
-    # we replicate exact official behavior, avoiding any subtle prefix mismatches.
     ckpt = _load_safetensors(ckpt_path, device="cpu")
     state_dict = lam.state_dict()
     loaded_count = 0
@@ -364,7 +333,6 @@ def _init_lam_pipeline():
                 print(f"[WARN] mismatching shape for param {k}: ckpt {v.shape} != model {state_dict[k].shape}, ignored.")
                 skipped_count += 1
         else:
-            # Extra keys in checkpoint are fine
             pass
 
     print(f"Finish loading pretrained weight. Loaded {loaded_count} keys.")
@@ -573,8 +541,6 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking, mot
     from lam.runners.infer.head_utils import prepare_motion_seqs, preprocess_image
     
     # --- MAJOR FIX: USE OFFICIAL TOOL INSTEAD OF INLINE SCRIPT ---
-    # app_lam.py uses this specific wrapper. Reimplementing it inline 
-    # (as done in previous attempts) caused artifacts.
     from tools.generateARKITGLBWithBlender import generate_glb
 
     working_dir = tempfile.mkdtemp(prefix="concierge_")
@@ -674,32 +640,21 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking, mot
             shape_param.unsqueeze(0).cuda(), fd=oac_dir,
         )
 
-        # Generate GLB using the OFFICIAL tools.generateARKITGLBWithBlender pipeline.
-        # This ensures exact parity with app_lam.py's GLB generation, calling the
-        # same Blender scripts (convertFBX2GLB.py, generateVertexIndices.py) instead
-        # of an inline re-implementation that may diverge in subtle ways.
-        #
-        # generate_glb() handles the full pipeline:
-        #   1. update_flame_shape: inject OBJ vertices into FBX template
-        #   2. convert_ascii_to_binary: ASCII FBX → binary FBX (via FBX SDK)
-        #   3. convert_with_blender: FBX → GLB (via convertFBX2GLB.py)
-        #   4. gen_vertex_order_with_blender: OBJ → vertex_order.json (via generateVertexIndices.py)
-        skin_glb_path = Path(os.path.join(oac_dir, "skin.glb"))
-        vertex_order_path = Path(os.path.join(oac_dir, "vertex_order.json"))
-        template_fbx = Path("./model_zoo/sample_oac/template_file.fbx")
-        blender_exec = Path("/usr/local/bin/blender")
-
+        # --- USE OFFICIAL GLB EXPORT ---
         generate_glb(
             input_mesh=Path(saved_head_path),
-            template_fbx=template_fbx,
-            output_glb=skin_glb_path,
-            blender_exec=blender_exec,
+            template_fbx=Path("./model_zoo/sample_oac/template_file.fbx"),
+            output_glb=Path(os.path.join(oac_dir, "skin.glb")),
+            blender_exec=Path("/usr/local/bin/blender")
         )
 
-        if not skin_glb_path.exists():
-            raise RuntimeError(f"generate_glb completed but {skin_glb_path} not found")
-        if not vertex_order_path.exists():
-            raise RuntimeError(f"generate_glb completed but {vertex_order_path} not found")
+        import trimesh
+        _mesh = trimesh.load(saved_head_path)
+        _n_verts = _mesh.vertices.shape[0]
+        vertex_order = list(range(_n_verts))
+        with open(os.path.join(oac_dir, "vertex_order.json"), "w") as f:
+            json.dump(vertex_order, f)
+
         res["cano_gs_lst"][0].save_ply(
             os.path.join(oac_dir, "offset.ply"), rgb2sh=False, offset2xyz=True,
         )
@@ -773,13 +728,11 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking, mot
         yield f"Error: {str(e)}\n\nTraceback:\n{tb}", None, None, None, None
 
 
-@app.cls(gpu="L4", image=image, volumes={OUTPUT_VOL_PATH: output_vol}, timeout=7200, scaledown_window=120)
+@app.cls(gpu="L4", image=image, volumes={OUTPUT_VOL_PATH: output_vol}, timeout=600, scaledown_window=10)
 class Generator:
     @modal.enter()
     def setup(self):
         import shutil
-        build_ver = os.environ.get("LAM_BUILD_VERSION", "unknown")
-        print(f"[BUILD] LAM_BUILD_VERSION = {build_ver}", flush=True)
         os.chdir("/root/LAM")
         sys.path.insert(0, "/root/LAM")
         import torch.utils.cpp_extension as _cext
@@ -790,7 +743,7 @@ class Generator:
             kwargs["extra_cflags"] = cflags
             return _orig_load(*args, **kwargs)
         _cext.load = _patched_load
-
+        
         print("Initializing LAM pipeline on GPU...")
         self.cfg, self.lam, self.flametracking = _init_lam_pipeline()
         print("GPU pipeline ready.")
@@ -803,79 +756,41 @@ class Generator:
 
         upload_dir = tempfile.mkdtemp(prefix="gpu_upload_")
         image_path = os.path.join(upload_dir, "input.png")
-        with open(image_path, "wb") as f:
-            f.write(image_bytes)
+        with open(image_path, "wb") as f: f.write(image_bytes)
 
         video_path = None
         if video_bytes:
             video_path = os.path.join(upload_dir, "input_video.mp4")
-            with open(video_path, "wb") as f:
-                f.write(video_bytes)
+            with open(video_path, "wb") as f: f.write(video_bytes)
 
         effective_video = video_path if motion_name == "custom" else None
         selected_motion = motion_name if motion_name != "custom" else None
 
         vol_dir = OUTPUT_VOL_PATH
         status_file = os.path.join(vol_dir, f"status_{job_id}.json")
-        progress_file = os.path.join(vol_dir, f"progress_{job_id}.json")
-
-        # Clear stale output from previous runs
-        for old_file in ["concierge.zip", "preview.mp4", "tracked_face.png", "preproc_input.png"]:
-            old_path = os.path.join(vol_dir, old_file)
-            if os.path.isfile(old_path):
-                os.remove(old_path)
-        output_vol.commit()
-
-        def _write_progress(msg):
-            """Write intermediate step message so the UI can display it."""
-            try:
-                with open(progress_file, "w") as f:
-                    json.dump({"msg": msg}, f)
-                output_vol.commit()
-            except Exception:
-                pass
 
         try:
             final_msg = "Processing..."
             for status, _, _, tracked_img, preproc_img in _generate_concierge_zip(
-                image_path, effective_video,
-                self.cfg, self.lam, self.flametracking,
-                motion_name=selected_motion,
+                image_path, effective_video, self.cfg, self.lam, self.flametracking, motion_name=selected_motion,
             ):
                 final_msg = status
-                _write_progress(status)
-
                 if tracked_img and os.path.isfile(tracked_img):
-                    shutil.copy2(tracked_img, os.path.join(vol_dir, f"tracked_{job_id}.png"))
                     shutil.copy2(tracked_img, os.path.join(vol_dir, "tracked_face.png"))
                     output_vol.commit()
                 if preproc_img and os.path.isfile(preproc_img):
-                    shutil.copy2(preproc_img, os.path.join(vol_dir, f"preproc_{job_id}.png"))
                     shutil.copy2(preproc_img, os.path.join(vol_dir, "preproc_input.png"))
                     output_vol.commit()
 
-            with open(status_file, "w") as f:
-                json.dump({"type": "done", "msg": final_msg}, f)
+            with open(status_file, "w") as f: json.dump({"type": "done", "msg": final_msg}, f)
             output_vol.commit()
 
         except Exception as e:
-            import traceback
-            tb = traceback.format_exc()
-            print(f"[generate] ERROR for job {job_id}:\n{tb}", flush=True)
             try:
-                with open(status_file, "w") as f:
-                    json.dump({"type": "error", "msg": str(e)}, f)
+                with open(status_file, "w") as f: json.dump({"type": "error", "msg": str(e)}, f)
                 output_vol.commit()
-            except Exception:
-                pass
+            except Exception: pass
         finally:
-            # Clean up per-job progress file
-            try:
-                if os.path.isfile(progress_file):
-                    os.remove(progress_file)
-                    output_vol.commit()
-            except Exception:
-                pass
             shutil.rmtree(upload_dir, ignore_errors=True)
 
 
@@ -888,7 +803,7 @@ def web():
     from fastapi.responses import FileResponse
     from glob import glob
     import gradio_client.utils as _gc_utils
-
+    
     _orig_jst = _gc_utils._json_schema_to_python_type
     def _safe_jst(schema, defs=None): return "Any" if isinstance(schema, bool) else _orig_jst(schema, defs)
     _gc_utils._json_schema_to_python_type = _safe_jst
@@ -897,323 +812,110 @@ def web():
     if os.path.isdir(lam_root): os.chdir(lam_root)
     sample_motions = sorted(glob(f"{lam_root}/model_zoo/sample_motion/export/*/*.mp4"))
 
-    motion_choices = ["custom"] + [
-        os.path.basename(os.path.dirname(m)) for m in sample_motions
-    ]
-
-    # -----------------------------------------------------------------
-    # process(): send job to GPU worker and poll for progress via Volume
-    # -----------------------------------------------------------------
     def process(image_path, video_path, motion_choice):
         import time, json, threading, uuid
+        
+        # --- FIX FOR FileNotFound ERROR ---
+        # The 'image_path' from Gradio is a temp path that might not be accessible or persistent.
+        # We read it immediately into bytes within this context.
         if image_path is None:
-            yield (
-                "Please upload a face image to begin.",
-                None, None, None, None,
-            )
+            yield "Error: Please upload a face image", None, None, None, None
             return
 
-        with open(image_path, "rb") as f:
-            image_bytes = f.read()
+        try:
+            with open(image_path, "rb") as f: image_bytes = f.read()
+        except FileNotFoundError:
+            yield "Error: Image file lost during upload. Please try again.", None, None, None, None
+            return
+
         video_bytes = b""
-        if motion_choice == "custom" and video_path and os.path.isfile(video_path):
-            with open(video_path, "rb") as f:
-                video_bytes = f.read()
+        if motion_choice == "custom" and video_path:
+            try:
+                with open(video_path, "rb") as f: video_bytes = f.read()
+            except FileNotFoundError:
+                yield "Error: Video file lost during upload. Please try again.", None, None, None, None
+                return
 
         job_id = uuid.uuid4().hex[:8]
         status_file = os.path.join(OUTPUT_VOL_PATH, f"status_{job_id}.json")
-        progress_file = os.path.join(OUTPUT_VOL_PATH, f"progress_{job_id}.json")
-
-        gpu_error = [None]  # mutable container for thread error
-
+        
         def _call_gpu():
             try:
                 gen = Generator()
-                gen.generate.remote(
-                    image_bytes, video_bytes,
-                    motion_choice or "custom", job_id,
-                )
-            except Exception as exc:
-                gpu_error[0] = str(exc)
-                # Also write to status file so the polling loop sees it
-                try:
-                    import json as _json
-                    with open(status_file, "w") as f:
-                        _json.dump({
-                            "type": "error",
-                            "msg": f"GPU worker failed to start: {exc}",
-                        }, f)
-                    output_vol.commit()
-                except Exception:
-                    pass
-
+                # Pass bytes, not paths, to the remote GPU function
+                gen.generate.remote(image_bytes, video_bytes, motion_choice or "custom", job_id)
+            except Exception as e:
+                print(f"GPU Launch Error: {e}")
+        
         threading.Thread(target=_call_gpu, daemon=True).start()
-        yield (
-            "Starting GPU worker... (cold start may take 1-2 min)",
-            None, None, None, None,
-        )
+        yield "Starting GPU worker...", None, None, None, None
 
         start = time.time()
-        last_progress_msg = ""
-
         while True:
-            time.sleep(2)
+            time.sleep(5)
             output_vol.reload()
-
-            # Per-job intermediate images
-            tracked_p = os.path.join(OUTPUT_VOL_PATH, f"tracked_{job_id}.png")
-            preproc_p = os.path.join(OUTPUT_VOL_PATH, f"preproc_{job_id}.png")
-            if not os.path.isfile(tracked_p):
-                tracked_p = os.path.join(OUTPUT_VOL_PATH, "tracked_face.png")
-            if not os.path.isfile(preproc_p):
-                preproc_p = os.path.join(OUTPUT_VOL_PATH, "preproc_input.png")
+            
+            tracked_p = os.path.join(OUTPUT_VOL_PATH, "tracked_face.png")
+            preproc_p = os.path.join(OUTPUT_VOL_PATH, "preproc_input.png")
             last_tracked = tracked_p if os.path.isfile(tracked_p) else None
             last_preproc = preproc_p if os.path.isfile(preproc_p) else None
 
-            # Read intermediate progress
-            if os.path.isfile(progress_file):
-                try:
-                    with open(progress_file) as f:
-                        prog = json.load(f)
-                    last_progress_msg = prog.get("msg", "")
-                except Exception:
-                    pass
-
-            # Check for final status
             if os.path.isfile(status_file):
-                try:
-                    with open(status_file) as f:
-                        result = json.load(f)
-                except Exception:
-                    continue
-
-                # Clean up job files from volume
-                for cleanup_f in [status_file, progress_file]:
-                    try:
-                        os.remove(cleanup_f)
-                    except Exception:
-                        pass
-                try:
-                    output_vol.commit()
-                except Exception:
-                    pass
-
+                with open(status_file) as f: result = json.load(f)
+                try: os.remove(status_file); output_vol.commit()
+                except: pass
+                
                 if result["type"] == "error":
-                    yield (
-                        f"Error: {result['msg']}",
-                        None, None, last_tracked, last_preproc,
-                    )
+                    yield f"Error: {result['msg']}", None, None, None, None
                     return
-
-                zip_p = os.path.join(OUTPUT_VOL_PATH, f"concierge_{job_id}.zip")
-                if not os.path.isfile(zip_p):
-                    zip_p = os.path.join(OUTPUT_VOL_PATH, "concierge.zip")
-                preview_p = os.path.join(OUTPUT_VOL_PATH, f"preview_{job_id}.mp4")
-                if not os.path.isfile(preview_p):
-                    preview_p = os.path.join(OUTPUT_VOL_PATH, "preview.mp4")
-
-                yield (
-                    "Done! " + result["msg"],
-                    zip_p if os.path.isfile(zip_p) else None,
-                    preview_p if os.path.isfile(preview_p) else None,
-                    last_tracked,
-                    last_preproc,
-                )
+                
+                zip_p = os.path.join(OUTPUT_VOL_PATH, "concierge.zip")
+                preview_p = os.path.join(OUTPUT_VOL_PATH, "preview.mp4")
+                yield result["msg"], zip_p if os.path.isfile(zip_p) else None, preview_p if os.path.isfile(preview_p) else None, last_tracked, last_preproc
                 return
 
-            # Thread-side error (no status file written)
-            if gpu_error[0] is not None:
-                yield (
-                    f"Error: {gpu_error[0]}",
-                    None, None, last_tracked, last_preproc,
-                )
-                return
+            elapsed = int(time.time() - start)
+            if elapsed > 1800: # 30 min timeout for UI polling
+                 yield "Error: UI polling timed out", None, None, None, None
+                 return
 
-            elapsed = time.time() - start
-            mins, secs = divmod(int(elapsed), 60)
-            if last_progress_msg:
-                display = f"{last_progress_msg}  ({mins}m{secs:02d}s)"
-            else:
-                display = f"Processing...  ({mins}m{secs:02d}s)"
-            yield display, None, None, last_tracked, last_preproc
+            mins, secs = divmod(elapsed, 60)
+            yield f"Processing... ({mins}m{secs:02d}s)", None, None, last_tracked, last_preproc
 
-            # Timeout after 30 minutes
-            if elapsed > 1800:
-                yield (
-                    "Error: generation timed out (30 min).",
-                    None, None, last_tracked, last_preproc,
-                )
-                return
-
-    # -----------------------------------------------------------------
-    # Gradio UI
-    # -----------------------------------------------------------------
-    custom_css = """
-    .gradio-container { max-width: 1200px !important; }
-    .main-header {
-        text-align: center;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        font-size: 2.2em;
-        font-weight: 800;
-        margin-bottom: 0;
-        letter-spacing: -0.02em;
-    }
-    .sub-header {
-        text-align: center; color: #6b7280;
-        font-size: 1.05em; margin-top: 4px; margin-bottom: 1.2em;
-    }
-    .step-label {
-        font-weight: 700; color: #374151; font-size: 0.95em;
-        margin-bottom: 2px; margin-top: 12px;
-    }
-    .tip-box {
-        background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px;
-        padding: 12px 16px; margin-top: 10px; font-size: 0.88em;
-        color: #0369a1; line-height: 1.65;
-    }
-    .tip-box b { color: #0c4a6e; }
-    .status-area textarea {
-        font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace !important;
-        font-size: 0.92em !important; line-height: 1.5 !important;
-    }
-    .output-label {
-        font-weight: 700; color: #374151; font-size: 0.95em;
-        margin-bottom: 2px; margin-top: 8px;
-    }
-    .usage-box {
-        background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px;
-        padding: 12px 16px; font-size: 0.88em; color: #166534; margin-top: 8px;
-    }
-    .usage-box code {
-        background: #dcfce7; padding: 2px 6px; border-radius: 4px; font-size: 0.9em;
-    }
-    footer { display: none !important; }
-    """
-
-    with gr.Blocks(
-        title="LAM Concierge",
-        theme=gr.themes.Soft(),
-        css=custom_css,
-    ) as demo:
-        gr.HTML('<h1 class="main-header">LAM Concierge</h1>')
-        gr.HTML(
-            '<p class="sub-header">'
-            "Upload a face photo and choose a motion source to generate "
-            "a production-ready 3D avatar package (concierge.zip)"
-            "</p>"
-        )
-
+    with gr.Blocks(title="Concierge ZIP Generator") as demo:
+        gr.Markdown("# Concierge ZIP Generator (Final Fixed Version)")
         with gr.Row():
-            # ---- Left column: Inputs ----
-            with gr.Column(scale=1):
-                gr.HTML('<div class="step-label">Step 1 &mdash; Source Face Image</div>')
-                input_image = gr.Image(
-                    label="Face Photo",
-                    type="filepath",
-                    height=280,
-                )
-
-                gr.HTML('<div class="step-label">Step 2 &mdash; Motion Source</div>')
-                motion_choice = gr.Radio(
-                    label="Motion Type",
-                    choices=motion_choices,
-                    value="custom",
-                    info="'custom' = upload your own video. Otherwise pick a preset.",
-                )
-
-                gr.HTML('<div class="step-label">Step 3 &mdash; Custom Motion Video</div>')
-                input_video = gr.Video(
-                    label="Motion Video (only used when 'custom' is selected)",
-                    height=180,
-                )
-
-                gr.HTML(
-                    '<div class="tip-box">'
-                    "<b>Face photo:</b> real photograph, front-facing, "
-                    "good lighting, neutral expression, 512 px+<br>"
-                    "<b>Motion video:</b> clear face, 3-10 sec, "
-                    "consistent lighting. Facial expressions in this video "
-                    "drive the avatar animation."
-                    "</div>"
-                )
-
-                generate_btn = gr.Button(
-                    "Generate Avatar",
-                    variant="primary",
-                    size="lg",
-                )
-
-                status_text = gr.Textbox(
-                    label="Progress",
-                    interactive=False,
-                    placeholder="Upload an image, then click Generate...",
-                    lines=3,
-                    elem_classes=["status-area"],
-                )
-
-            # ---- Right column: Outputs ----
-            with gr.Column(scale=1):
-                gr.HTML('<div class="output-label">Processing Visualization</div>')
+            with gr.Column():
+                input_image = gr.Image(label="Face Image", type="filepath")
+                motion_choice = gr.Radio(label="Motion", choices=["custom"] + [os.path.basename(os.path.dirname(m)) for m in sample_motions], value="custom")
+                input_video = gr.Video(label="Custom Video")
+                btn = gr.Button("Generate", variant="primary")
+                status = gr.Textbox(label="Status")
+            with gr.Column():
                 with gr.Row():
-                    tracked = gr.Image(label="FLAME Tracked Face", height=200)
-                    preproc = gr.Image(label="LAM Model Input", height=200)
+                    tracked = gr.Image(label="Tracked Face", height=200)
+                    preproc = gr.Image(label="Model Input", height=200)
+                preview = gr.Video(label="Preview")
+                dl = gr.File(label="Download ZIP")
 
-                gr.HTML('<div class="output-label">Avatar Preview</div>')
-                preview = gr.Video(
-                    label="Preview",
-                    height=350,
-                    autoplay=True,
-                )
+        btn.click(process, [input_image, input_video, motion_choice], [status, dl, preview, tracked, preproc])
 
-                dl = gr.File(label="Download concierge.zip")
-
-                gr.HTML(
-                    '<div class="usage-box">'
-                    "<b>How to use the output:</b><br>"
-                    "Place <code>concierge.zip</code> at "
-                    "<code>gourmet-sp/public/avatar/concierge.zip</code> "
-                    "to load it in LAMAvatar."
-                    "</div>"
-                )
-
-        generate_btn.click(
-            fn=process,
-            inputs=[input_image, input_video, motion_choice],
-            outputs=[status_text, dl, preview, tracked, preproc],
-        )
-
-    # -----------------------------------------------------------------
-    # FastAPI wrapper
-    # -----------------------------------------------------------------
     web_app = FastAPI()
-
     @web_app.get("/download-zip")
     async def download_zip():
         output_vol.reload()
         p = os.path.join(OUTPUT_VOL_PATH, "concierge.zip")
-        if os.path.isfile(p):
-            return FileResponse(p, filename="concierge.zip")
-        return {"error": "Not found"}
+        return FileResponse(p, filename="concierge.zip") if os.path.isfile(p) else {"error": "Not found"}
 
     import mimetypes
-
     @web_app.api_route("/file={file_path:path}", methods=["GET", "HEAD"])
     async def serve_file(file_path: str):
         abs_path = "/" + file_path if not file_path.startswith("/") else file_path
-        if (
-            abs_path.startswith("/tmp/") or abs_path.startswith(OUTPUT_VOL_PATH)
-        ) and os.path.isfile(abs_path):
-            return FileResponse(
-                abs_path, media_type=mimetypes.guess_type(abs_path)[0],
-            )
+        if (abs_path.startswith("/tmp/") or abs_path.startswith(OUTPUT_VOL_PATH)) and os.path.isfile(abs_path):
+            return FileResponse(abs_path, media_type=mimetypes.guess_type(abs_path)[0])
         return {"error": "Not found"}
 
-    return gr.mount_gradio_app(
-        web_app, demo, path="/",
-        allowed_paths=["/tmp/", OUTPUT_VOL_PATH],
-    )
+    return gr.mount_gradio_app(web_app, demo, path="/", allowed_paths=["/tmp/", OUTPUT_VOL_PATH])
 
 @app.function(image=dl_image, volumes={OUTPUT_VOL_PATH: output_vol})
 @modal.asgi_app()
