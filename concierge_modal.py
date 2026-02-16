@@ -1,21 +1,28 @@
 """
-concierge_modal.py - Concierge ZIP Generator on Modal (FINAL FIXED VERSION)
+concierge_modal.py - Concierge ZIP Generator on Modal
 =====================================================
 
 Integrated fixes:
 1. Replaced custom inline Blender script with official `tools.generateARKITGLBWithBlender`.
-   -> This ensures GLB export matches the official repo exactly, fixing "monster" artifacts.
 2. Kept xformers (required for DINOv2 attention quality).
 3. Synced model loading logic with app_lam.py to ensure identical weight mapping.
+4. Mount ALL local source dirs (lam/, vhap/, configs/, external/, app_lam.py)
+   to override stale upstream clone inside the container.
+5. Auto cache-bust via BUILD_VERSION env var — forces image rebuild on every deploy.
+6. Clear old Volume output before each generation to prevent stale zip returns.
 
 Usage:
-  modal run concierge_modal.py                              # Gradio UI
-  modal deploy concierge_modal.py                           # Production
+  modal deploy concierge_modal.py                           # Deploy (rebuilds image)
+  modal run concierge_modal.py                              # Local Gradio UI
 """
 
 import os
 import sys
+import time as _time
 import modal
+
+# Build timestamp — change this to force Modal image rebuild
+BUILD_VERSION = f"v{int(_time.time())}"
 
 app = modal.App("concierge-zip-generator")
 
@@ -234,6 +241,11 @@ def _download_missing_models():
 
 image = image.run_function(_download_missing_models)
 
+# Force image rebuild by injecting build version as env var
+image = image.env({"LAM_BUILD_VERSION": BUILD_VERSION})
+
+# Mount LOCAL source directories to override upstream clone.
+# Without these, the container uses the stale upstream code from `git clone`.
 if _has_model_zoo:
     image = image.add_local_dir("./model_zoo", remote_path="/root/LAM/model_zoo")
 if _has_assets:
@@ -241,6 +253,20 @@ if _has_assets:
 # IMPORTANT: Mount tools to allow importing generateARKITGLBWithBlender
 if os.path.isdir("./tools"):
     image = image.add_local_dir("./tools", remote_path="/root/LAM/tools")
+# Mount local lam/, configs/, vhap/, external/ so local modifications take effect
+if os.path.isdir("./lam"):
+    image = image.add_local_dir("./lam", remote_path="/root/LAM/lam")
+if os.path.isdir("./configs"):
+    image = image.add_local_dir("./configs", remote_path="/root/LAM/configs")
+if os.path.isdir("./vhap"):
+    image = image.add_local_dir("./vhap", remote_path="/root/LAM/vhap")
+if os.path.isdir("./external"):
+    image = image.add_local_dir("./external", remote_path="/root/LAM/external")
+# Mount local app_lam.py (imported by pipeline)
+if os.path.isfile("./app_lam.py"):
+    image = image.add_local_file("./app_lam.py", remote_path="/root/LAM/app_lam.py")
+if os.path.isfile("./app_concierge.py"):
+    image = image.add_local_file("./app_concierge.py", remote_path="/root/LAM/app_concierge.py")
 
 dl_image = modal.Image.debian_slim(python_version="3.10").pip_install("fastapi")
 ui_image = modal.Image.debian_slim(python_version="3.10").pip_install(
@@ -752,6 +778,8 @@ class Generator:
     @modal.enter()
     def setup(self):
         import shutil
+        build_ver = os.environ.get("LAM_BUILD_VERSION", "unknown")
+        print(f"[BUILD] LAM_BUILD_VERSION = {build_ver}", flush=True)
         os.chdir("/root/LAM")
         sys.path.insert(0, "/root/LAM")
         import torch.utils.cpp_extension as _cext
@@ -762,7 +790,7 @@ class Generator:
             kwargs["extra_cflags"] = cflags
             return _orig_load(*args, **kwargs)
         _cext.load = _patched_load
-        
+
         print("Initializing LAM pipeline on GPU...")
         self.cfg, self.lam, self.flametracking = _init_lam_pipeline()
         print("GPU pipeline ready.")
@@ -787,6 +815,13 @@ class Generator:
 
         vol_dir = OUTPUT_VOL_PATH
         status_file = os.path.join(vol_dir, f"status_{job_id}.json")
+
+        # Clear stale output from previous runs so we never return old data
+        for old_file in ["concierge.zip", "preview.mp4", "tracked_face.png", "preproc_input.png"]:
+            old_path = os.path.join(vol_dir, old_file)
+            if os.path.isfile(old_path):
+                os.remove(old_path)
+        output_vol.commit()
 
         try:
             final_msg = "Processing..."
