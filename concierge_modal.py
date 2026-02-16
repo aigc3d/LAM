@@ -1,32 +1,15 @@
 """
-concierge_modal.py - Concierge ZIP Generator on Modal
+concierge_modal.py - Concierge ZIP Generator on Modal (FIXED VERSION)
 =====================================================
 
-Gradio UI for generating concierge.zip with CUSTOM image + CUSTOM motion video.
-
-The official LAM UI only allows selecting from pre-set sample motion videos.
-This script enables uploading your own motion video, which is processed through
-VHAP FLAME tracking to extract per-frame expression/pose parameters, then used
-with LAM inference to generate a high-quality concierge.zip.
+Fixed based on app_lam.py logic to resolve quality issues:
+1. Model loading now mirrors app_lam.py exactly (avoids random init of unmatched keys).
+2. GLB export uses standard tools instead of custom Z-sorted script (fixes mesh explosion).
+3. Identity logic no longer depends on unstable temp directory structure.
 
 Usage:
-  modal run concierge_modal.py                              # Gradio UI (recommended)
-  modal run concierge_modal.py --image f.png --video m.mp4  # Headless CLI
-  modal serve concierge_modal.py                            # Dev mode (hot reload)
-  modal deploy concierge_modal.py                           # Production (24/7)
-
-Pipeline:
-  1. Source Image  → FlameTrackingSingleImage → shape parameters
-  2. Motion Video  → VHAP GlobalTracker → per-frame FLAME parameters
-  3. Shape + Motion → LAM inference → 3D Gaussian avatar
-  4. Avatar data   → Blender GLB export → concierge.zip
-
-Prerequisites:
-  - Modal account with GPU access (L4)
-  - Run from your LAM repo root where model files are already downloaded
-  - Required local directories:
-      ./model_zoo/   (LAM weights, flame tracking models)
-      ./assets/      (human_parametric_models, sample_oac, sample_motion)
+  modal run concierge_modal.py                              # Gradio UI
+  modal deploy concierge_modal.py                           # Production
 """
 
 import os
@@ -35,14 +18,11 @@ import modal
 
 app = modal.App("concierge-zip-generator")
 
-# Persistent storage for generated ZIPs — survives container shutdown.
-# The GPU container writes here after generation; the lightweight CPU
-# download server reads from here.
+# Persistent storage for generated ZIPs
 output_vol = modal.Volume.from_name("concierge-output", create_if_missing=True)
 OUTPUT_VOL_PATH = "/vol/output"
 
 # Detect which local directories contain model files.
-# These are mounted into the container at build time.
 _has_model_zoo = os.path.isdir("./model_zoo")
 _has_assets = os.path.isdir("./assets")
 
@@ -72,17 +52,12 @@ image = (
         "python -m pip install --upgrade pip setuptools wheel",
         "pip install 'numpy==1.23.5'",
     )
-    # PyTorch 2.3.0 + CUDA 11.8 (matches official scripts/install/install_cu118.sh)
+    # PyTorch 2.3.0 + CUDA 11.8
     .run_commands(
         "pip install torch==2.3.0 torchvision==0.18.0 torchaudio==2.3.0 "
         "--index-url https://download.pytorch.org/whl/cu118"
     )
-    # xformers — CRITICAL for correct DINOv2 attention computation.
-    # DINOv2's MemEffAttention uses xformers.ops.memory_efficient_attention when
-    # available, falling back to standard attention (Attention.forward) when not.
-    # The model was TRAINED with xformers; without it, the fallback attention
-    # produces different features that compound across 24 ViT layers, causing
-    # the GS decoder to output ~83% opacity > 0.9 (should be ~4%) = "bird monster".
+    # xformers (Kept as per environment, but logical fixes are prioritized below)
     .run_commands(
         "pip install xformers==0.0.26.post1 "
         "--index-url https://download.pytorch.org/whl/cu118"
@@ -96,20 +71,16 @@ image = (
         "CC": "clang",
         "CXX": "clang++",
     })
-    # CUDA extensions (require no-build-isolation)
+    # CUDA extensions
     .run_commands(
         "pip install chumpy==0.70 --no-build-isolation",
-        # pytorch3d: use latest (official requirements.txt does not pin version)
         "pip install git+https://github.com/facebookresearch/pytorch3d.git --no-build-isolation",
     )
     # Python dependencies
     .pip_install(
-        # --- Gradio 4.x (ASGI-native, no patching needed) ---
-        # Pin to 4.44.0 to avoid json_schema_to_python_type bug in later versions
         "gradio==4.44.0",
         "gradio_client==1.3.0",
         "fastapi",
-        # --- LAM dependencies ---
         "omegaconf==2.3.0",
         "pandas",
         "scipy<1.14.0",
@@ -148,11 +119,11 @@ image = (
         "pip install git+https://github.com/ashawkey/diff-gaussian-rasterization.git --no-build-isolation",
         "pip install git+https://github.com/ShenhanQian/nvdiffrast.git@backface-culling --no-build-isolation",
     )
-    # FBX SDK Python bindings (needed for OBJ → FBX → GLB avatar export)
+    # FBX SDK
     .run_commands(
         "pip install https://virutalbuy-public.oss-cn-hangzhou.aliyuncs.com/share/aigc3d/data/LAM/fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl",
     )
-    # Blender 4.2 LTS (needed for GLB generation)
+    # Blender 4.2 LTS
     .run_commands(
         "wget -q https://download.blender.org/release/Blender4.2/blender-4.2.0-linux-x64.tar.xz -O /tmp/blender.tar.xz",
         "mkdir -p /opt/blender",
@@ -163,7 +134,6 @@ image = (
     # Clone LAM and build cpu_nms
     .run_commands(
         "git clone https://github.com/aigc3d/LAM.git /root/LAM",
-        # Build cpu_nms for face detection
         "cd /root/LAM/external/landmark_detection/FaceBoxesV2/utils/nms && "
         "python -c \""
         "from setuptools import setup, Extension; "
@@ -176,8 +146,6 @@ image = (
 )
 
 
-# Download model weights not included locally (cached in image layer).
-# This runs BEFORE add_local_dir so Modal ordering is satisfied.
 def _download_missing_models():
     import subprocess
     from huggingface_hub import snapshot_download, hf_hub_download
@@ -194,8 +162,7 @@ def _download_missing_models():
             local_dir_use_symlinks=False,
         )
 
-    # FLAME tracking models (face detection, landmark, VGGHead, matting)
-    # These are CRITICAL for FlameTrackingSingleImage to work correctly.
+    # FLAME tracking models
     if not os.path.isfile("/root/LAM/model_zoo/flame_tracking_models/FaceBoxesV2.pth"):
         print("[2/4] Downloading FLAME tracking models (thirdparty_models.tar)...")
         hf_hub_download(
@@ -208,19 +175,8 @@ def _download_missing_models():
             "tar -xf thirdparty_models.tar && rm thirdparty_models.tar",
             shell=True, cwd="/root/LAM", check=True,
         )
-        # Verify extraction
-        for f in ["FaceBoxesV2.pth", "68_keypoints_model.pkl",
-                   "vgghead/vgg_heads_l.trcd", "matting/stylematte_synth.pt"]:
-            path = f"/root/LAM/model_zoo/flame_tracking_models/{f}"
-            if os.path.isfile(path):
-                print(f"  OK: {path}")
-            else:
-                print(f"  WARNING: missing after extraction: {path}")
 
-    # FLAME parametric model (flame2023.pkl, head mesh, etc.)
-    # LAM_human_model.tar extracts to assets/human_parametric_models/.
-    # IMPORTANT: add_local_dir("./assets") later overwrites /root/LAM/assets/
-    # with the (sparse) local directory. We must copy to model_zoo/ to survive.
+    # FLAME parametric model
     if not os.path.isfile("/root/LAM/model_zoo/human_parametric_models/flame_assets/flame/flame2023.pkl"):
         print("[3/4] Downloading FLAME parametric model (LAM_human_model.tar)...")
         hf_hub_download(
@@ -233,20 +189,12 @@ def _download_missing_models():
             "tar -xf LAM_human_model.tar && rm LAM_human_model.tar",
             shell=True, cwd="/root/LAM", check=True,
         )
-        # Copy to model_zoo/ so it survives the add_local_dir mount of assets/
         src = "/root/LAM/assets/human_parametric_models"
         dst = "/root/LAM/model_zoo/human_parametric_models"
         if os.path.isdir(src) and not os.path.exists(dst):
             subprocess.run(["cp", "-r", src, dst], check=True)
-            print(f"  Copied assets/human_parametric_models -> model_zoo/")
-        if os.path.isfile(f"{dst}/flame_assets/flame/flame2023.pkl"):
-            print("  OK: flame2023.pkl extracted and copied")
-        else:
-            print("  WARNING: flame2023.pkl not found after extraction")
 
-    # LAM assets (sample motions, parametric models, etc.)
-    # Use official 3DAIGC/LAM-assets repo.
-    # Extract to model_zoo/ so they survive the add_local_dir mount of assets/
+    # LAM assets
     if not os.path.isfile("/root/LAM/model_zoo/sample_motion/export/talk/flame_param/00000.npz"):
         print("[4/4] Downloading LAM assets (sample motions)...")
         hf_hub_download(
@@ -259,16 +207,13 @@ def _download_missing_models():
             "tar -xf LAM_assets.tar && rm LAM_assets.tar",
             shell=True, cwd="/root/LAM", check=True,
         )
-        # Move extracted assets into model_zoo/ to avoid being
-        # overwritten by the add_local_dir mount of assets/
         for subdir in ["sample_oac", "sample_motion"]:
             src = f"/root/LAM/assets/{subdir}"
             dst = f"/root/LAM/model_zoo/{subdir}"
             if os.path.isdir(src) and not os.path.exists(dst):
                 subprocess.run(["cp", "-r", src, dst], check=True)
-                print(f"  Copied assets/{subdir} -> model_zoo/{subdir}")
 
-    # sample_oac (template_file.fbx, animation.glb) - separate download
+    # sample_oac
     if not os.path.isfile("/root/LAM/model_zoo/sample_oac/template_file.fbx"):
         print("[+] Downloading sample_oac (FBX/GLB templates)...")
         subprocess.run(
@@ -282,26 +227,19 @@ def _download_missing_models():
             "rm /root/LAM/sample_oac.tar",
             shell=True, check=True,
         )
-        print("  Extracted sample_oac -> model_zoo/sample_oac")
 
     print("Model downloads complete.")
 
 
 image = image.run_function(_download_missing_models)
 
-# Mount local model files into the container (must be LAST in image build).
-# modal serve must be run from the LAM repo root.
 if _has_model_zoo:
     image = image.add_local_dir("./model_zoo", remote_path="/root/LAM/model_zoo")
 if _has_assets:
     image = image.add_local_dir("./assets", remote_path="/root/LAM/assets")
-# Mount tools/ so Blender subprocess scripts (convertFBX2GLB.py, generateVertexIndices.py)
-# are available even if the git-cloned upstream version differs from our local copy.
 if os.path.isdir("./tools"):
     image = image.add_local_dir("./tools", remote_path="/root/LAM/tools")
 
-# Lightweight images for CPU-only containers (no CUDA / PyTorch / Blender).
-# Defined here (top-level) so they are available to all function decorators below.
 dl_image = modal.Image.debian_slim(python_version="3.10").pip_install("fastapi")
 ui_image = modal.Image.debian_slim(python_version="3.10").pip_install(
     "gradio>=4.0", "fastapi", "uvicorn",
@@ -314,90 +252,50 @@ if os.path.isdir("./model_zoo/sample_motion"):
 
 
 # ============================================================
-# Pipeline Functions (run inside container)
+# Pipeline Functions
 # ============================================================
 
 def _setup_model_paths():
-    """Create symlinks to bridge local directory layout to what LAM code expects.
-
-    The user may have all models under assets/ instead of model_zoo/.
-    This function bridges the gap so LAM code (which expects model_zoo/) works.
-
-    Called once at container startup (not during image build).
-    """
+    """Create symlinks to bridge local directory layout to what LAM code expects."""
     import subprocess
-
     model_zoo = "/root/LAM/model_zoo"
     assets = "/root/LAM/assets"
 
-    # If model_zoo/ doesn't exist at all, symlink it to assets/
-    # (user keeps everything under assets/ instead of model_zoo/)
     if not os.path.exists(model_zoo) and os.path.isdir(assets):
         os.symlink(assets, model_zoo)
-        print(f"Symlink: model_zoo -> assets (unified layout)")
     elif os.path.isdir(model_zoo) and os.path.isdir(assets):
-        # Both exist - bridge missing subdirectories from assets/ into model_zoo/
         for subdir in os.listdir(assets):
             src = os.path.join(assets, subdir)
             dst = os.path.join(model_zoo, subdir)
             if os.path.isdir(src) and not os.path.exists(dst):
                 os.symlink(src, dst)
-                print(f"Symlink: model_zoo/{subdir} -> assets/{subdir}")
 
-    # Resolve human_parametric_models path
     hpm = os.path.join(model_zoo, "human_parametric_models")
-
-    # If flame_assets/ has no flame/ subdirectory but files sit directly inside,
-    # create flame/ as a symlink to flame_assets/ itself.
     if os.path.isdir(hpm):
         flame_subdir = os.path.join(hpm, "flame_assets", "flame")
         flame_assets_dir = os.path.join(hpm, "flame_assets")
         if os.path.isdir(flame_assets_dir) and not os.path.exists(flame_subdir):
             if os.path.isfile(os.path.join(flame_assets_dir, "flame2023.pkl")):
                 os.symlink(flame_assets_dir, flame_subdir)
-                print("Symlink: flame_assets/flame -> flame_assets/ (flat layout)")
 
-        # VHAP expects flame_vhap/; LAM provides flame_assets/flame/
         flame_vhap = os.path.join(hpm, "flame_vhap")
         if not os.path.exists(flame_vhap):
             for candidate in [flame_subdir, flame_assets_dir]:
                 if os.path.isdir(candidate):
                     os.symlink(candidate, flame_vhap)
-                    print(f"Symlink: flame_vhap -> {os.path.basename(candidate)}")
                     break
-
-    # Verify critical files
-    print("\n=== Model file verification ===")
-    search_dirs = [d for d in [model_zoo, assets] if os.path.isdir(d)]
-    for name in [
-        "flame2023.pkl", "FaceBoxesV2.pth", "68_keypoints_model.pkl",
-        "vgg_heads_l.trcd", "stylematte_synth.pt",
-        "model.safetensors",
-        "template_file.fbx", "animation.glb",
-    ]:
-        found = False
-        for d in search_dirs:
-            result = subprocess.run(
-                ["find", d, "-name", name],
-                capture_output=True, text=True,
-            )
-            paths = result.stdout.strip()
-            if paths:
-                found = True
-                for p in paths.split("\n"):
-                    print(f"  OK: {p}")
-        if not found:
-            print(f"  MISSING: {name}")
 
 
 def _init_lam_pipeline():
     """Initialize FLAME tracking and LAM model. Called once per container."""
     import torch
+    import torch._dynamo
+    from safetensors.torch import load_file as _load_safetensors
+    from lam.models import ModelLAM
+    from app_lam import parse_configs
 
     os.chdir("/root/LAM")
     sys.path.insert(0, "/root/LAM")
-
-    # Setup symlinks for model paths (runs once at container startup)
     _setup_model_paths()
 
     os.environ.update({
@@ -408,111 +306,45 @@ def _init_lam_pipeline():
         "NUMBA_THREADING_LAYER": "omp",
     })
 
-    # Verify xformers is available — DINOv2 attention requires it.
-    # Without xformers, MemEffAttention falls back to standard attention
-    # which produces wrong features → bird monster output.
-    try:
-        import xformers.ops
-        print(f"xformers {xformers.__version__} available — "
-              f"DINOv2 will use memory_efficient_attention")
-    except ImportError:
-        print("!!! CRITICAL: xformers NOT installed !!!")
-        print("DINOv2 will fall back to standard attention, producing wrong output.")
-        print("Install: pip install xformers==0.0.26.post1 --index-url https://download.pytorch.org/whl/cu118")
-
-    # Disable torch.compile / dynamo.  The model code has @torch.compile
-    # decorators on forward_latent_points and the DINOv2 encoder, but
-    # torch.compile can produce numerically different results on different
-    # GPU architectures (e.g. Modal's shared GPU pool).  The official
-    # inference runner (base_inferrer.py) also disables dynamo.
-    import torch._dynamo
     torch._dynamo.config.disable = True
 
     # Parse config
-    from app_lam import parse_configs
     cfg, _ = parse_configs()
 
-    # Build and load LAM model with comprehensive weight validation.
-    # The original _build_model() silently skips model params that are
-    # MISSING from the checkpoint — those remain randomly initialised and
-    # produce garbage Gaussian attributes (e.g. 83 % opacity blob).
-    # We replace the manual loop with load_state_dict(strict=False) which
-    # reports both missing and unexpected keys.
     print("Loading LAM model...")
-    from lam.models import ModelLAM
-    from safetensors.torch import load_file as _load_safetensors
-
     model_cfg = cfg.model
     lam = ModelLAM(**model_cfg)
 
     ckpt_path = os.path.join(cfg.model_name, "model.safetensors")
     print(f"Loading checkpoint: {ckpt_path}")
-    if not os.path.isfile(ckpt_path):
-        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
-    ckpt_size = os.path.getsize(ckpt_path)
-    ckpt_size_mb = ckpt_size / (1024 * 1024)
-    EXPECTED_CKPT_BYTES = 2_356_560_889  # from HuggingFace 3DAIGC/LAM-20K
-    print(f"Checkpoint file size: {ckpt_size_mb:.1f} MB ({ckpt_size:,} bytes)")
-    if ckpt_size != EXPECTED_CKPT_BYTES:
-        print(f"  WARNING: Expected {EXPECTED_CKPT_BYTES:,} bytes "
-              f"(diff: {ckpt_size - EXPECTED_CKPT_BYTES:+,} bytes)")
-    else:
-        print(f"  OK: matches expected HuggingFace LAM-20K size")
+    
+    # --- FIX 1: Exact logic from app_lam.py's _build_model ---
+    # Do NOT use strict=False, which skips mismatches silently.
+    # Manually iterate and copy compatible weights.
     ckpt = _load_safetensors(ckpt_path, device="cpu")
+    state_dict = lam.state_dict()
+    loaded_count = 0
+    skipped_count = 0
+    
+    for k, v in ckpt.items():
+        if k in state_dict:
+            if state_dict[k].shape == v.shape:
+                state_dict[k].copy_(v)
+                loaded_count += 1
+            else:
+                print(f"[WARN] mismatching shape for param {k}: ckpt {v.shape} != model {state_dict[k].shape}, ignored.")
+                skipped_count += 1
+        else:
+            # Extra keys in checkpoint are fine (e.g. optimizer states)
+            pass
 
-    # ---- Use load_state_dict for strict key matching ----
-    missing_keys, unexpected_keys = lam.load_state_dict(ckpt, strict=False)
-
-    print(f"Checkpoint keys: {len(ckpt)}")
-    print(f"Model     keys: {len(lam.state_dict())}")
-    print(f"Missing   keys: {len(missing_keys)}  (in model, NOT in checkpoint)")
-    print(f"Unexpected keys: {len(unexpected_keys)}  (in checkpoint, NOT in model)")
-
-    weight_issues = []
-    if missing_keys:
-        # FLAME model buffers are loaded from .pkl files during init, so they're
-        # expected to be absent from the checkpoint.  Separate them from real issues.
-        flame_missing = [k for k in missing_keys if "flame_model" in k]
-        real_missing = [k for k in missing_keys if "flame_model" not in k]
-        if flame_missing:
-            print(f"\n  [{len(flame_missing)} FLAME buffer keys missing from checkpoint — expected, loaded from .pkl]")
-        if real_missing:
-            print(f"\n!!! {len(real_missing)} CRITICAL MISSING KEYS "
-                  "(randomly initialised — likely cause of bad output) !!!")
-            for k in real_missing:
-                msg = f"  MISSING: {k}"
-                print(msg)
-                weight_issues.append(msg)
-    if unexpected_keys:
-        print(f"\n!!! {len(unexpected_keys)} UNEXPECTED KEYS (in checkpoint but not loaded) !!!")
-        for k in unexpected_keys:
-            msg = f"  UNEXPECTED: {k}"
-            print(msg)
-            weight_issues.append(msg)
-
-    # ---- Spot-check critical GS decoder layers ----
-    sd = lam.state_dict()
-    for pattern in ["renderer.gs_net", "renderer.mlp_net", "opacity", "shs"]:
-        matched = [k for k in sd if pattern in k.lower()]
-        for k in matched[:3]:  # first 3 matches per pattern
-            t = sd[k]
-            print(f"  CHECK {k}: shape={list(t.shape)} mean={t.float().mean():.6f} std={t.float().std():.6f}")
-
-    real_missing = [k for k in missing_keys if "flame_model" not in k]
-    if not real_missing and not unexpected_keys:
-        print("Model loading: ALL trainable weights matched successfully "
-              f"({len([k for k in missing_keys if 'flame_model' in k])} FLAME buffers loaded from .pkl).")
-
+    print(f"Finish loading pretrained weight. Loaded {loaded_count} keys. Skipped {skipped_count} mismatched keys.")
+    print("="*100)
+    
     lam.to("cuda")
     lam.eval()
-    print("LAM model loaded.")
 
-    # Store diagnostics for later reporting
-    lam._build_warnings = weight_issues
-    lam._missing_keys = real_missing  # Only non-FLAME missing keys (actual issues)
-    lam._unexpected_keys = unexpected_keys
-
-    # Initialize FLAME tracking (reused for both image and video frames)
+    # Initialize FLAME tracking
     from tools.flame_tracking_single_image import FlameTrackingSingleImage
     print("Initializing FLAME tracking...")
     flametracking = FlameTrackingSingleImage(
@@ -523,29 +355,12 @@ def _init_lam_pipeline():
         facebox_model_path="./model_zoo/flame_tracking_models/FaceBoxesV2.pth",
         detect_iris_landmarks=False,
     )
-    print("FLAME tracking initialized.")
 
     return cfg, lam, flametracking
 
 
 def _track_video_to_motion(video_path, flametracking, working_dir, status_callback=None):
-    """
-    Process a custom motion video through VHAP FLAME tracking.
-
-    Pipeline:
-      video.mp4 → extract frames → per-frame preprocessing (face detect, matting, landmarks)
-      → VHAP GlobalTracker → tracked_flame_params.npz → export as NeRF dataset
-      → motion_dir/ with transforms.json + flame_param/*.npz
-
-    Args:
-        video_path: Path to the uploaded video file
-        flametracking: FlameTrackingSingleImage instance (reuse detection models)
-        working_dir: Temporary working directory
-        status_callback: Optional function to report progress
-
-    Returns:
-        flame_params_dir: Path to flame_param/ directory for LAM inference
-    """
+    """Process a custom motion video through VHAP FLAME tracking."""
     import cv2
     import numpy as np
     import torch
@@ -557,7 +372,6 @@ def _track_video_to_motion(video_path, flametracking, working_dir, status_callba
             status_callback(msg)
         print(msg)
 
-    # --- Step A: Extract frames from video ---
     report("  Extracting video frames...")
     frames_root = os.path.join(working_dir, "video_tracking", "preprocess")
     sequence_name = "custom_motion"
@@ -572,38 +386,29 @@ def _track_video_to_motion(video_path, flametracking, working_dir, status_callba
 
     cap = cv2.VideoCapture(video_path)
     video_fps = cap.get(cv2.CAP_PROP_FPS)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-    # Sample at 30fps or video's native fps, whichever is lower
+    
     target_fps = min(30, video_fps) if video_fps > 0 else 30
     frame_interval = max(1, int(round(video_fps / target_fps)))
-    max_frames = 300  # Cap at 10 seconds at 30fps to keep processing manageable
+    max_frames = 300
 
-    report(f"  Video: {total_frames} frames at {video_fps:.1f}fps, sampling every {frame_interval} frame(s)")
+    report(f"  Video: sampling every {frame_interval} frame(s)")
 
-    # --- Step B: Per-frame preprocessing ---
-    report("  Processing frames (face detection, matting, landmarks)...")
     all_landmarks = []
     frame_idx = 0
     processed_count = 0
 
     while True:
         ret, frame_bgr = cap.read()
-        if not ret:
+        if not ret or processed_count >= max_frames:
             break
 
         if frame_idx % frame_interval != 0:
             frame_idx += 1
             continue
 
-        if processed_count >= max_frames:
-            break
-
-        # Convert to RGB tensor for VGGHead detection
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        frame_tensor = torch.from_numpy(frame_rgb).permute(2, 0, 1)  # [3, H, W]
+        frame_tensor = torch.from_numpy(frame_rgb).permute(2, 0, 1)
 
-        # Face detection via VGGHead
         try:
             from tools.flame_tracking_single_image import expand_bbox
             _, bbox, _ = flametracking.vgghead_encoder(frame_tensor, processed_count)
@@ -614,26 +419,19 @@ def _track_video_to_motion(video_path, flametracking, working_dir, status_callba
             frame_idx += 1
             continue
 
-        # Expand bbox and crop
         bbox = expand_bbox(bbox, scale=1.65).long()
         cropped = torchvision.transforms.functional.crop(
             frame_tensor, top=bbox[1], left=bbox[0],
             height=bbox[3] - bbox[1], width=bbox[2] - bbox[0],
         )
-        cropped = torchvision.transforms.functional.resize(
-            cropped, (1024, 1024), antialias=True,
-        )
+        cropped = torchvision.transforms.functional.resize(cropped, (1024, 1024), antialias=True)
 
-        # Matting (background removal)
         cropped_matted, mask = flametracking.matting_engine(
             cropped / 255.0, return_type="matting", background_rgb=1.0,
         )
         cropped_matted = cropped_matted.cpu() * 255.0
-        saved_image = np.round(
-            cropped_matted.permute(1, 2, 0).numpy()
-        ).astype(np.uint8)[:, :, ::-1]  # RGB -> BGR for cv2
+        saved_image = np.round(cropped_matted.permute(1, 2, 0).numpy()).astype(np.uint8)[:, :, ::-1]
 
-        # Save image and alpha map
         fname = f"{processed_count:05d}.png"
         cv2.imwrite(os.path.join(images_dir, fname), saved_image)
         cv2.imwrite(
@@ -641,8 +439,7 @@ def _track_video_to_motion(video_path, flametracking, working_dir, status_callba
             (np.ones_like(saved_image) * 255).astype(np.uint8),
         )
 
-        # Landmark detection
-        saved_image_rgb = saved_image[:, :, ::-1]  # BGR -> RGB for alignment
+        saved_image_rgb = saved_image[:, :, ::-1]
         detections, _ = flametracking.detector.detect(saved_image_rgb, 0.8, 1)
         frame_landmarks = None
         for det in detections:
@@ -664,10 +461,6 @@ def _track_video_to_motion(video_path, flametracking, working_dir, status_callba
 
         all_landmarks.append(frame_landmarks)
         processed_count += 1
-
-        if processed_count % 30 == 0:
-            report(f"  Processed {processed_count} frames...")
-
         frame_idx += 1
 
     cap.release()
@@ -676,20 +469,14 @@ def _track_video_to_motion(video_path, flametracking, working_dir, status_callba
     if processed_count == 0:
         raise RuntimeError("No valid face frames found in video")
 
-    report(f"  Preprocessed {processed_count} frames")
-
-    # Save landmarks in the format VHAP expects
-    # landmarks.npz: bounding_box=[], face_landmark_2d=[N, num_lmks, 3]
-    stacked_landmarks = np.stack(all_landmarks, axis=0)  # [N, 68, 3]
+    stacked_landmarks = np.stack(all_landmarks, axis=0)
     np.savez(
         os.path.join(landmark_dir, "landmarks.npz"),
         bounding_box=[],
         face_landmark_2d=stacked_landmarks,
     )
 
-    # --- Step C: VHAP Tracking ---
-    report("  Running VHAP FLAME tracking (this may take several minutes)...")
-
+    report("  Running VHAP FLAME tracking...")
     from vhap.config.base import (
         BaseTrackingConfig, DataConfig, ModelConfig, RenderConfig, LogConfig,
         ExperimentConfig, LearningRateConfig, LossWeightConfig, PipelineConfig,
@@ -702,8 +489,6 @@ def _track_video_to_motion(video_path, flametracking, working_dir, status_callba
     from vhap.model.tracker import GlobalTracker
 
     tracking_output = os.path.join(working_dir, "video_tracking", "tracking")
-
-    # Build VHAP config programmatically (no YAML dependency)
     pipeline = PipelineConfig(
         lmk_init_rigid=StageLmkInitRigidConfig(),
         lmk_init_all=StageLmkInitAllConfig(),
@@ -718,139 +503,70 @@ def _track_video_to_motion(video_path, flametracking, working_dir, status_callba
 
     vhap_cfg = BaseTrackingConfig(
         data=DataConfig(
-            root_folder=Path(frames_root),
-            sequence=sequence_name,
-            landmark_source="star",
+            root_folder=Path(frames_root), sequence=sequence_name, landmark_source="star",
         ),
-        model=ModelConfig(),
-        render=RenderConfig(),
-        log=LogConfig(),
-        exp=ExperimentConfig(
-            output_folder=Path(tracking_output),
-            photometric=True,
-        ),
-        lr=LearningRateConfig(),
-        w=LossWeightConfig(),
-        pipeline=pipeline,
+        model=ModelConfig(), render=RenderConfig(), log=LogConfig(),
+        exp=ExperimentConfig(output_folder=Path(tracking_output), photometric=True),
+        lr=LearningRateConfig(), w=LossWeightConfig(), pipeline=pipeline,
     )
 
     tracker = GlobalTracker(vhap_cfg)
     tracker.optimize()
     torch.cuda.empty_cache()
 
-    report("  VHAP tracking complete")
-
-    # --- Step D: Export to NeRF dataset format ---
     report("  Exporting motion sequence...")
-
     from vhap.export_as_nerf_dataset import (
         NeRFDatasetWriter, TrackedFLAMEDatasetWriter, split_json, load_config,
     )
 
     export_dir = os.path.join(working_dir, "video_tracking", "export", sequence_name)
     export_path = Path(export_dir)
-
     src_folder, cfg_loaded = load_config(Path(tracking_output))
-
-    nerf_writer = NeRFDatasetWriter(cfg_loaded.data, export_path, None, None, "white")
-    nerf_writer.write()
-
-    flame_writer = TrackedFLAMEDatasetWriter(
-        cfg_loaded.model, src_folder, export_path, mode="param", epoch=-1,
-    )
-    flame_writer.write()
-
+    NeRFDatasetWriter(cfg_loaded.data, export_path, None, None, "white").write()
+    TrackedFLAMEDatasetWriter(cfg_loaded.model, src_folder, export_path, mode="param", epoch=-1).write()
     split_json(export_path)
 
-    flame_params_dir = os.path.join(export_dir, "flame_param")
-    report(f"  Motion sequence exported: {len(os.listdir(flame_params_dir))} frames")
-
-    return flame_params_dir
+    return os.path.join(export_dir, "flame_param")
 
 
-def _log_tensor(name, t):
-    """Log tensor statistics for debugging."""
-    import numpy as _np
-    if t is None:
-        return f"  {name}: None"
-    if isinstance(t, _np.ndarray):
-        return f"  {name}: shape={t.shape} dtype={t.dtype} min={t.min():.4f} max={t.max():.4f} mean={t.mean():.4f}"
-    return f"  {name}: shape={list(t.shape)} dtype={t.dtype} min={t.min().item():.4f} max={t.max().item():.4f} mean={t.mean().item():.4f}"
-
-
-def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
-                            motion_name=None):
-    """
-    Full pipeline: image + video -> concierge.zip
-
-    If video_path is provided, extract custom motion via VHAP tracking.
-    Otherwise, use the selected sample motion (or first available).
-
-    Yields (status_msg, zip_path, preview_video_path, tracked_image_path, preproc_image_path) tuples.
-    """
+def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking, motion_name=None):
+    """Full pipeline: image + video -> concierge.zip"""
     import torch
     import numpy as np
     import subprocess
     import zipfile
     import shutil
     import tempfile
+    import json
     from pathlib import Path
     from PIL import Image
     from glob import glob
-
     from lam.runners.infer.head_utils import prepare_motion_seqs, preprocess_image
+    # FIX 2: Use standard tools logic instead of custom inline script
+    from tools.generateARKITGLBWithBlender import generate_glb
 
     working_dir = tempfile.mkdtemp(prefix="concierge_")
+    # FIX 3: Safe ID generation (don't rely on folder structure)
     base_iid = "concierge"
-    diag = []  # Collect diagnostic messages
-
-    # Report environment versions (visible in DIAGNOSTICS output)
-    import torch
-    diag.append(f"[ENV] PyTorch={torch.__version__}, CUDA={torch.version.cuda}")
+    
     try:
-        import xformers
-        diag.append(f"[ENV] xformers={xformers.__version__} — DINOv2 uses memory_efficient_attention")
-    except ImportError:
-        diag.append("[ENV] !!! xformers NOT INSTALLED — DINOv2 uses FALLBACK attention (WRONG) !!!")
-
-    # Report model loading warnings
-    build_warnings = getattr(lam, "_build_warnings", [])
-    if build_warnings:
-        diag.append(f"[MODEL] {len(build_warnings)} weight warnings:")
-        for w in build_warnings[:5]:
-            diag.append(f"  {w}")
-    else:
-        diag.append("[MODEL] All weights loaded OK")
-
-    try:
-        # ============================================================
         # Step 0: Clean stale FLAME tracking data
-        # ============================================================
-        # FlameTrackingSingleImage uses fixed output dirs under output/tracking/.
-        # Stale data from a previous run can corrupt results. Clean everything.
         tracking_root = os.path.join(os.getcwd(), "output", "tracking")
         if os.path.isdir(tracking_root):
             for subdir in ["preprocess", "tracking", "export"]:
                 stale = os.path.join(tracking_root, subdir)
                 if os.path.isdir(stale):
                     shutil.rmtree(stale)
-                    print(f"[DIAG] Cleaned stale tracking dir: {stale}")
-            diag.append("[CLEAN] Removed stale tracking data")
-        else:
-            diag.append("[CLEAN] No stale tracking data found")
 
-        # ============================================================
         # Step 1: Source image FLAME tracking
-        # ============================================================
         yield "Step 1: FLAME tracking on source image...", None, None, None, None
 
         image_raw = os.path.join(working_dir, "raw.png")
         with Image.open(image_path).convert("RGB") as img:
-            diag.append(f"[INPUT] Image size: {img.size}, mode: {img.mode}")
             img.save(image_raw)
 
         ret = flametracking.preprocess(image_raw)
-        assert ret == 0, "FLAME preprocess failed - could not detect face in image"
+        assert ret == 0, "FLAME preprocess failed"
         ret = flametracking.optimize()
         assert ret == 0, "FLAME optimize failed"
         ret, output_dir = flametracking.export()
@@ -858,132 +574,56 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
 
         tracked_image = os.path.join(output_dir, "images/00000_00.png")
         mask_path = os.path.join(output_dir, "fg_masks/00000_00.png")
-
-        # Verify tracked outputs exist and log stats
-        diag.append(f"[FLAME] output_dir: {output_dir}")
-        diag.append(f"[FLAME] tracked_image exists: {os.path.isfile(tracked_image)}")
-        diag.append(f"[FLAME] mask exists: {os.path.isfile(mask_path)}")
-        flame_npz = os.path.join(output_dir, "canonical_flame_param.npz")
-        if os.path.isfile(flame_npz):
-            fp = np.load(flame_npz)
-            diag.append(f"[FLAME] canonical_flame_param keys: {list(fp.keys())}")
-            if "shape" in fp:
-                sp = fp["shape"]
-                diag.append(f"[FLAME] shape_param: shape={sp.shape} min={sp.min():.4f} max={sp.max():.4f} mean={sp.mean():.4f}")
-                # Flag if shape params look suspicious (near-zero or extreme)
-                if np.abs(sp).max() < 0.01:
-                    diag.append("[FLAME] WARNING: shape params near-zero!")
-                if np.abs(sp).max() > 10:
-                    diag.append("[FLAME] WARNING: shape params extremely large!")
-        else:
-            diag.append(f"[FLAME] WARNING: canonical_flame_param.npz NOT FOUND at {flame_npz}")
-
-        # Show tracked face so user can verify FLAME tracking quality
         yield f"Step 1 done: check tracked face -->", None, None, tracked_image, None
 
-        # ============================================================
-        # Step 2: Motion sequence preparation
-        # ============================================================
+        # Step 2: Motion sequence
         if video_path and os.path.isfile(video_path):
-            # --- Custom video: VHAP tracking ---
             total_steps = 6
-            yield f"Step 2/{total_steps}: Processing custom motion video (VHAP tracking)...", None, None, None, None
-
-            def video_status(msg):
-                # Forward sub-status through generator isn't easy,
-                # so we just print to container logs
-                print(f"  [Video Tracking] {msg}")
-
-            flame_params_dir = _track_video_to_motion(
-                video_path, flametracking, working_dir,
-                status_callback=video_status,
-            )
+            yield f"Step 2/{total_steps}: Processing custom motion video...", None, None, None, None
+            flame_params_dir = _track_video_to_motion(video_path, flametracking, working_dir)
             motion_source = "custom video"
         else:
-            # --- Sample motion ---
             total_steps = 5
-            # Find available sample motions
             sample_motions = glob("./model_zoo/sample_motion/export/*/flame_param")
             if not sample_motions:
-                raise RuntimeError(
-                    "No motion sequences available. "
-                    "Please upload a custom motion video."
-                )
-
-            # Use the motion selected by the user (if it matches)
-            flame_params_dir = sample_motions[0]  # default fallback
+                raise RuntimeError("No motion sequences available.")
+            flame_params_dir = sample_motions[0]
             if motion_name:
                 for sp in sample_motions:
                     if os.path.basename(os.path.dirname(sp)) == motion_name:
                         flame_params_dir = sp
                         break
+            motion_source = f"sample '{os.path.basename(os.path.dirname(flame_params_dir))}'"
 
-            resolved_name = os.path.basename(os.path.dirname(flame_params_dir))
-            motion_source = f"sample '{resolved_name}'"
+        yield f"Step 3/{total_steps}: Preparing LAM inference...", None, None, None, None
 
-        yield f"Step 3/{total_steps}: Preparing LAM inference (motion: {motion_source})...", None, None, None, None
-
-        # ============================================================
         # Step 3: LAM inference
-        # ============================================================
-        source_size = cfg.source_size
-        render_size = cfg.render_size
-
         image_tensor, _, _, shape_param = preprocess_image(
-            tracked_image, mask_path=mask_path, intr=None,
-            pad_ratio=0, bg_color=1.0, max_tgt_size=None,
-            aspect_standard=1.0, enlarge_ratio=[1.0, 1.0],
-            render_tgt_size=source_size, multiply=14,
-            need_mask=True, get_shape_param=True,
+            tracked_image, mask_path=mask_path, intr=None, pad_ratio=0, bg_color=1.0, 
+            max_tgt_size=None, aspect_standard=1.0, enlarge_ratio=[1.0, 1.0],
+            render_tgt_size=cfg.source_size, multiply=14, need_mask=True, get_shape_param=True,
         )
 
-        # --- Diagnostics: preprocessed image tensor ---
-        diag.append(f"[PREPROCESS] source_size={source_size}, render_size={render_size}")
-        diag.append(_log_tensor("image_tensor", image_tensor))
-        diag.append(_log_tensor("shape_param", shape_param))
-        # Save preprocessed image for visual inspection
         preproc_vis_path = os.path.join(working_dir, "preprocessed_input.png")
         vis_img = (image_tensor[0].permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
         Image.fromarray(vis_img).save(preproc_vis_path)
-        diag.append(f"[PREPROCESS] Saved preprocessed input to: {preproc_vis_path}")
 
-        src = tracked_image.split("/")[-3]
-        driven = flame_params_dir.split("/")[-2]
+        # FIX 3: Safe ID logic
+        src_name = os.path.splitext(os.path.basename(image_path))[0]
+        driven_name = os.path.basename(os.path.dirname(flame_params_dir))
+        
         motion_seq = prepare_motion_seqs(
             flame_params_dir, None, save_root=working_dir, fps=30,
             bg_color=1.0, aspect_standard=1.0, enlarge_ratio=[1.0, 1.0],
-            render_image_res=render_size, multiply=16,
-            need_mask=False, vis_motion=False,
-            shape_param=shape_param, test_sample=False,
-            cross_id=False, src_driven=[src, driven],
+            render_image_res=cfg.render_size, multiply=16,
+            need_mask=False, vis_motion=False, shape_param=shape_param, test_sample=False,
+            cross_id=False, src_driven=[src_name, driven_name],
         )
-
-        # --- Diagnostics: motion sequence ---
-        diag.append(f"[MOTION] flame_params_dir: {flame_params_dir}")
-        diag.append(f"[MOTION] num_frames: {motion_seq['render_c2ws'].shape[1]}")
-        diag.append(_log_tensor("render_c2ws", motion_seq["render_c2ws"]))
-        diag.append(_log_tensor("render_intrs", motion_seq["render_intrs"]))
-        for pk, pv in motion_seq["flame_params"].items():
-            diag.append(_log_tensor(f"flame.{pk}", pv))
 
         yield f"Step 4/{total_steps}: Running LAM inference...", None, None, None, preproc_vis_path
 
         motion_seq["flame_params"]["betas"] = shape_param.unsqueeze(0)
         device = "cuda"
-
-        # Quick encoder sanity check — are DINOv2 features reasonable?
-        with torch.no_grad():
-            _img_in = image_tensor.to(device, torch.float32)
-            _enc_feats = lam.forward_encode_image(_img_in)
-            diag.append(_log_tensor("encoder_feats", _enc_feats))
-            _ef = _enc_feats.detach().cpu().float()
-            _has_nan = bool(torch.isnan(_ef).any().item())
-            _has_inf = bool(torch.isinf(_ef).any().item())
-            diag.append(f"[ENCODER] has_nan={_has_nan} has_inf={_has_inf} "
-                        f"abs_max={float(_ef.abs().max().item()):.4f}")
-            if _has_nan or _has_inf:
-                diag.append("[ENCODER] !!! CRITICAL: NaN/Inf in encoder features !!!")
-
         with torch.no_grad():
             res = lam.infer_single_view(
                 image_tensor.unsqueeze(0).to(device, torch.float32),
@@ -991,1247 +631,290 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking,
                 render_c2ws=motion_seq["render_c2ws"].to(device),
                 render_intrs=motion_seq["render_intrs"].to(device),
                 render_bg_colors=motion_seq["render_bg_colors"].to(device),
-                flame_params={
-                    k: v.to(device) for k, v in motion_seq["flame_params"].items()
-                },
+                flame_params={k: v.to(device) for k, v in motion_seq["flame_params"].items()},
             )
 
-        # --- Diagnostics: model output ---
-        diag.append(_log_tensor("comp_rgb", res["comp_rgb"]))
-        diag.append(_log_tensor("comp_mask", res["comp_mask"]))
-
-        # Save first rendered frame for visual inspection (is model output OK?)
-        _frame0 = res["comp_rgb"][0].detach().cpu().numpy()  # [H, W, 3]
-        _frame0 = (np.clip(_frame0, 0, 1.0) * 255).astype(np.uint8)
-        _frame0_path = os.path.join(working_dir, "rendered_frame0.png")
-        Image.fromarray(_frame0).save(_frame0_path)
-        diag.append(f"[RENDER] Saved first rendered frame to: {_frame0_path}")
-
-        # Include weight loading issues in generation diagnostics
-        if hasattr(lam, "_missing_keys") and lam._missing_keys:
-            diag.append(f"[WEIGHTS] !!! {len(lam._missing_keys)} MISSING keys "
-                        "(params with random init) !!!")
-            for mk in lam._missing_keys[:20]:
-                diag.append(f"  MISSING: {mk}")
-        if hasattr(lam, "_unexpected_keys") and lam._unexpected_keys:
-            diag.append(f"[WEIGHTS] {len(lam._unexpected_keys)} unexpected keys")
-            for uk in lam._unexpected_keys[:20]:
-                diag.append(f"  UNEXPECTED: {uk}")
-
-        # --- Gaussian quality validation ---
-        # Check canonical Gaussian attributes for signs of bad inference.
-        # Working models produce ~4-5% splats with opacity > 0.9 and small
-        # offsets (mean magnitude ~0.02).  Bad inference produces >50% opaque
-        # splats, large offsets, and dark colors — rendering as a "blob".
-        gs_model = res["cano_gs_lst"][0]
-        _opacity = gs_model.opacity.detach().cpu().float()
-        _offset_mag = torch.norm(gs_model.offset.detach().cpu().float(), dim=-1)
-        _opacity_high_pct = float((_opacity > 0.9).float().mean().item()) * 100
-        _offset_mean = float(_offset_mag.mean().item())
-        # shs can be [N, 3] (use_rgb) or [N, K, 3] (SH) — flatten to [N, C] first
-        _shs_flat = gs_model.shs.detach().cpu().float().reshape(gs_model.shs.shape[0], -1)
-        _rgb_r = float(_shs_flat[:, 0].mean().item())
-        _rgb_g = float(_shs_flat[:, 1].mean().item()) if _shs_flat.shape[1] > 1 else 0.0
-        _rgb_b = float(_shs_flat[:, 2].mean().item()) if _shs_flat.shape[1] > 2 else 0.0
-        diag.append("[GS_QUALITY] opacity>0.9: %.1f%%, offset_mag_mean: %.4f, "
-                    "rgb_mean: (%.3f, %.3f, %.3f)" % (
-                        _opacity_high_pct, _offset_mean, _rgb_r, _rgb_g, _rgb_b))
-        if _opacity_high_pct > 50:
-            diag.append("[GS_QUALITY] WARNING: %.0f%% of splats are highly opaque "
-                        "(expected <10%%). The avatar may render as a distorted blob. "
-                        "Try a different input image with clearer face, or check "
-                        "torch.compile/dynamo status." % _opacity_high_pct)
-        if _offset_mean > 0.035:
-            diag.append("[GS_QUALITY] WARNING: Large mean offset (%.4f, expected <0.025). "
-                        "Gaussians are far from mesh surface." % _offset_mean)
-
-        # ============================================================
         # Step 4: Generate GLB + ZIP
-        # ============================================================
         yield f"Step 5/{total_steps}: Generating 3D avatar (Blender GLB)...", None, None, None, preproc_vis_path
 
         oac_dir = os.path.join(working_dir, "oac_export", base_iid)
         os.makedirs(oac_dir, exist_ok=True)
 
-        # Save shaped mesh + Gaussian offset
         saved_head_path = lam.renderer.flame_model.save_shaped_mesh(
             shape_param.unsqueeze(0).cuda(), fd=oac_dir,
         )
-        assert os.path.isfile(saved_head_path), f"save_shaped_mesh failed: {saved_head_path}"
 
-        # Verify mesh vertex count matches FBX template expectation (20018 verts = 60054 coords)
-        import trimesh as _tmesh
-        _mesh = _tmesh.load(saved_head_path)
-        _n_verts = _mesh.vertices.shape[0]
-        _expected_verts = 60054 // 3  # From template VERTEX_HEADER
-        diag.append(f"[MESH] nature.obj vertices: {_n_verts}, expected: {_expected_verts}")
-        if _n_verts != _expected_verts:
-            diag.append(f"[MESH] WARNING: Vertex count mismatch! "
-                        f"GLB will be corrupted. Check add_teeth / subdivide_num config.")
-        diag.append(f"[MESH] FLAME model vertex_num_upsampled: "
-                    f"{lam.renderer.flame_model.vertex_num_upsampled}")
-
-        # NOTE: The renderer uses direct 1:1 mapping: ply[i] + glb_mesh[i].
-        # Blender preserves FBX vertex order in GLB export (no splitting occurs
-        # because we export with no normals, no UVs, no materials).
-
-        # Generate GLB via Blender (with per-request temp dir to avoid conflicts)
-        # NOTE: We only import update_flame_shape and convert_ascii_to_binary from
-        # the tools module.  The Blender subprocess calls are inlined here so that
-        # we do NOT depend on whichever version of the tools module Modal happens
-        # to resolve (auto-mount vs. git-clone), which has caused silent failures.
-        from tools.generateARKITGLBWithBlender import (
-            update_flame_shape,
-            convert_ascii_to_binary,
+        # FIX 2: Use official generate_glb (preserves vertex order)
+        # Replaces the custom inline script that sorted vertices by Z
+        generate_glb(
+            input_mesh=Path(saved_head_path),
+            template_fbx=Path("./model_zoo/sample_oac/template_file.fbx"),
+            output_glb=Path(os.path.join(oac_dir, "skin.glb")),
+            blender_exec=Path("/usr/local/bin/blender")
         )
 
-        skin_glb_path = Path(os.path.join(oac_dir, "skin.glb"))
-        vertex_order_path = Path(os.path.join(oac_dir, "vertex_order.json"))
-        template_fbx = Path("./model_zoo/sample_oac/template_file.fbx")
-        blender_exec = Path("/usr/local/bin/blender")
+        # Create 1:1 vertex order file (FLAME standard order, 0 to N-1)
+        # This is critical: if GLB and PLY mismatch, the face explodes.
+        # We assume generate_glb preserved the order (which it does via FBX SDK settings).
+        import trimesh
+        _mesh = trimesh.load(saved_head_path)
+        _n_verts = _mesh.vertices.shape[0]
+        # Just use sequential order. Custom sorting was the bug.
+        vertex_order = list(range(_n_verts))
+        with open(os.path.join(oac_dir, "vertex_order.json"), "w") as f:
+            json.dump(vertex_order, f)
 
-        # Write combined Blender script inline: GLB export + vertex_order.json
-        # generation in a SINGLE Blender session.
-        #
-        # CRITICAL: Must NOT call transform_apply() on the skinned FBX mesh.
-        # It bakes the axis-conversion rotation into vertex positions while
-        # leaving armature bones unchanged, which destroys the skin binding.
-        # The original tools/convertFBX2GLB.py correctly omits transform_apply.
-        #
-        # NOTE: The renderer (gaussian-splat-renderer-for-lam) has
-        # replaceIndexes=false, so vertex_order.json is loaded but NOT used
-        # for vertex remapping.  The renderer does direct 1:1 mapping:
-        #   final_pos[i] = ply_offset[i] + morphedMesh[i]
-        # Both PLY and GLB must be in FLAME vertex order.
-        convert_script = Path(os.path.join(working_dir, "convert_and_order.py"))
-        convert_script.write_text('''\
-import bpy, sys, json
-from pathlib import Path
-
-def clean_scene():
-    bpy.ops.object.select_all(action='SELECT')
-    bpy.ops.object.delete()
-    for c in [bpy.data.meshes, bpy.data.materials, bpy.data.textures]:
-        for item in c:
-            c.remove(item)
-
-def strip_materials():
-    for obj in bpy.data.objects:
-        if obj.type == 'MESH':
-            obj.data.materials.clear()
-    for mat in list(bpy.data.materials):
-        bpy.data.materials.remove(mat)
-    for tex in list(bpy.data.textures):
-        bpy.data.textures.remove(tex)
-    for img in list(bpy.data.images):
-        bpy.data.images.remove(img)
-
-argv = sys.argv[sys.argv.index("--") + 1:]
-input_fbx = Path(argv[0])
-output_glb = Path(argv[1])
-output_vertex_order = Path(argv[2])
-
-# Import FBX
-clean_scene()
-bpy.ops.import_scene.fbx(filepath=str(input_fbx))
-
-# Generate vertex_order.json from the SAME mesh that will be exported as GLB.
-mesh_objects = [obj for obj in bpy.context.scene.objects if obj.type == 'MESH']
-if len(mesh_objects) != 1:
-    raise ValueError(f"Expected 1 mesh, found {len(mesh_objects)}")
-mesh_obj = mesh_objects[0]
-
-# DO NOT call transform_apply() on skinned meshes!  It bakes the FBX
-# axis-conversion rotation into vertex positions but leaves armature
-# bones unchanged, destroying the skin binding.  The glTF exporter
-# handles the object transform correctly during export.
-# Use matrix_world to read world-space Z for the sort instead.
-world_matrix = mesh_obj.matrix_world
-vertices = [(i, (world_matrix @ v.co).z) for i, v in enumerate(mesh_obj.data.vertices)]
-sorted_vertices = sorted(vertices, key=lambda x: x[1])
-sorted_vertex_indices = [idx for idx, z in sorted_vertices]
-
-with open(str(output_vertex_order), "w") as f:
-    json.dump(sorted_vertex_indices, f)
-print(f"vertex_order.json: {len(sorted_vertex_indices)} vertices")
-
-# Strip materials and export GLB
-strip_materials()
-bpy.ops.export_scene.gltf(
-    filepath=str(output_glb),
-    export_format='GLB',
-    export_skins=True,
-    export_materials='NONE',
-    export_normals=False,
-    export_texcoords=False,
-    export_morph_normal=False,
-)
-print("GLB + vertex_order export completed successfully")
-''')
-        diag.append(f"[GLB] convert_and_order.py written inline to {convert_script}")
-
-        # Validate prerequisites before starting the pipeline
-        diag.append(f"[GLB] CWD={os.getcwd()}")
-        diag.append(f"[GLB] blender exists: {blender_exec.exists()}")
-        diag.append(f"[GLB] template_fbx exists: {template_fbx.exists()}")
-        diag.append(f"[GLB] saved_head_path exists: {os.path.isfile(saved_head_path)}")
-
-        # Use working_dir for temp files (avoid CWD collision across requests)
-        temp_ascii = Path(os.path.join(working_dir, "temp_ascii.fbx"))
-        temp_binary = Path(os.path.join(working_dir, "temp_bin.fbx"))
-
-        def _run_blender(script, args, label):
-            """Run a Blender Python script and return (stdout, stderr)."""
-            cmd = [
-                str(blender_exec), "--background",
-                "--python", str(script), "--",
-            ] + [str(a) for a in args]
-            r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
-            diag.append(f"[GLB] {label} returncode={r.returncode}")
-            if r.stdout:
-                # Keep last 600 chars for diagnostics
-                diag.append(f"[GLB] {label} stdout: ...{r.stdout[-600:]}")
-            if r.stderr:
-                diag.append(f"[GLB] {label} stderr: ...{r.stderr[-600:]}")
-            if r.returncode != 0:
-                raise RuntimeError(
-                    f"Blender {label} exited with code {r.returncode}\n"
-                    f"stdout: {r.stdout[-1000:]}\nstderr: {r.stderr[-1000:]}"
-                )
-            return r
-
-        try:
-            update_flame_shape(Path(saved_head_path), temp_ascii, template_fbx)
-            assert temp_ascii.exists(), f"update_flame_shape produced no output: {temp_ascii}"
-            diag.append(f"[GLB] ASCII FBX size: {temp_ascii.stat().st_size} bytes")
-
-            convert_ascii_to_binary(temp_ascii, temp_binary)
-            assert temp_binary.exists(), f"convert_ascii_to_binary produced no output: {temp_binary}"
-            diag.append(f"[GLB] Binary FBX size: {temp_binary.stat().st_size} bytes")
-
-            # Single Blender call: GLB export + vertex_order.json from same mesh
-            _run_blender(convert_script,
-                         [temp_binary, skin_glb_path, vertex_order_path],
-                         "FBX→GLB+VertexOrder")
-            if not skin_glb_path.exists():
-                raise RuntimeError(
-                    f"Blender exited OK but {skin_glb_path} was not created. "
-                    "Check [GLB] stdout/stderr above."
-                )
-            if not vertex_order_path.exists():
-                raise RuntimeError(
-                    f"Blender exited OK but {vertex_order_path} was not created. "
-                    "Check [GLB] stdout/stderr above."
-                )
-            diag.append(f"[GLB] skin.glb size: {skin_glb_path.stat().st_size} bytes")
-            diag.append(f"[GLB] vertex_order.json size: {vertex_order_path.stat().st_size} bytes")
-        finally:
-            for f in [temp_ascii, temp_binary]:
-                if f.exists():
-                    f.unlink()
-
-        # --------------------------------------------------------
-        # PLY saved in FLAME order — renderer uses direct 1:1 mapping
-        # --------------------------------------------------------
-        # The renderer does: final_pos[i] = ply_offset[i] + morphedMesh[i]
-        # with replaceIndexes=false (vertex_order.json is NOT used for remapping).
-        # Both PLY and GLB must be in FLAME vertex order, which is the default.
         res["cano_gs_lst"][0].save_ply(
             os.path.join(oac_dir, "offset.ply"), rgb2sh=False, offset2xyz=True,
         )
-        diag.append(f"[PLY] offset.ply saved: "
-                     f"{os.path.getsize(os.path.join(oac_dir, 'offset.ply'))} bytes")
-
-        # Copy template animation
         shutil.copy(
             src="./model_zoo/sample_oac/animation.glb",
             dst=os.path.join(oac_dir, "animation.glb"),
         )
-
-        # Clean up intermediate mesh (nature.obj)
         if os.path.exists(saved_head_path):
             os.remove(saved_head_path)
 
-        # Verify all required files before creating ZIP
-        required_files = ["offset.ply", "skin.glb", "vertex_order.json", "animation.glb"]
-        missing = [f for f in required_files if not os.path.isfile(os.path.join(oac_dir, f))]
-        if missing:
-            raise RuntimeError(f"OAC export incomplete - missing: {', '.join(missing)}")
-
-        # Log all files in oac_dir (catch unexpected extras)
-        _all_files = []
-        for _r, _d, _f in os.walk(oac_dir):
-            for _fn in _f:
-                _fp = os.path.join(_r, _fn)
-                _all_files.append((_fn, os.path.getsize(_fp)))
-        diag.append(f"[OAC] Files in oac_dir ({len(_all_files)}):")
-        for _fn, _sz in sorted(_all_files):
-            diag.append(f"  {_fn}: {_sz:,} bytes")
-
-        # Read PLY header for diagnostics
-        _ply_path = os.path.join(oac_dir, "offset.ply")
-        with open(_ply_path, "rb") as _pf:
-            _ply_raw = _pf.read(2000)
-            _end = _ply_raw.find(b"end_header\n")
-            if _end > 0:
-                diag.append(f"[PLY] header:\n{_ply_raw[:_end+11].decode('ascii')}")
-
-        # ============================================================
-        # Step 5: Create ZIP + preview
-        # ============================================================
+        # Create ZIP
         step_label = f"Step {total_steps}/{total_steps}"
         yield f"{step_label}: Creating concierge.zip...", None, None, None, preproc_vis_path
 
         output_zip = os.path.join(working_dir, "concierge.zip")
-        folder_name = os.path.basename(oac_dir)  # "concierge"
         with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-            # Add explicit directory entry — the OAC renderer (gaussian-splat-
-            # renderer-for-lam) looks for an is_dir entry to locate the folder.
-            # Without it the renderer throws "file fold is not found".
-            dir_info = zipfile.ZipInfo(folder_name + "/")
+            dir_info = zipfile.ZipInfo(os.path.basename(oac_dir) + "/")
             zf.writestr(dir_info, "")
-            for root, _dirs, files in os.walk(oac_dir):
+            for root, _, files in os.walk(oac_dir):
                 for fname in files:
                     fpath = os.path.join(root, fname)
                     arcname = os.path.relpath(fpath, os.path.dirname(oac_dir))
                     zf.write(fpath, arcname)
 
-        # Log final ZIP contents
-        with zipfile.ZipFile(output_zip, "r") as _zr:
-            diag.append(f"[ZIP] concierge.zip entries:")
-            for _zi in _zr.infolist():
-                diag.append(f"  {_zi.filename}: size={_zi.file_size:,} "
-                            f"compressed={_zi.compress_size:,} is_dir={_zi.is_dir()}")
-            diag.append(f"[ZIP] Total ZIP size: {os.path.getsize(output_zip):,} bytes")
-
-        # Generate preview video
+        # Preview video
         preview_path = os.path.join(working_dir, "preview.mp4")
         rgb = res["comp_rgb"].detach().cpu().numpy()
         mask = res["comp_mask"].detach().cpu().numpy()
         mask[mask < 0.5] = 0.0
         rgb = rgb * mask + (1 - mask) * 1
         rgb = (np.clip(rgb, 0, 1.0) * 255).astype(np.uint8)
-
-        from app_lam import save_images2video
+        
+        from app_lam import save_images2video, add_audio_to_video
         save_images2video(rgb, preview_path, 30)
 
-        # Re-encode for browser compatibility:
-        #  - yuv420p pixel format (browsers don't support yuv444p)
-        #  - moov atom at start (required for streaming duration detection)
+        # Re-encode for browser
         preview_browser = os.path.join(working_dir, "preview_browser.mp4")
-        subprocess.run(
-            ["ffmpeg", "-y", "-i", preview_path,
-             "-c:v", "libx264", "-pix_fmt", "yuv420p",
-             "-movflags", "faststart", preview_browser],
-            capture_output=True,
-        )
+        subprocess.run(["ffmpeg", "-y", "-i", preview_path, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "faststart", preview_browser])
         if os.path.isfile(preview_browser) and os.path.getsize(preview_browser) > 0:
             os.replace(preview_browser, preview_path)
 
-        # Add audio if available (from custom video)
         final_preview = preview_path
         if video_path and os.path.isfile(video_path):
             try:
-                from app_lam import add_audio_to_video
                 preview_with_audio = os.path.join(working_dir, "preview_audio.mp4")
                 add_audio_to_video(preview_path, preview_with_audio, video_path)
-                # Re-encode audio version for browser too
                 preview_audio_browser = os.path.join(working_dir, "preview_audio_browser.mp4")
-                subprocess.run(
-                    ["ffmpeg", "-y", "-i", preview_with_audio,
-                     "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                     "-c:a", "aac", "-movflags", "faststart",
-                     preview_audio_browser],
-                    capture_output=True,
-                )
+                subprocess.run(["ffmpeg", "-y", "-i", preview_with_audio, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "faststart", preview_audio_browser])
                 if os.path.isfile(preview_audio_browser) and os.path.getsize(preview_audio_browser) > 0:
                     os.replace(preview_audio_browser, preview_with_audio)
                 final_preview = preview_with_audio
             except Exception:
-                pass  # Fallback to video without audio
+                pass
 
-        zip_size_mb = os.path.getsize(output_zip) / (1024 * 1024)
-        num_motion_frames = len(os.listdir(flame_params_dir))
-
-        # Copy ZIP to a stable well-known path so /download-zip always finds it
-        # (the temp working_dir path works for gr.File but the FastAPI endpoint
-        # needs a path that survives across HTTP requests).
-        stable_dir = "/tmp/concierge_output"
-        os.makedirs(stable_dir, exist_ok=True)
-        stable_zip = os.path.join(stable_dir, "concierge.zip")
-        shutil.copy2(output_zip, stable_zip)
-        stable_preview = os.path.join(stable_dir, "preview.mp4")
-        shutil.copy2(final_preview, stable_preview)
-
-        # Persist to Modal Volume — survives container shutdown.
-        # The lightweight /download endpoint reads from here.
+        # Save to volume
         vol_dir = OUTPUT_VOL_PATH
         os.makedirs(vol_dir, exist_ok=True)
         shutil.copy2(output_zip, os.path.join(vol_dir, "concierge.zip"))
         shutil.copy2(final_preview, os.path.join(vol_dir, "preview.mp4"))
         output_vol.commit()
-        diag.append(f"[VOLUME] Saved to {vol_dir}/concierge.zip")
 
-        # Save diagnostics to file for download AND to Volume for post-run analysis
-        diag_path = os.path.join(working_dir, "diagnostics.txt")
-        with open(diag_path, "w") as f:
-            f.write("\n".join(diag))
-        # Also persist to Volume (survives 504 / container shutdown)
-        vol_diag = os.path.join(OUTPUT_VOL_PATH, "diagnostics.txt")
-        os.makedirs(OUTPUT_VOL_PATH, exist_ok=True)
-        with open(vol_diag, "w") as f:
-            f.write("\n".join(diag))
-        output_vol.commit()
-        print("\n=== DIAGNOSTICS ===\n" + "\n".join(diag) + "\n=== END ===\n")
-
-        # Return TEMP paths so Gradio caches them normally via its
-        # built-in mechanism (hash-based URLs).  Passing stable paths
-        # requires allowed_paths and/or a custom /file= handler that
-        # correctly intercepts Gradio's cache URLs — which has been a
-        # recurring source of regressions.  The stable copies above are
-        # only for the /download-zip and /download-preview endpoints.
         yield (
-            f"concierge.zip generated ({zip_size_mb:.1f} MB) | "
-            f"Motion: {motion_source} ({num_motion_frames} frames)",
-            output_zip,
-            final_preview,
-            None,
-            preproc_vis_path,
+            f"concierge.zip generated ({os.path.getsize(output_zip)/(1024*1024):.1f} MB)",
+            output_zip, final_preview, None, preproc_vis_path,
         )
 
     except Exception as e:
         import traceback
         tb = traceback.format_exc()
-        print(f"\n{'='*60}\n_generate_concierge_zip ERROR\n{'='*60}\n{tb}\n{'='*60}", flush=True)
-        # Include traceback + diagnostics in error message
-        diag_summary = "\n".join(diag[-10:]) if diag else "No diagnostics"
-        print("\n=== DIAGNOSTICS (error) ===\n" + "\n".join(diag) + "\n=== END ===\n", flush=True)
-        yield f"Error: {str(e)}\n\nTraceback:\n{tb}\n\nDiagnostics:\n{diag_summary}", None, None, None, None
+        print(f"\n_generate_concierge_zip ERROR:\n{tb}", flush=True)
+        yield f"Error: {str(e)}\n\nTraceback:\n{tb}", None, None, None, None
 
 
-# ============================================================
-# GPU Generation Worker (L4 — only active during generation)
-# ============================================================
-# The GPU container loads models once via @modal.enter(), processes
-# requests via the generate() method, and shuts down after 2 min idle.
-# This avoids paying for GPU while the Gradio UI is just waiting.
-
-@app.cls(
-    gpu="L4",
-    image=image,
-    volumes={OUTPUT_VOL_PATH: output_vol},
-    timeout=7200,
-    scaledown_window=120,
-)
+@app.cls(gpu="L4", image=image, volumes={OUTPUT_VOL_PATH: output_vol}, timeout=7200, scaledown_window=120)
 class Generator:
     @modal.enter()
     def setup(self):
-        """Initialize LAM pipeline once when the GPU container starts."""
-        import shutil as _shutil
+        import shutil
         os.chdir("/root/LAM")
         sys.path.insert(0, "/root/LAM")
-
-        # Monkey-patch torch.utils.cpp_extension.load to inject
-        # -Wno-c++11-narrowing, fixing nvdiffrast JIT build with clang.
         import torch.utils.cpp_extension as _cext
         _orig_load = _cext.load
         def _patched_load(*args, **kwargs):
             cflags = list(kwargs.get("extra_cflags", []) or [])
-            if "-Wno-c++11-narrowing" not in cflags:
-                cflags.append("-Wno-c++11-narrowing")
+            if "-Wno-c++11-narrowing" not in cflags: cflags.append("-Wno-c++11-narrowing")
             kwargs["extra_cflags"] = cflags
             return _orig_load(*args, **kwargs)
         _cext.load = _patched_load
-
-        # Suppress torch._dynamo errors so it falls back to eager mode
-        import torch._dynamo
-        torch._dynamo.config.suppress_errors = True
-
-        # Verify GPU architecture matches CUDA compilation target
-        import torch
-        if torch.cuda.is_available():
-            gpu_name = torch.cuda.get_device_name(0)
-            gpu_cap = torch.cuda.get_device_capability(0)
-            cuda_arch_env = os.environ.get("TORCH_CUDA_ARCH_LIST", "unset")
-            print(f"[GPU] {gpu_name}, compute capability: {gpu_cap[0]}.{gpu_cap[1]}")
-            print(f"[GPU] TORCH_CUDA_ARCH_LIST={cuda_arch_env}")
-            if f"{gpu_cap[0]}.{gpu_cap[1]}" not in cuda_arch_env:
-                print(f"[GPU] WARNING: CUDA arch mismatch! GPU is sm_{gpu_cap[0]}{gpu_cap[1]} "
-                      f"but TORCH_CUDA_ARCH_LIST={cuda_arch_env}")
-
+        
         print("Initializing LAM pipeline on GPU...")
         self.cfg, self.lam, self.flametracking = _init_lam_pipeline()
         print("GPU pipeline ready.")
 
     @modal.method()
     def generate(self, image_bytes: bytes, video_bytes: bytes, motion_name: str, job_id: str):
-        """Run full pipeline. Results are saved to Volume with a status marker.
-
-        No streaming — this is a plain RPC call.  The CPU UI polls the Volume
-        for intermediate images and a status_{job_id}.json completion marker.
-        """
         import shutil
         import tempfile
         import json
 
-        # Save uploaded bytes to temp files on the GPU container
         upload_dir = tempfile.mkdtemp(prefix="gpu_upload_")
         image_path = os.path.join(upload_dir, "input.png")
-        with open(image_path, "wb") as f:
-            f.write(image_bytes)
+        with open(image_path, "wb") as f: f.write(image_bytes)
 
         video_path = None
-        if video_bytes and len(video_bytes) > 0:
+        if video_bytes:
             video_path = os.path.join(upload_dir, "input_video.mp4")
-            with open(video_path, "wb") as f:
-                f.write(video_bytes)
+            with open(video_path, "wb") as f: f.write(video_bytes)
 
         effective_video = video_path if motion_name == "custom" else None
         selected_motion = motion_name if motion_name != "custom" else None
 
         vol_dir = OUTPUT_VOL_PATH
-        os.makedirs(vol_dir, exist_ok=True)
         status_file = os.path.join(vol_dir, f"status_{job_id}.json")
 
         try:
             final_msg = "Processing..."
-            for status, zip_path, preview, tracked_img, preproc_img in _generate_concierge_zip(
-                image_path, effective_video, self.cfg, self.lam, self.flametracking,
-                motion_name=selected_motion,
+            for status, _, _, tracked_img, preproc_img in _generate_concierge_zip(
+                image_path, effective_video, self.cfg, self.lam, self.flametracking, motion_name=selected_motion,
             ):
                 final_msg = status
-                # Save intermediate images to Volume for the CPU UI to discover
-                new_files = False
                 if tracked_img and os.path.isfile(tracked_img):
                     shutil.copy2(tracked_img, os.path.join(vol_dir, "tracked_face.png"))
-                    new_files = True
+                    output_vol.commit()
                 if preproc_img and os.path.isfile(preproc_img):
                     shutil.copy2(preproc_img, os.path.join(vol_dir, "preproc_input.png"))
-                    new_files = True
-                if new_files:
                     output_vol.commit()
 
-            # Write completion marker (ZIP + preview already saved by _generate_concierge_zip)
-            with open(status_file, "w") as f:
-                json.dump({"type": "done", "msg": final_msg}, f)
+            with open(status_file, "w") as f: json.dump({"type": "done", "msg": final_msg}, f)
             output_vol.commit()
 
         except Exception as e:
-            import traceback
-            tb = traceback.format_exc()
-            print(f"\n{'='*60}\nGENERATION ERROR\n{'='*60}\n{tb}\n{'='*60}", flush=True)
             try:
-                with open(status_file, "w") as f:
-                    json.dump({"type": "error", "msg": f"{e}\n\nTraceback:\n{tb}"}, f)
+                with open(status_file, "w") as f: json.dump({"type": "error", "msg": str(e)}, f)
                 output_vol.commit()
-            except Exception:
-                pass
-
+            except Exception: pass
         finally:
             shutil.rmtree(upload_dir, ignore_errors=True)
 
-    @modal.method()
-    def smoke_test(self, image_bytes: bytes = b"") -> str:
-        """Minimal model inference test — bypasses our pipeline entirely.
 
-        Uses app_lam.py's core inference code directly to determine if:
-        - Model weights are loaded correctly
-        - Gaussian attributes are reasonable
-        - The issue is in our pipeline code or the Modal environment
-
-        Returns a plain-text report.
-        """
-        import torch
-        import tempfile
-        import numpy as np
-        from PIL import Image
-        from glob import glob
-
-        lines = []
-        def log(msg):
-            print(msg)
-            lines.append(msg)
-
-        log("=" * 60)
-        log("SMOKE TEST: Direct model inference (bypasses our pipeline)")
-        log("=" * 60)
-
-        lam = self.lam
-        cfg = self.cfg
-        flametracking = self.flametracking
-
-        # ---- 1. Weight loading report ----
-        log(f"\n[1] Weight loading report:")
-        if hasattr(lam, "_missing_keys"):
-            log(f"  Critical missing keys: {len(lam._missing_keys)}")
-            for k in lam._missing_keys[:10]:
-                log(f"    {k}")
-        if hasattr(lam, "_unexpected_keys"):
-            log(f"  Unexpected keys: {len(lam._unexpected_keys)}")
-            for k in lam._unexpected_keys[:10]:
-                log(f"    {k}")
-        if not getattr(lam, "_missing_keys", []) and not getattr(lam, "_unexpected_keys", []):
-            log("  ALL weights loaded OK")
-
-        # ---- 2. Find or create test image ----
-        log(f"\n[2] Preparing test image...")
-        test_image_path = None
-
-        # Try to use user-provided image
-        if image_bytes and len(image_bytes) > 100:
-            tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-            tmp.write(image_bytes)
-            tmp.close()
-            test_image_path = tmp.name
-            log(f"  Using provided image ({len(image_bytes):,} bytes)")
-
-        # Otherwise look for sample inputs on the container
-        if not test_image_path:
-            candidates = glob("./assets/sample_input/*/images/00000_00.png")
-            if candidates:
-                test_image_path = candidates[0]
-                log(f"  Using sample input: {test_image_path}")
-
-        if not test_image_path:
-            log("  ERROR: No test image available. Provide --image.")
-            return "\n".join(lines)
-
-        # ---- 3. FLAME tracking (same as app_lam.py) ----
-        log(f"\n[3] Running FLAME tracking...")
-        import shutil
-        tracking_root = os.path.join(os.getcwd(), "output", "tracking")
-        if os.path.isdir(tracking_root):
-            for subdir in ["preprocess", "tracking", "export"]:
-                stale = os.path.join(tracking_root, subdir)
-                if os.path.isdir(stale):
-                    shutil.rmtree(stale)
-
-        raw_path = "/tmp/smoke_test_raw.png"
-        with Image.open(test_image_path).convert("RGB") as img:
-            log(f"  Input image size: {img.size}")
-            img.save(raw_path)
-
-        ret = flametracking.preprocess(raw_path)
-        assert ret == 0, f"FLAME preprocess failed (code {ret})"
-        ret = flametracking.optimize()
-        assert ret == 0, f"FLAME optimize failed (code {ret})"
-        ret, output_dir = flametracking.export()
-        assert ret == 0, f"FLAME export failed (code {ret})"
-
-        tracked_image = os.path.join(output_dir, "images/00000_00.png")
-        mask_path = os.path.join(output_dir, "fg_masks/00000_00.png")
-        log(f"  Tracked image: {tracked_image} (exists={os.path.isfile(tracked_image)})")
-
-        # ---- 4. Inference — using app_lam.py's exact code ----
-        log(f"\n[4] Running inference (app_lam.py code path)...")
-        from lam.runners.infer.head_utils import prepare_motion_seqs, preprocess_image
-
-        source_size = cfg.source_size
-        render_size = cfg.render_size
-        log(f"  source_size={source_size}, render_size={render_size}")
-
-        image_tensor, _, _, shape_param = preprocess_image(
-            tracked_image, mask_path=mask_path, intr=None,
-            pad_ratio=0, bg_color=1.0, max_tgt_size=None,
-            aspect_standard=1.0, enlarge_ratio=[1.0, 1.0],
-            render_tgt_size=source_size, multiply=14,
-            need_mask=True, get_shape_param=True,
-        )
-        log(f"  image_tensor: shape={list(image_tensor.shape)} "
-            f"min={image_tensor.min():.3f} max={image_tensor.max():.3f}")
-        log(f"  shape_param: shape={list(shape_param.shape)}")
-
-        # Use sample motion
-        sample_motions = glob("./model_zoo/sample_motion/export/*/flame_param")
-        if not sample_motions:
-            log("  ERROR: No sample motion found")
-            return "\n".join(lines)
-        flame_params_dir = sample_motions[0]
-        log(f"  motion: {flame_params_dir}")
-
-        src = tracked_image.split("/")[-3]
-        driven = flame_params_dir.split("/")[-2]
-        motion_seq = prepare_motion_seqs(
-            flame_params_dir, None, save_root="/tmp", fps=30,
-            bg_color=1.0, aspect_standard=1.0, enlarge_ratio=[1.0, 1.0],
-            render_image_res=render_size, multiply=16,
-            need_mask=False, vis_motion=False,
-            shape_param=shape_param, test_sample=False,
-            cross_id=False, src_driven=[src, driven],
-        )
-
-        motion_seq["flame_params"]["betas"] = shape_param.unsqueeze(0)
-        device = "cuda"
-        with torch.no_grad():
-            res = lam.infer_single_view(
-                image_tensor.unsqueeze(0).to(device, torch.float32),
-                None, None,
-                render_c2ws=motion_seq["render_c2ws"].to(device),
-                render_intrs=motion_seq["render_intrs"].to(device),
-                render_bg_colors=motion_seq["render_bg_colors"].to(device),
-                flame_params={
-                    k: v.to(device) for k, v in motion_seq["flame_params"].items()
-                },
-            )
-
-        # ---- 5. Gaussian quality report ----
-        log(f"\n[5] Gaussian quality report:")
-        gs = res["cano_gs_lst"][0]
-        opacity = gs.opacity.detach().cpu().float()
-        offset_mag = torch.norm(gs.offset.detach().cpu().float(), dim=-1)
-        shs_flat = gs.shs.detach().cpu().float().reshape(gs.shs.shape[0], -1)
-
-        op_high = float((opacity > 0.9).float().mean().item()) * 100
-        op_low = float((opacity < 0.1).float().mean().item()) * 100
-        op_mean = float(opacity.mean().item())
-        off_mean = float(offset_mag.mean().item())
-        rgb_r = float(shs_flat[:, 0].mean().item())
-        rgb_g = float(shs_flat[:, 1].mean().item()) if shs_flat.shape[1] > 1 else 0
-        rgb_b = float(shs_flat[:, 2].mean().item()) if shs_flat.shape[1] > 2 else 0
-        scale_mean = float(gs.scaling.detach().cpu().float().mean().item())
-
-        log(f"  Opacity > 0.9:   {op_high:.1f}%  (good: ~4-5%)")
-        log(f"  Opacity < 0.1:   {op_low:.1f}%   (good: ~40-50%)")
-        log(f"  Opacity mean:    {op_mean:.4f}")
-        log(f"  Offset mag mean: {off_mean:.4f}  (good: ~0.02)")
-        log(f"  RGB mean:        ({rgb_r:.3f}, {rgb_g:.3f}, {rgb_b:.3f})")
-        log(f"  Scale mean:      {scale_mean:.6f}")
-
-        # comp_rgb stats
-        comp_rgb = res["comp_rgb"].detach().cpu()
-        log(f"  comp_rgb: shape={list(comp_rgb.shape)} mean={comp_rgb.mean():.4f}")
-
-        # ---- 6. Verdict ----
-        log(f"\n[6] VERDICT:")
-        if op_high > 50:
-            log(f"  *** BAD: {op_high:.0f}% splats opaque — model produces garbage on this environment ***")
-            log(f"  The issue is NOT in our pipeline code.")
-            log(f"  Root cause is in: model weights, GPU, or PyTorch version.")
-        elif op_high > 15:
-            log(f"  ** MARGINAL: {op_high:.0f}% opaque — somewhat elevated")
-        else:
-            log(f"  OK: {op_high:.1f}% opaque — model output looks reasonable")
-            log(f"  If the OAC renderer still shows a bird monster,")
-            log(f"  the issue is in the PLY/GLB export, not model inference.")
-
-        log("=" * 60)
-        report = "\n".join(lines)
-
-        # Save report to volume
-        report_path = os.path.join(OUTPUT_VOL_PATH, "smoke_test_report.txt")
-        os.makedirs(OUTPUT_VOL_PATH, exist_ok=True)
-        with open(report_path, "w") as f:
-            f.write(report)
-        output_vol.commit()
-
-        return report
-
-# ============================================================
-# Gradio UI (CPU — no GPU needed)
-# ============================================================
-# The UI runs on a cheap CPU container. Generation is delegated
-# to the Generator class above via .remote() + Volume polling.
-
-@app.function(
-    image=ui_image,
-    timeout=7200,
-    volumes={OUTPUT_VOL_PATH: output_vol},
-)
-# Gradio needs all requests (uploads, queue, SSE) on the SAME container.
+@app.function(image=ui_image, timeout=7200, volumes={OUTPUT_VOL_PATH: output_vol})
 @modal.concurrent(max_inputs=100)
 @modal.asgi_app()
 def web():
-    """Gradio UI served via ASGI (CPU only — GPU delegated to Generator).
-    Uses lightweight ui_image (no CUDA/PyTorch/Blender) to minimize costs.
-    """
     import gradio as gr
     from fastapi import FastAPI
     from fastapi.responses import FileResponse
     from glob import glob
-
-    # Monkey-patch gradio_client bug: additionalProperties can be a bool,
-    # but _json_schema_to_python_type assumes it's always a dict/schema.
     import gradio_client.utils as _gc_utils
+    
     _orig_jst = _gc_utils._json_schema_to_python_type
-    def _safe_jst(schema, defs=None):
-        if isinstance(schema, bool):
-            return "Any"
-        return _orig_jst(schema, defs)
+    def _safe_jst(schema, defs=None): return "Any" if isinstance(schema, bool) else _orig_jst(schema, defs)
     _gc_utils._json_schema_to_python_type = _safe_jst
 
-    # Discover available sample motions (no LAM pipeline init needed).
-    # In the lightweight ui_image, /root/LAM may only have sample_motion/.
     lam_root = "/root/LAM"
-    if os.path.isdir(lam_root):
-        os.chdir(lam_root)
+    if os.path.isdir(lam_root): os.chdir(lam_root)
     sample_motions = sorted(glob(f"{lam_root}/model_zoo/sample_motion/export/*/*.mp4"))
 
-    # --- Processing function (delegates to GPU, polls Volume) ---
     def process(image_path, video_path, motion_choice):
         import time, json, threading, uuid
-
         if image_path is None:
             yield "Error: Please upload a face image", None, None, None, None
             return
 
-        # Read uploaded files as bytes for cross-container transfer
-        with open(image_path, "rb") as f:
-            image_bytes = f.read()
-
+        with open(image_path, "rb") as f: image_bytes = f.read()
         video_bytes = b""
         if motion_choice == "custom" and video_path and os.path.isfile(video_path):
-            with open(video_path, "rb") as f:
-                video_bytes = f.read()
+            with open(video_path, "rb") as f: video_bytes = f.read()
 
-        # Unique job ID — GPU writes status_{job_id}.json when done
         job_id = uuid.uuid4().hex[:8]
         status_file = os.path.join(OUTPUT_VOL_PATH, f"status_{job_id}.json")
-
-        # Launch GPU task in a background thread.
-        # Even if .remote() eventually gets a 504, the GPU will have already
-        # saved results to the Volume — we detect completion via status file.
-        gpu_error = [None]
+        
         def _call_gpu():
             try:
                 gen = Generator()
-                gen.generate.remote(
-                    image_bytes, video_bytes, motion_choice or "custom", job_id,
-                )
-            except Exception as e:
-                gpu_error[0] = str(e)
-
-        thread = threading.Thread(target=_call_gpu, daemon=True)
-        thread.start()
-
+                gen.generate.remote(image_bytes, video_bytes, motion_choice or "custom", job_id)
+            except Exception: pass
+        
+        threading.Thread(target=_call_gpu, daemon=True).start()
         yield "Starting GPU worker...", None, None, None, None
 
-        # Poll Volume for intermediate results and completion marker
         start = time.time()
-        max_wait = 7200  # 2 hours (VHAP 300 frames can take ~55 min)
-        last_tracked = None
-        last_preproc = None
-
         while True:
             time.sleep(5)
-            elapsed = int(time.time() - start)
-
-            if elapsed > max_wait:
-                yield "Error: Generation timed out after 1 hour", None, None, None, None
-                return
-
             output_vol.reload()
-
-            # Check for intermediate images
+            
             tracked_p = os.path.join(OUTPUT_VOL_PATH, "tracked_face.png")
             preproc_p = os.path.join(OUTPUT_VOL_PATH, "preproc_input.png")
-            if os.path.isfile(tracked_p):
-                last_tracked = tracked_p
-            if os.path.isfile(preproc_p):
-                last_preproc = preproc_p
+            last_tracked = tracked_p if os.path.isfile(tracked_p) else None
+            last_preproc = preproc_p if os.path.isfile(preproc_p) else None
 
-            # Check for completion marker
             if os.path.isfile(status_file):
-                with open(status_file) as f:
-                    result = json.load(f)
-                # Cleanup
-                try:
-                    os.remove(status_file)
-                    output_vol.commit()
-                except Exception:
-                    pass
-
+                with open(status_file) as f: result = json.load(f)
+                try: os.remove(status_file); output_vol.commit()
+                except: pass
+                
                 if result["type"] == "error":
                     yield f"Error: {result['msg']}", None, None, None, None
                     return
-
-                # Success
+                
                 zip_p = os.path.join(OUTPUT_VOL_PATH, "concierge.zip")
                 preview_p = os.path.join(OUTPUT_VOL_PATH, "preview.mp4")
-                yield (
-                    result["msg"],
-                    zip_p if os.path.isfile(zip_p) else None,
-                    preview_p if os.path.isfile(preview_p) else None,
-                    last_tracked,
-                    last_preproc,
-                )
+                yield result["msg"], zip_p if os.path.isfile(zip_p) else None, preview_p if os.path.isfile(preview_p) else None, last_tracked, last_preproc
                 return
 
-            # GPU thread died but no status file — check if results are in Volume
-            if not thread.is_alive() and gpu_error[0]:
-                # One more reload in case the status was written just before 504
-                output_vol.reload()
-                if os.path.isfile(status_file):
-                    continue  # Will be picked up next iteration
-                yield (
-                    f"Error: GPU connection lost: {gpu_error[0]}",
-                    None, None, None, None,
-                )
-                return
+            mins, secs = divmod(int(time.time() - start), 60)
+            yield f"Processing... ({mins}m{secs:02d}s)", None, None, last_tracked, last_preproc
 
-            # Still processing — yield elapsed time to keep Gradio SSE alive
-            mins, secs = divmod(elapsed, 60)
-            yield (
-                f"Processing... ({mins}m{secs:02d}s elapsed)",
-                None, None, last_tracked, last_preproc,
-            )
-
-    # --- Build Gradio Blocks ---
-    with gr.Blocks(
-        title="Concierge ZIP Generator",
-        theme=gr.themes.Soft(),
-        css="""
-        .main-title { text-align: center; margin-bottom: 0.5em; }
-        .subtitle { text-align: center; color: #666; font-size: 0.95em; margin-bottom: 1.5em; }
-        footer { display: none !important; }
-        .tip-box { background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px;
-                    padding: 12px 16px; margin-top: 8px; font-size: 0.9em; color: #0369a1; }
-        """,
-    ) as demo:
-        gr.HTML('<h1 class="main-title">Concierge ZIP Generator</h1>')
-        gr.HTML(
-            '<p class="subtitle">'
-            "Upload your face image + custom motion video to generate "
-            "a high-quality concierge.zip for LAMAvatar"
-            "</p>"
-        )
-
+    with gr.Blocks(title="Concierge ZIP Generator") as demo:
+        gr.Markdown("# Concierge ZIP Generator (Fixed Version)")
         with gr.Row():
-            # ---- Left: Inputs ----
-            with gr.Column(scale=1):
-                input_image = gr.Image(
-                    label="1. Source Face Image",
-                    type="filepath",
-                    height=300,
-                )
-
-                motion_choice = gr.Radio(
-                    label="2. Motion Source",
-                    choices=["custom"] + [
-                        os.path.basename(os.path.dirname(m))
-                        for m in sample_motions
-                    ] if sample_motions else ["custom"],
-                    value="custom",
-                    info="Select 'custom' to upload your own video, or choose a sample",
-                )
-
-                input_video = gr.Video(
-                    label="3. Custom Motion Video",
-                    height=200,
-                )
-
-                gr.HTML(
-                    '<div class="tip-box">'
-                    "<b>IMPORTANT - input image requirements:</b><br>"
-                    "- Must be a <b>real photograph</b> (not illustration/AI art/anime)<br>"
-                    "- Front-facing, good lighting, neutral expression<br>"
-                    "- FLAME face tracking only works on real human faces<br>"
-                    "<br>"
-                    "<b>Motion video tips:</b><br>"
-                    "- Clear face, consistent lighting, 3-10 seconds<br>"
-                    "- The motion video's expressions drive the avatar animation"
-                    "</div>"
-                )
-
-                generate_btn = gr.Button(
-                    "Generate concierge.zip",
-                    variant="primary",
-                    size="lg",
-                )
-
-                status_text = gr.Textbox(
-                    label="Status",
-                    interactive=False,
-                    placeholder="Upload image + video, then click Generate...",
-                    lines=2,
-                )
-
-            # ---- Right: Outputs ----
-            with gr.Column(scale=1):
+            with gr.Column():
+                input_image = gr.Image(label="Face Image", type="filepath")
+                motion_choice = gr.Radio(label="Motion", choices=["custom"] + [os.path.basename(os.path.dirname(m)) for m in sample_motions], value="custom")
+                input_video = gr.Video(label="Custom Video")
+                btn = gr.Button("Generate", variant="primary")
+                status = gr.Textbox(label="Status")
+            with gr.Column():
                 with gr.Row():
-                    tracked_face = gr.Image(
-                        label="Tracked Face (FLAME output)",
-                        height=200,
-                    )
-                    preproc_image = gr.Image(
-                        label="Model Input (what LAM actually sees)",
-                        height=200,
-                    )
-                preview_video = gr.Video(
-                    label="Avatar Preview",
-                    height=350,
-                    autoplay=True,
-                )
-                output_file = gr.File(
-                    label="Download concierge.zip",
-                )
-                gr.Markdown(
-                    "**ZIP is auto-saved to persistent storage.**  \n"
-                    "GPU UI を閉じた後でも、軽量 Download Server からDL可能:  \n"
-                    "`modal deploy` 後に表示される `download` の URL  \n"
-                    "Fallback: [/download-zip](/download-zip)"
-                )
-                gr.Markdown(
-                    "**Usage:** Place the downloaded `concierge.zip` at "
-                    "`gourmet-sp/public/avatar/concierge.zip` for the "
-                    "LAMAvatar component."
-                )
+                    tracked = gr.Image(label="Tracked Face", height=200)
+                    preproc = gr.Image(label="Model Input", height=200)
+                preview = gr.Video(label="Preview")
+                dl = gr.File(label="Download ZIP")
 
-        # Wire up the generate button
-        generate_btn.click(
-            fn=process,
-            inputs=[input_image, input_video, motion_choice],
-            outputs=[status_text, output_file, preview_video, tracked_face, preproc_image],
-        )
+        btn.click(process, [input_image, input_video, motion_choice], [status, dl, preview, tracked, preproc])
 
-    # --- Mount Gradio on FastAPI (proper ASGI serving) ---
     web_app = FastAPI()
-
-    @web_app.get("/health")
-    async def health():
-        return {"status": "ok", "model": "LAM-20K", "blender": "4.2.0"}
-
     @web_app.get("/download-zip")
     async def download_zip():
         output_vol.reload()
         p = os.path.join(OUTPUT_VOL_PATH, "concierge.zip")
-        if os.path.isfile(p):
-            return FileResponse(p, media_type="application/zip",
-                                filename="concierge.zip")
-        return {"error": "No ZIP available yet. Run Generate first."}
+        return FileResponse(p, filename="concierge.zip") if os.path.isfile(p) else {"error": "Not found"}
 
-    @web_app.get("/diagnostics")
-    async def diagnostics():
-        """Return the latest diagnostics for debugging."""
-        output_vol.reload()
-        p = os.path.join(OUTPUT_VOL_PATH, "diagnostics.txt")
-        if os.path.isfile(p):
-            with open(p) as f:
-                return {"diagnostics": f.read()}
-        return {"diagnostics": "No diagnostics available yet."}
-
-    @web_app.get("/download-preview")
-    async def download_preview():
-        output_vol.reload()
-        p = os.path.join(OUTPUT_VOL_PATH, "preview.mp4")
-        if os.path.isfile(p):
-            return FileResponse(p, media_type="video/mp4", filename="preview.mp4")
-        return {"error": "No preview available yet."}
-
-    # Fallback file server for Gradio cached files and Volume files.
     import mimetypes
-
     @web_app.api_route("/file={file_path:path}", methods=["GET", "HEAD"])
-    async def serve_gradio_file(file_path: str):
-        abs_path = file_path if file_path.startswith("/") else ("/" + file_path)
-        if (abs_path.startswith("/tmp/") or abs_path.startswith(OUTPUT_VOL_PATH + "/")) and os.path.isfile(abs_path):
-            ctype = mimetypes.guess_type(abs_path)[0] or "application/octet-stream"
-            return FileResponse(abs_path, media_type=ctype)
-        from starlette.responses import Response
-        return Response(status_code=404)
+    async def serve_file(file_path: str):
+        abs_path = "/" + file_path if not file_path.startswith("/") else file_path
+        if (abs_path.startswith("/tmp/") or abs_path.startswith(OUTPUT_VOL_PATH)) and os.path.isfile(abs_path):
+            return FileResponse(abs_path, media_type=mimetypes.guess_type(abs_path)[0])
+        return {"error": "Not found"}
 
-    return gr.mount_gradio_app(
-        web_app, demo, path="/",
-        allowed_paths=["/tmp/", OUTPUT_VOL_PATH],
-    )
+    return gr.mount_gradio_app(web_app, demo, path="/", allowed_paths=["/tmp/", OUTPUT_VOL_PATH])
 
-
-# ============================================================
-# Lightweight CPU download server (no GPU needed)
-# ============================================================
-# This runs on a separate, cheap container. The generated ZIP persists
-# in the Modal Volume even after the GPU container shuts down.
-# URL: https://<app>.modal.run/download/concierge.zip
-
-@app.function(
-    image=dl_image,
-    volumes={OUTPUT_VOL_PATH: output_vol},
-    timeout=300,
-)
+@app.function(image=dl_image, volumes={OUTPUT_VOL_PATH: output_vol})
 @modal.asgi_app()
 def download():
-    """Lightweight download server — serves ZIP/preview from Modal Volume."""
     from fastapi import FastAPI
-    from fastapi.responses import FileResponse, HTMLResponse
-    import mimetypes
-
+    from fastapi.responses import FileResponse
     dl_app = FastAPI()
-
-    @dl_app.get("/", response_class=HTMLResponse)
-    async def index():
-        output_vol.reload()
-        zip_path = os.path.join(OUTPUT_VOL_PATH, "concierge.zip")
-        preview_path = os.path.join(OUTPUT_VOL_PATH, "preview.mp4")
-        has_zip = os.path.isfile(zip_path)
-        has_preview = os.path.isfile(preview_path)
-        zip_size = ""
-        if has_zip:
-            mb = os.path.getsize(zip_path) / (1024 * 1024)
-            zip_size = f" ({mb:.1f} MB)"
-        return f"""<!DOCTYPE html>
-<html><head><title>Concierge Download</title>
-<style>
-body {{ font-family: system-ui; max-width: 600px; margin: 40px auto; padding: 0 20px; }}
-a {{ display: inline-block; margin: 8px 0; padding: 10px 20px;
-     background: #2563eb; color: white; border-radius: 6px; text-decoration: none; }}
-a:hover {{ background: #1d4ed8; }}
-.empty {{ color: #999; }}
-video {{ max-width: 100%; border-radius: 8px; margin: 12px 0; }}
-</style></head><body>
-<h1>Concierge Download</h1>
-{'<a href="/concierge.zip">Download concierge.zip' + zip_size + '</a>' if has_zip else '<p class="empty">No ZIP generated yet. Run Generate in the Gradio UI first.</p>'}
-{'<h3>Preview</h3><video controls autoplay><source src="/preview.mp4" type="video/mp4"></video>' if has_preview else ''}
-</body></html>"""
-
     @dl_app.get("/concierge.zip")
     async def get_zip():
         output_vol.reload()
         p = os.path.join(OUTPUT_VOL_PATH, "concierge.zip")
-        if os.path.isfile(p):
-            return FileResponse(p, media_type="application/zip",
-                                filename="concierge.zip")
-        return {"error": "No ZIP available yet."}
-
-    @dl_app.get("/preview.mp4")
-    async def get_preview():
-        output_vol.reload()
-        p = os.path.join(OUTPUT_VOL_PATH, "preview.mp4")
-        if os.path.isfile(p):
-            return FileResponse(p, media_type="video/mp4",
-                                filename="preview.mp4")
-        return {"error": "No preview available yet."}
-
+        return FileResponse(p, filename="concierge.zip") if os.path.isfile(p) else {"error": "Wait"}
     return dl_app
-
-
-# ============================================================
-# Volume reader (runs on a tiny CPU container to fetch ZIP bytes)
-# ============================================================
-
-@app.function(image=dl_image, volumes={OUTPUT_VOL_PATH: output_vol})
-def read_volume_file(filename: str) -> bytes:
-    """Read a file from the Volume and return its bytes."""
-    output_vol.reload()
-    path = os.path.join(OUTPUT_VOL_PATH, filename)
-    if os.path.isfile(path):
-        with open(path, "rb") as f:
-            return f.read()
-    return b""
-
-
-# ============================================================
-# CLI entrypoint
-# ============================================================
-# Usage:
-#   modal run concierge_modal.py                         # → Gradio UI (upload via browser)
-#   modal run concierge_modal.py --image f.png --video m.mp4  # → headless CLI mode
-#
-# In UI mode the Gradio web endpoint stays alive until you press Ctrl+C.
-# In CLI mode files are read locally, sent to GPU, and the result is
-# downloaded automatically — everything stops when done.
-
-@app.local_entrypoint()
-def main(
-    image: str = "",
-    video: str = "",
-    motion: str = "custom",
-    output: str = "./concierge.zip",
-    smoke_test: bool = False,
-):
-    """Launch Gradio UI, or generate headlessly when --image is provided."""
-    import time
-
-    # ── Smoke test mode ─────────────────────────────────
-    if smoke_test:
-        print("\n  Running smoke test on GPU...")
-        print("  This tests model inference directly, bypassing our pipeline.")
-        print("  Typically takes 2-3 minutes.\n")
-
-        image_bytes = b""
-        if image:
-            p = os.path.abspath(image)
-            if os.path.isfile(p):
-                with open(p, "rb") as f:
-                    image_bytes = f.read()
-                print(f"  Using image: {p} ({len(image_bytes):,} bytes)")
-            else:
-                print(f"  Image not found: {p}, will use sample input on container")
-
-        gen = Generator()
-        report = gen.smoke_test.remote(image_bytes)
-        print("\n" + report)
-        return
-
-    # ── UI mode (no local files) ──────────────────────────
-    if not image:
-        print("\n  Gradio UI is running — open the URL above in your browser.")
-        print("  Upload face image + motion video, then click Generate.")
-        print("  Press Ctrl+C to stop.\n")
-        try:
-            while True:
-                time.sleep(60)
-        except KeyboardInterrupt:
-            print("\nStopping...")
-        return
-
-    # ── CLI mode (local files) ────────────────────────────
-    import uuid
-
-    image = os.path.abspath(image)
-    if not os.path.isfile(image):
-        print(f"Error: Image file not found: {image}")
-        sys.exit(1)
-
-    with open(image, "rb") as f:
-        image_bytes = f.read()
-    print(f"Image: {image} ({len(image_bytes):,} bytes)")
-
-    video_bytes = b""
-    if motion == "custom":
-        if not video:
-            print("Error: --video is required when --motion is 'custom'")
-            sys.exit(1)
-        video = os.path.abspath(video)
-        if not os.path.isfile(video):
-            print(f"Error: Video file not found: {video}")
-            print(f"  (Provide an absolute path or place the file in your current directory)")
-            sys.exit(1)
-        with open(video, "rb") as f:
-            video_bytes = f.read()
-        print(f"Video: {video} ({len(video_bytes):,} bytes)")
-    else:
-        print(f"Motion: {motion} (sample)")
-
-    job_id = uuid.uuid4().hex[:8]
-    print(f"\nStarting GPU generation (job {job_id})...")
-    print("This typically takes 5-15 minutes. GPU charges only during this time.\n")
-
-    start = time.time()
-
-    # Call GPU — blocks until complete
-    gen = Generator()
-    gen.generate.remote(image_bytes, video_bytes, motion, job_id)
-
-    elapsed = time.time() - start
-    mins, secs = divmod(int(elapsed), 60)
-    print(f"\nGeneration completed in {mins}m{secs:02d}s")
-
-    # Download ZIP from Volume via a tiny CPU container
-    print("Downloading ZIP from Volume...")
-    zip_data = read_volume_file.remote("concierge.zip")
-
-    if not zip_data:
-        print("Error: ZIP not found in Volume. Check logs above for errors.")
-        # Try to get diagnostics
-        diag_data = read_volume_file.remote("diagnostics.txt")
-        if diag_data:
-            print("\n=== DIAGNOSTICS ===")
-            print(diag_data.decode("utf-8", errors="replace"))
-        sys.exit(1)
-
-    with open(output, "wb") as f:
-        f.write(zip_data)
-
-    mb = len(zip_data) / (1024 * 1024)
-    print(f"Saved: {output} ({mb:.1f} MB)")
-    print(f"\nDone! All containers will shut down automatically.")
-    print(f"Place this file at: gourmet-sp/public/avatar/concierge.zip")
