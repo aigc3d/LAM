@@ -575,73 +575,30 @@ class TestBugRegression:
 # 7. Cache / Stale Data Prevention Tests
 # ============================================================
 class TestCachePrevention:
-    """Ensure stale data is cleaned before each generation run."""
+    """Ensure stale data is cleaned before each generation run.
+
+    Single-container architecture: cleanup happens in process() inside web().
+    """
 
     @pytest.fixture
     def modal_source(self):
         return CONCIERGE_MODAL_PY.read_text()
 
-    def _extract_function_body(self, source, func_name):
-        """Extract the body of a function from source code."""
-        lines = source.split("\n")
-        fn_start = None
-        indent_level = None
-        for i, line in enumerate(lines):
-            if func_name in line and ("def " in line or "def\t" in line):
-                fn_start = i
-                indent_level = len(line) - len(line.lstrip())
-                continue
-            if fn_start is not None and i > fn_start:
-                if line.strip() and not line[0].isspace() and ":" in line:
-                    return "\n".join(lines[fn_start:i])
-                # Check for same-level or lower-level def/class
-                if line.strip().startswith(("def ", "class ")):
-                    current_indent = len(line) - len(line.lstrip())
-                    if current_indent <= indent_level:
-                        return "\n".join(lines[fn_start:i])
-        return "\n".join(lines[fn_start:]) if fn_start else ""
-
-    def test_volume_cleaned_before_generation_in_generator(self, modal_source):
-        """Generator.generate() must clean stale volume files before starting."""
-        gen_body = self._extract_function_body(modal_source, "def generate")
-        for stale_file in ["concierge.zip", "preview.mp4", "tracked_face.png", "preproc_input.png"]:
-            assert stale_file in gen_body, (
-                f"Generator.generate() should reference '{stale_file}' for cleanup"
-            )
-        assert "os.remove" in gen_body or "shutil.rmtree" in gen_body, (
-            "Generator.generate() must remove stale files"
-        )
-
-    def test_volume_cleaned_before_generation_in_web_ui(self, modal_source):
-        """Web UI process() must clean stale volume files before launching GPU job."""
-        # Find the process function inside web()
-        web_body = self._extract_function_body(modal_source, "def web")
-        # Look for cache cleanup in process()
-        assert "CACHE FIX" in web_body or "stale" in web_body.lower() or (
-            "os.remove" in web_body and "concierge.zip" in web_body
-        ), (
-            "Web UI process() should clean stale volume files before starting GPU job"
-        )
-
     def test_flame_tracking_fully_cleaned(self, modal_source):
         """FLAME tracking output must be FULLY cleaned (rmtree), not partially."""
-        gen_body = self._extract_function_body(modal_source, "def _generate_concierge_zip")
-        # Should use shutil.rmtree on the entire tracking directory
-        assert "shutil.rmtree(tracking_root)" in gen_body or \
-               "shutil.rmtree(tracking_root," in gen_body, (
-            "_generate_concierge_zip must rmtree the entire output/tracking/ directory. "
+        assert "shutil.rmtree(tracking_root)" in modal_source or \
+               "shutil.rmtree(tracking_root," in modal_source, (
+            "process() must rmtree the entire output/tracking/ directory. "
             "Partial cleanup (only subdirs) misses internal state files."
         )
 
     def test_generate_glb_temp_files_cleaned(self, modal_source):
         """Stale generate_glb temp files must be cleaned before pipeline runs."""
-        # Check that temp_ascii.fbx and temp_bin.fbx cleanup exists
         assert "temp_ascii.fbx" in modal_source and "temp_bin.fbx" in modal_source, (
             "Pipeline must reference generate_glb temp files for cleanup"
         )
         # Verify cleanup happens BEFORE generate_glb() call
-        gen_body = self._extract_function_body(modal_source, "def _generate_concierge_zip")
-        lines = gen_body.split("\n")
+        lines = modal_source.split("\n")
         cleanup_line = None
         generate_glb_line = None
         for i, line in enumerate(lines):
@@ -654,75 +611,35 @@ class TestCachePrevention:
                 "Temp file cleanup must happen BEFORE generate_glb() call"
             )
 
-    def test_stale_status_files_cleaned(self, modal_source):
-        """Leftover status_*.json files from previous jobs must be cleaned."""
-        gen_body = self._extract_function_body(modal_source, "def generate")
-        assert "status_" in gen_body and ".json" in gen_body, (
-            "Generator.generate() should clean stale status files"
+    def test_uses_temp_working_dir(self, modal_source):
+        """Each run must use a unique temp directory to avoid collisions."""
+        assert "tempfile.mkdtemp" in modal_source or "TemporaryDirectory" in modal_source, (
+            "process() must use a unique temp directory for each run"
         )
 
-    def test_no_fixed_filename_collision_risk(self, modal_source):
-        """Output files use fixed names — verify cleanup prevents stale serving."""
-        # The output always goes to concierge.zip (fixed name)
-        # Cleanup must happen both in Generator.generate() AND web UI process()
-        gen_body = self._extract_function_body(modal_source, "def generate")
-        web_body = self._extract_function_body(modal_source, "def web")
-        # Both should clean concierge.zip
-        gen_cleans = "concierge.zip" in gen_body and ("remove" in gen_body or "rmtree" in gen_body)
-        web_cleans = "concierge.zip" in web_body and ("remove" in web_body or "rmtree" in web_body)
-        assert gen_cleans and web_cleans, (
-            "Both Generator.generate() and web UI must clean stale concierge.zip. "
-            "Double-cleanup prevents race: UI cleans volume, GPU cleans again before work."
+    def test_stale_cleanup_in_process(self, modal_source):
+        """process() must clean stale tracking data and temp files."""
+        # In the single-container architecture, process() handles cleanup directly
+        assert "stale" in modal_source.lower() or (
+            "tracking_root" in modal_source and "shutil.rmtree" in modal_source
+        ), (
+            "process() should clean stale FLAME tracking data before each run"
         )
 
 
 # ============================================================
-# 8. GPU Error Handling & Timeout Tests
+# 8. Container Configuration & Error Handling Tests
 # ============================================================
-class TestGPUErrorHandling:
-    """Ensure GPU errors propagate to the UI instead of silent timeout."""
+class TestContainerConfig:
+    """Ensure GPU container is correctly configured and errors propagate to UI."""
 
     @pytest.fixture
     def modal_source(self):
         return CONCIERGE_MODAL_PY.read_text()
 
-    def test_call_gpu_writes_error_to_volume(self, modal_source):
-        """_call_gpu() must write error status to volume on failure, not just print."""
-        # Find the _call_gpu function inside web()
-        assert 'gpu_error["error"]' in modal_source or "gpu_error[" in modal_source, (
-            "_call_gpu() must propagate error to shared state, not just print()"
-        )
-        # Must also write status file for volume-based detection
-        # Look for json.dump in _call_gpu context
-        lines = modal_source.split("\n")
-        in_call_gpu = False
-        writes_status = False
-        for line in lines:
-            if "def _call_gpu" in line:
-                in_call_gpu = True
-            if in_call_gpu and "json.dump" in line and "error" in line:
-                writes_status = True
-            if in_call_gpu and line.strip() and not line[0].isspace() and "def " in line and "_call_gpu" not in line:
-                break
-        assert writes_status, (
-            "_call_gpu() must write error status to volume on failure"
-        )
-
-    def test_ui_detects_dead_gpu_thread(self, modal_source):
-        """UI polling loop must detect when GPU thread dies without writing status."""
-        assert 'gpu_error["done"]' in modal_source or "gpu_error.get(" in modal_source, (
-            "UI must check shared gpu_error state to detect dead GPU thread"
-        )
-        assert "GPU job finished without writing results" in modal_source or \
-               "GPU process terminated unexpectedly" in modal_source or \
-               "gpu_error" in modal_source, (
-            "UI must report meaningful error when GPU thread dies silently"
-        )
-
     def test_gpu_timeout_is_sufficient(self, modal_source):
         """GPU container timeout must be >= 1200s for full pipeline."""
         import re
-        # Match the @app.cls line with gpu= (the GPU Generator class)
         match = re.search(r'@app\.cls\(.*gpu=.*timeout=(\d+)', modal_source)
         assert match, "GPU class @app.cls must have timeout= parameter"
         timeout_val = int(match.group(1))
@@ -730,25 +647,6 @@ class TestGPUErrorHandling:
             f"GPU timeout={timeout_val}s is too short. Full pipeline (FLAME tracking + "
             f"LAM inference + GLB generation) typically takes 10-25 minutes. "
             f"Must be >= 1200s (20 min)."
-        )
-
-    def test_generate_has_finally_status_guard(self, modal_source):
-        """Generator.generate() must write status file in finally block as last resort."""
-        lines = modal_source.split("\n")
-        in_generate = False
-        has_finally_guard = False
-        for i, line in enumerate(lines):
-            if "def generate(self" in line:
-                in_generate = True
-            if in_generate and "finally:" in line:
-                # Check next ~10 lines for status file write
-                for j in range(i+1, min(i+15, len(lines))):
-                    if "status_written" in lines[j] or "status_file" in lines[j]:
-                        has_finally_guard = True
-                        break
-        assert has_finally_guard, (
-            "Generator.generate() must have a finally block that writes status file "
-            "as a last resort (handles cases where except block also fails)"
         )
 
     def test_scaledown_window_reasonable(self, modal_source):
@@ -762,93 +660,99 @@ class TestGPUErrorHandling:
             f"Use >= 30s to reuse warm containers for rapid iteration."
         )
 
-    def test_gpu_writes_progress_heartbeat(self, modal_source):
-        """GPU generate() must write progress heartbeats to volume."""
-        assert "progress_" in modal_source and "_write_progress" in modal_source, (
-            "GPU generate() must call _write_progress() to write heartbeat files"
+    def test_process_has_try_except(self, modal_source):
+        """process() must have try/except to catch and display pipeline errors."""
+        assert "except Exception as e" in modal_source, (
+            "process() must catch exceptions to display errors in Gradio UI"
         )
-        # Must write progress at start AND during pipeline steps
+        assert "traceback.format_exc" in modal_source, (
+            "process() must format traceback for debugging pipeline errors"
+        )
+
+    def test_errors_yielded_to_gradio(self, modal_source):
+        """Pipeline errors must be yielded back to Gradio status output."""
+        # The except block should yield an error message
         lines = modal_source.split("\n")
-        in_generate = False
-        progress_calls = 0
+        in_except = False
+        yields_error = False
         for line in lines:
-            if "def generate(self" in line:
-                in_generate = True
-            if in_generate and "_write_progress(" in line and not line.strip().startswith("#"):
-                progress_calls += 1
-            if in_generate and line.strip().startswith("class "):
+            if "except Exception as e" in line:
+                in_except = True
+            if in_except and "yield" in line and "Error" in line:
+                yields_error = True
                 break
-        assert progress_calls >= 2, (
-            f"GPU generate() calls _write_progress() only {progress_calls} time(s). "
-            f"Must call at start AND during each pipeline step for reliable heartbeat."
+        assert yields_error, (
+            "process() except block must yield error message back to Gradio UI"
         )
 
-    def test_ui_reads_progress_heartbeat(self, modal_source):
-        """UI polling must read GPU progress heartbeat to detect liveness."""
-        assert "progress_file" in modal_source or "progress_" in modal_source, (
-            "UI must reference progress file for GPU heartbeat"
+    def test_single_container_architecture(self, modal_source):
+        """Architecture must be single-container: @modal.enter + @modal.asgi_app."""
+        assert "@modal.enter()" in modal_source, (
+            "Must use @modal.enter() for one-time GPU model initialization"
         )
-        assert "last_activity" in modal_source, (
-            "UI must track last_activity timestamp from GPU heartbeat"
-        )
-
-    def test_ui_has_idle_timeout(self, modal_source):
-        """UI must have idle timeout (no heartbeat) separate from absolute timeout."""
-        assert "IDLE_TIMEOUT" in modal_source or "idle" in modal_source.lower(), (
-            "UI must have idle timeout to detect GPU death between heartbeats"
-        )
-        assert "MAX_TIMEOUT" in modal_source or "max_timeout" in modal_source.lower() or "3600" in modal_source, (
-            "UI must have absolute max timeout that accounts for provisioning+setup+pipeline"
+        assert "@modal.asgi_app()" in modal_source, (
+            "Must use @modal.asgi_app() to serve Gradio from same GPU container"
         )
 
-    def test_ui_shows_provisioning_status(self, modal_source):
-        """UI must show 'provisioning/startup' when no GPU heartbeat yet."""
-        assert "provisioning" in modal_source.lower() or "startup" in modal_source.lower(), (
-            "UI must distinguish 'waiting for GPU provisioning' from 'GPU is processing'"
+    def test_no_volume_or_polling(self, modal_source):
+        """Single-container architecture must not use Volume polling or threading."""
+        assert "modal.Volume" not in modal_source, (
+            "Single-container architecture should not use modal.Volume"
+        )
+        assert "output_vol" not in modal_source, (
+            "Single-container architecture should not reference output_vol"
+        )
+        # No polling loop
+        assert "while True" not in modal_source or "cap.read" in modal_source, (
+            "No polling loop should exist (while True is only OK for video frame reading)"
         )
 
 
 # ============================================================
-# 9. Video Tracking Heartbeat Tests
+# 9. Video Tracking Tests
 # ============================================================
-class TestVideoTrackingHeartbeat:
-    """Ensure long-running video tracking sends heartbeats to prevent idle timeout."""
+class TestVideoTracking:
+    """Ensure video tracking pipeline is properly implemented."""
 
     @pytest.fixture
     def modal_source(self):
         return CONCIERGE_MODAL_PY.read_text()
 
-    def test_track_video_receives_status_callback(self, modal_source):
-        """_track_video_to_motion must be called with status_callback connected."""
-        assert "status_callback=_video_progress" in modal_source, (
-            "_track_video_to_motion must be called with status_callback= "
-            "to forward heartbeats during video tracking"
+    def test_track_video_function_exists(self, modal_source):
+        """_track_video_to_motion function must exist for custom video support."""
+        assert "def _track_video_to_motion" in modal_source, (
+            "_track_video_to_motion function is required for custom motion video"
         )
 
-    def test_progress_callback_passed_to_pipeline(self, modal_source):
-        """_generate_concierge_zip must accept and use progress_callback."""
-        assert "progress_callback=_write_progress" in modal_source, (
-            "_generate_concierge_zip must be called with progress_callback= "
-            "connected to _write_progress for volume heartbeat"
-        )
-
-    def test_vhap_optimize_has_heartbeat(self, modal_source):
-        """VHAP tracker.optimize() must have periodic heartbeat (it runs 5-15 min)."""
-        # Look for heartbeat thread around optimize()
-        assert "_heartbeat_loop" in modal_source or "optimize_done" in modal_source.lower() or "_optimize_done" in modal_source, (
-            "VHAP optimize() blocks for 5-15 minutes and MUST have a "
-            "background heartbeat thread to prevent idle timeout"
+    def test_track_video_accepts_status_callback(self, modal_source):
+        """_track_video_to_motion must accept optional status_callback."""
+        assert "status_callback" in modal_source, (
+            "_track_video_to_motion should accept status_callback parameter"
         )
 
     def test_frame_extraction_has_periodic_report(self, modal_source):
         """Frame extraction loop must report progress periodically."""
-        # Find the frame extraction loop
         assert "Extracting frames..." in modal_source or "frames" in modal_source.lower(), (
             "Frame extraction loop should report progress periodically"
         )
         # Check for modulo-based reporting
         assert "% 30" in modal_source or "% 20" in modal_source or "% 50" in modal_source, (
             "Frame extraction should report every N frames"
+        )
+
+    def test_vhap_tracking_integrated(self, modal_source):
+        """VHAP GlobalTracker must be used for video motion extraction."""
+        assert "GlobalTracker" in modal_source, (
+            "VHAP GlobalTracker must be used for video-to-motion tracking"
+        )
+        assert "tracker.optimize()" in modal_source, (
+            "tracker.optimize() must be called for VHAP tracking"
+        )
+
+    def test_video_cuda_cleanup(self, modal_source):
+        """CUDA memory must be freed after video tracking."""
+        assert "torch.cuda.empty_cache()" in modal_source, (
+            "Must call torch.cuda.empty_cache() after video tracking to free GPU memory"
         )
 
 

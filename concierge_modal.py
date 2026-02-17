@@ -1,15 +1,12 @@
 """
-concierge_modal.py - Concierge ZIP Generator on Modal (FINAL FIXED VERSION v2)
+concierge_modal.py - Concierge ZIP Generator on Modal
 =====================================================
-
-Updates:
-1. Fixed "FileNotFoundError" in Gradio UI by handling file uploads correctly.
-2. Kept all quality fixes (Official Blender script, Xformers, Weight loading).
-3. Cost optimization settings applied (timeout=1800 for GPU, scaledown_window=60).
+Architecture: Single GPU container serves Gradio UI + pipeline directly.
+Same as app_lam.py — no volume polling, no threading, no heartbeat.
 
 Usage:
-  modal run concierge_modal.py                              # Gradio UI
-  modal deploy concierge_modal.py                           # Production
+  modal serve concierge_modal.py    # Dev
+  modal deploy concierge_modal.py   # Production
 """
 
 import os
@@ -17,10 +14,6 @@ import sys
 import modal
 
 app = modal.App("concierge-zip-generator")
-
-# Persistent storage for generated ZIPs
-output_vol = modal.Volume.from_name("concierge-output", create_if_missing=True)
-OUTPUT_VOL_PATH = "/vol/output"
 
 # Detect which local directories contain model files.
 _has_model_zoo = os.path.isdir("./model_zoo")
@@ -240,19 +233,9 @@ if _has_assets:
 if os.path.isdir("./tools"):
     image = image.add_local_dir("./tools", remote_path="/root/LAM/tools")
 
-dl_image = modal.Image.debian_slim(python_version="3.10").pip_install("fastapi")
-ui_image = modal.Image.debian_slim(python_version="3.10").pip_install(
-    "gradio>=4.0", "fastapi", "uvicorn",
-)
-if os.path.isdir("./model_zoo/sample_motion"):
-    ui_image = ui_image.add_local_dir(
-        "./model_zoo/sample_motion",
-        remote_path="/root/LAM/model_zoo/sample_motion",
-    )
-
 
 # ============================================================
-# Pipeline Functions
+# Pipeline Functions (same logic as app_lam.py)
 # ============================================================
 
 def _setup_model_paths():
@@ -317,13 +300,12 @@ def _init_lam_pipeline():
 
     ckpt_path = os.path.join(cfg.model_name, "model.safetensors")
     print(f"Loading checkpoint: {ckpt_path}")
-    
-    # --- WEIGHT LOADING FIX ---
+
+    # --- WEIGHT LOADING FIX (same as app_lam.py _build_model) ---
     ckpt = _load_safetensors(ckpt_path, device="cpu")
     state_dict = lam.state_dict()
     loaded_count = 0
-    skipped_count = 0
-    
+
     for k, v in ckpt.items():
         if k in state_dict:
             if state_dict[k].shape == v.shape:
@@ -331,13 +313,10 @@ def _init_lam_pipeline():
                 loaded_count += 1
             else:
                 print(f"[WARN] mismatching shape for param {k}: ckpt {v.shape} != model {state_dict[k].shape}, ignored.")
-                skipped_count += 1
-        else:
-            pass
 
     print(f"Finish loading pretrained weight. Loaded {loaded_count} keys.")
     print("="*100)
-    
+
     lam.to("cuda")
     lam.eval()
 
@@ -383,7 +362,7 @@ def _track_video_to_motion(video_path, flametracking, working_dir, status_callba
 
     cap = cv2.VideoCapture(video_path)
     video_fps = cap.get(cv2.CAP_PROP_FPS)
-    
+
     target_fps = min(30, video_fps) if video_fps > 0 else 30
     frame_interval = max(1, int(round(video_fps / target_fps)))
     max_frames = 300
@@ -460,7 +439,6 @@ def _track_video_to_motion(video_path, flametracking, working_dir, status_callba
         processed_count += 1
         frame_idx += 1
 
-        # Periodic heartbeat during frame extraction
         if processed_count % 30 == 0:
             report(f"  Extracting frames... ({processed_count} done)")
 
@@ -513,39 +491,7 @@ def _track_video_to_motion(video_path, flametracking, working_dir, status_callba
     )
 
     tracker = GlobalTracker(vhap_cfg)
-
-    # VHAP optimize() blocks for 5-15 minutes — send periodic heartbeats
-    import threading as _th
-    _optimize_done = _th.Event()
-    _optimize_error = [None]
-
-    def _heartbeat_loop():
-        """Send heartbeat every 60s while optimize() runs."""
-        import time as _t
-        tick = 0
-        while not _optimize_done.wait(timeout=60):
-            tick += 1
-            report(f"  VHAP tracking in progress... ({tick}m)")
-
-    def _run_optimize():
-        try:
-            tracker.optimize()
-        except Exception as exc:
-            _optimize_error[0] = exc
-        finally:
-            _optimize_done.set()
-
-    hb_thread = _th.Thread(target=_heartbeat_loop, daemon=True)
-    opt_thread = _th.Thread(target=_run_optimize, daemon=True)
-    hb_thread.start()
-    opt_thread.start()
-    opt_thread.join()  # Wait for optimize to finish
-    _optimize_done.set()  # Ensure heartbeat thread stops
-    hb_thread.join(timeout=5)
-
-    if _optimize_error[0] is not None:
-        raise _optimize_error[0]
-
+    tracker.optimize()
     torch.cuda.empty_cache()
 
     report("  Exporting motion sequence...")
@@ -563,561 +509,275 @@ def _track_video_to_motion(video_path, flametracking, working_dir, status_callba
     return os.path.join(export_dir, "flame_param")
 
 
-def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking, motion_name=None, progress_callback=None):
-    """Full pipeline: image + video -> concierge.zip"""
-    import torch
-    import numpy as np
-    import subprocess
-    import zipfile
-    import shutil
-    import tempfile
-    import json
-    from pathlib import Path
-    from PIL import Image
-    from glob import glob
-    from lam.runners.infer.head_utils import prepare_motion_seqs, preprocess_image
-    
-    # --- MAJOR FIX: USE OFFICIAL TOOL INSTEAD OF INLINE SCRIPT ---
-    from tools.generateARKITGLBWithBlender import generate_glb
+# ============================================================
+# Single GPU Container: Gradio UI + Pipeline (like app_lam.py)
+# ============================================================
 
-    working_dir = tempfile.mkdtemp(prefix="concierge_")
-    base_iid = "concierge"
-    
-    try:
-        # Step 0: Clean ALL stale intermediate data
-        # FLAME tracking state (the entire directory, not just subdirs)
-        tracking_root = os.path.join(os.getcwd(), "output", "tracking")
-        if os.path.isdir(tracking_root):
-            shutil.rmtree(tracking_root)
-            print(f"[CACHE] Cleaned entire {tracking_root}")
-        os.makedirs(tracking_root, exist_ok=True)
+@app.cls(gpu="L4", image=image, timeout=7200, scaledown_window=300)
+class WebApp:
+    """Single container: Gradio + GPU pipeline. Same architecture as app_lam.py."""
 
-        # Stale generate_glb() temp files left by previous crash
-        for stale_temp in ["temp_ascii.fbx", "temp_bin.fbx"]:
-            stale_p = os.path.join(os.getcwd(), stale_temp)
-            if os.path.exists(stale_p):
-                os.remove(stale_p)
-                print(f"[CACHE] Cleaned stale {stale_temp}")
-
-        # Step 1: Source image FLAME tracking
-        yield "Step 1: FLAME tracking on source image...", None, None, None, None
-
-        image_raw = os.path.join(working_dir, "raw.png")
-        with Image.open(image_path).convert("RGB") as img:
-            img.save(image_raw)
-
-        ret = flametracking.preprocess(image_raw)
-        assert ret == 0, "FLAME preprocess failed"
-        ret = flametracking.optimize()
-        assert ret == 0, "FLAME optimize failed"
-        ret, output_dir = flametracking.export()
-        assert ret == 0, "FLAME export failed"
-
-        tracked_image = os.path.join(output_dir, "images/00000_00.png")
-        mask_path = os.path.join(output_dir, "fg_masks/00000_00.png")
-        yield f"Step 1 done: check tracked face -->", None, None, tracked_image, None
-
-        # Step 2: Motion sequence
-        if video_path and os.path.isfile(video_path):
-            total_steps = 6
-            yield f"Step 2/{total_steps}: Processing custom motion video...", None, None, None, None
-            def _video_progress(msg):
-                """Forward video tracking progress to heartbeat callback."""
-                full_msg = f"Step 2/{total_steps}: {msg}"
-                if progress_callback:
-                    progress_callback(full_msg)
-            flame_params_dir = _track_video_to_motion(video_path, flametracking, working_dir, status_callback=_video_progress)
-            motion_source = "custom video"
-        else:
-            total_steps = 5
-            sample_motions = glob("./model_zoo/sample_motion/export/*/flame_param")
-            if not sample_motions:
-                raise RuntimeError("No motion sequences available.")
-            flame_params_dir = sample_motions[0]
-            if motion_name:
-                for sp in sample_motions:
-                    if os.path.basename(os.path.dirname(sp)) == motion_name:
-                        flame_params_dir = sp
-                        break
-            motion_source = f"sample '{os.path.basename(os.path.dirname(flame_params_dir))}'"
-
-        yield f"Step 3/{total_steps}: Preparing LAM inference...", None, None, None, None
-
-        # Step 3: LAM inference
-        image_tensor, _, _, shape_param = preprocess_image(
-            tracked_image, mask_path=mask_path, intr=None, pad_ratio=0, bg_color=1.0, 
-            max_tgt_size=None, aspect_standard=1.0, enlarge_ratio=[1.0, 1.0],
-            render_tgt_size=cfg.source_size, multiply=14, need_mask=True, get_shape_param=True,
-        )
-
-        preproc_vis_path = os.path.join(working_dir, "preprocessed_input.png")
-        vis_img = (image_tensor[0].permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
-        Image.fromarray(vis_img).save(preproc_vis_path)
-
-        src_name = os.path.splitext(os.path.basename(image_path))[0]
-        driven_name = os.path.basename(os.path.dirname(flame_params_dir))
-        
-        motion_seq = prepare_motion_seqs(
-            flame_params_dir, None, save_root=working_dir, fps=30,
-            bg_color=1.0, aspect_standard=1.0, enlarge_ratio=[1.0, 1.0],
-            render_image_res=cfg.render_size, multiply=16,
-            need_mask=False, vis_motion=False, shape_param=shape_param, test_sample=False,
-            cross_id=False, src_driven=[src_name, driven_name],
-        )
-
-        yield f"Step 4/{total_steps}: Running LAM inference...", None, None, None, preproc_vis_path
-
-        motion_seq["flame_params"]["betas"] = shape_param.unsqueeze(0)
-        device = "cuda"
-        with torch.no_grad():
-            res = lam.infer_single_view(
-                image_tensor.unsqueeze(0).to(device, torch.float32),
-                None, None,
-                render_c2ws=motion_seq["render_c2ws"].to(device),
-                render_intrs=motion_seq["render_intrs"].to(device),
-                render_bg_colors=motion_seq["render_bg_colors"].to(device),
-                flame_params={k: v.to(device) for k, v in motion_seq["flame_params"].items()},
-            )
-
-        # Step 4: Generate GLB + ZIP
-        yield f"Step 5/{total_steps}: Generating 3D avatar (Blender GLB)...", None, None, None, preproc_vis_path
-
-        oac_dir = os.path.join(working_dir, "oac_export", base_iid)
-        os.makedirs(oac_dir, exist_ok=True)
-
-        saved_head_path = lam.renderer.flame_model.save_shaped_mesh(
-            shape_param.unsqueeze(0).cuda(), fd=oac_dir,
-        )
-
-        # --- USE OFFICIAL GLB EXPORT ---
-        # generate_glb() internally calls gen_vertex_order_with_blender()
-        # which produces the correct vertex_order.json via Blender.
-        # DO NOT overwrite vertex_order.json with naive sequential ordering
-        # (list(range(n))) — Blender reorders vertices on FBX import,
-        # so OBJ vertex order != GLB vertex order. Using wrong ordering
-        # causes the "bird monster" avatar bug.
-        generate_glb(
-            input_mesh=Path(saved_head_path),
-            template_fbx=Path("./model_zoo/sample_oac/template_file.fbx"),
-            output_glb=Path(os.path.join(oac_dir, "skin.glb")),
-            blender_exec=Path("/usr/local/bin/blender")
-        )
-
-        res["cano_gs_lst"][0].save_ply(
-            os.path.join(oac_dir, "offset.ply"), rgb2sh=False, offset2xyz=True,
-        )
-        shutil.copy(
-            src="./model_zoo/sample_oac/animation.glb",
-            dst=os.path.join(oac_dir, "animation.glb"),
-        )
-        if os.path.exists(saved_head_path):
-            os.remove(saved_head_path)
-
-        # Create ZIP
-        step_label = f"Step {total_steps}/{total_steps}"
-        yield f"{step_label}: Creating concierge.zip...", None, None, None, preproc_vis_path
-
-        output_zip = os.path.join(working_dir, "concierge.zip")
-        with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-            dir_info = zipfile.ZipInfo(os.path.basename(oac_dir) + "/")
-            zf.writestr(dir_info, "")
-            for root, _, files in os.walk(oac_dir):
-                for fname in files:
-                    fpath = os.path.join(root, fname)
-                    arcname = os.path.relpath(fpath, os.path.dirname(oac_dir))
-                    zf.write(fpath, arcname)
-
-        # Preview video
-        preview_path = os.path.join(working_dir, "preview.mp4")
-        rgb = res["comp_rgb"].detach().cpu().numpy()
-        mask = res["comp_mask"].detach().cpu().numpy()
-        mask[mask < 0.5] = 0.0
-        rgb = rgb * mask + (1 - mask) * 1
-        rgb = (np.clip(rgb, 0, 1.0) * 255).astype(np.uint8)
-        
-        from app_lam import save_images2video, add_audio_to_video
-        save_images2video(rgb, preview_path, 30)
-
-        # Re-encode for browser
-        preview_browser = os.path.join(working_dir, "preview_browser.mp4")
-        subprocess.run(["ffmpeg", "-y", "-i", preview_path, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "faststart", preview_browser])
-        if os.path.isfile(preview_browser) and os.path.getsize(preview_browser) > 0:
-            os.replace(preview_browser, preview_path)
-
-        final_preview = preview_path
-        if video_path and os.path.isfile(video_path):
-            try:
-                preview_with_audio = os.path.join(working_dir, "preview_audio.mp4")
-                add_audio_to_video(preview_path, preview_with_audio, video_path)
-                preview_audio_browser = os.path.join(working_dir, "preview_audio_browser.mp4")
-                subprocess.run(["ffmpeg", "-y", "-i", preview_with_audio, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "faststart", preview_audio_browser])
-                if os.path.isfile(preview_audio_browser) and os.path.getsize(preview_audio_browser) > 0:
-                    os.replace(preview_audio_browser, preview_with_audio)
-                final_preview = preview_with_audio
-            except Exception:
-                pass
-
-        # Save to volume
-        vol_dir = OUTPUT_VOL_PATH
-        os.makedirs(vol_dir, exist_ok=True)
-        shutil.copy2(output_zip, os.path.join(vol_dir, "concierge.zip"))
-        shutil.copy2(final_preview, os.path.join(vol_dir, "preview.mp4"))
-        output_vol.commit()
-
-        yield (
-            f"concierge.zip generated ({os.path.getsize(output_zip)/(1024*1024):.1f} MB)",
-            output_zip, final_preview, None, preproc_vis_path,
-        )
-
-    except Exception as e:
-        import traceback
-        tb = traceback.format_exc()
-        print(f"\n_generate_concierge_zip ERROR:\n{tb}", flush=True)
-        yield f"Error: {str(e)}\n\nTraceback:\n{tb}", None, None, None, None
-
-
-@app.cls(gpu="L4", image=image, volumes={OUTPUT_VOL_PATH: output_vol}, timeout=1800, scaledown_window=60)
-class Generator:
     @modal.enter()
     def setup(self):
-        import shutil
+        import torch.utils.cpp_extension as _cext
         os.chdir("/root/LAM")
         sys.path.insert(0, "/root/LAM")
-        import torch.utils.cpp_extension as _cext
+
         _orig_load = _cext.load
         def _patched_load(*args, **kwargs):
             cflags = list(kwargs.get("extra_cflags", []) or [])
-            if "-Wno-c++11-narrowing" not in cflags: cflags.append("-Wno-c++11-narrowing")
+            if "-Wno-c++11-narrowing" not in cflags:
+                cflags.append("-Wno-c++11-narrowing")
             kwargs["extra_cflags"] = cflags
             return _orig_load(*args, **kwargs)
         _cext.load = _patched_load
-        
+
         print("Initializing LAM pipeline on GPU...")
         self.cfg, self.lam, self.flametracking = _init_lam_pipeline()
         print("GPU pipeline ready.")
 
-    @modal.method()
-    def generate(self, image_bytes: bytes, video_bytes: bytes, motion_name: str, job_id: str):
+    @modal.asgi_app()
+    def web(self):
         import shutil
         import tempfile
-        import json
+        import zipfile
+        import subprocess
+        import numpy as np
+        import torch
+        import gradio as gr
+        from pathlib import Path
+        from PIL import Image
+        from glob import glob
+        from fastapi import FastAPI
+        from fastapi.responses import FileResponse
+        from lam.runners.infer.head_utils import prepare_motion_seqs, preprocess_image
+        from tools.generateARKITGLBWithBlender import generate_glb
+        from app_lam import save_images2video, add_audio_to_video
 
-        # === CACHE FIX 1: Clean ALL stale output from volume ===
-        vol_dir = OUTPUT_VOL_PATH
-        os.makedirs(vol_dir, exist_ok=True)
-        for stale_name in [
-            "concierge.zip", "preview.mp4",
-            "tracked_face.png", "preproc_input.png",
-        ]:
-            stale_path = os.path.join(vol_dir, stale_name)
-            if os.path.exists(stale_path):
-                os.remove(stale_path)
-                print(f"[CACHE] Removed stale {stale_name}")
-        # Also clean any leftover status files from previous jobs
-        for f in os.listdir(vol_dir):
-            if f.startswith("status_") and f.endswith(".json"):
-                os.remove(os.path.join(vol_dir, f))
-                print(f"[CACHE] Removed stale {f}")
-        output_vol.commit()
+        import gradio_client.utils as _gc_utils
+        _orig_jst = _gc_utils._json_schema_to_python_type
+        def _safe_jst(schema, defs=None):
+            return "Any" if isinstance(schema, bool) else _orig_jst(schema, defs)
+        _gc_utils._json_schema_to_python_type = _safe_jst
 
-        # === CACHE FIX 2: Clean stale generate_glb() temp files in CWD ===
-        for stale_temp in ["temp_ascii.fbx", "temp_bin.fbx"]:
-            stale_p = os.path.join(os.getcwd(), stale_temp)
-            if os.path.exists(stale_p):
-                os.remove(stale_p)
-                print(f"[CACHE] Removed stale {stale_temp}")
+        cfg = self.cfg
+        lam = self.lam
+        flametracking = self.flametracking
 
-        # === CACHE FIX 3: Clean FLAME tracking output directory ===
-        tracking_root = os.path.join(os.getcwd(), "output", "tracking")
-        if os.path.isdir(tracking_root):
-            shutil.rmtree(tracking_root)
-            print(f"[CACHE] Removed entire output/tracking/")
-            os.makedirs(tracking_root, exist_ok=True)
+        sample_motions = sorted(glob("./model_zoo/sample_motion/export/*/*.mp4"))
 
-        upload_dir = tempfile.mkdtemp(prefix="gpu_upload_")
-        image_path = os.path.join(upload_dir, "input.png")
-        with open(image_path, "wb") as f: f.write(image_bytes)
-
-        video_path = None
-        if video_bytes:
-            video_path = os.path.join(upload_dir, "input_video.mp4")
-            with open(video_path, "wb") as f: f.write(video_bytes)
-
-        effective_video = video_path if motion_name == "custom" else None
-        selected_motion = motion_name if motion_name != "custom" else None
-
-        status_file = os.path.join(vol_dir, f"status_{job_id}.json")
-        progress_file = os.path.join(vol_dir, f"progress_{job_id}.json")
-
-        def _write_progress(msg):
-            """Write progress heartbeat to volume so UI knows GPU is alive."""
-            import time as _time
-            try:
-                with open(progress_file, "w") as f:
-                    json.dump({"msg": msg, "ts": _time.time()}, f)
-                output_vol.commit()
-            except Exception:
-                pass
-
-        _write_progress("GPU generate() started, running pipeline...")
-
-        status_written = False
-        try:
-            final_msg = "Processing..."
-            for status, _, _, tracked_img, preproc_img in _generate_concierge_zip(
-                image_path, effective_video, self.cfg, self.lam, self.flametracking,
-                motion_name=selected_motion, progress_callback=_write_progress,
-            ):
-                final_msg = status
-                _write_progress(status)
-                if tracked_img and os.path.isfile(tracked_img):
-                    shutil.copy2(tracked_img, os.path.join(vol_dir, "tracked_face.png"))
-                    output_vol.commit()
-                if preproc_img and os.path.isfile(preproc_img):
-                    shutil.copy2(preproc_img, os.path.join(vol_dir, "preproc_input.png"))
-                    output_vol.commit()
-
-            with open(status_file, "w") as f: json.dump({"type": "done", "msg": final_msg}, f)
-            output_vol.commit()
-            status_written = True
-
-        except Exception as e:
-            import traceback
-            tb = traceback.format_exc()
-            print(f"[GPU ERROR] {tb}", flush=True)
-            try:
-                with open(status_file, "w") as f:
-                    json.dump({"type": "error", "msg": f"{e}\n\n{tb}"}, f)
-                output_vol.commit()
-                status_written = True
-            except Exception:
-                pass
-        finally:
-            # Last-resort: ensure status file exists even if above blocks failed
-            if not status_written:
-                try:
-                    with open(status_file, "w") as f:
-                        json.dump({"type": "error", "msg": "GPU process terminated unexpectedly (status not written)"}, f)
-                    output_vol.commit()
-                except Exception:
-                    pass
-            # Clean up progress file
-            try:
-                if os.path.exists(progress_file):
-                    os.remove(progress_file)
-                    output_vol.commit()
-            except Exception:
-                pass
-            shutil.rmtree(upload_dir, ignore_errors=True)
-
-
-@app.function(image=ui_image, timeout=7200, volumes={OUTPUT_VOL_PATH: output_vol})
-@modal.concurrent(max_inputs=100)
-@modal.asgi_app()
-def web():
-    import gradio as gr
-    from fastapi import FastAPI
-    from fastapi.responses import FileResponse
-    from glob import glob
-    import gradio_client.utils as _gc_utils
-    
-    _orig_jst = _gc_utils._json_schema_to_python_type
-    def _safe_jst(schema, defs=None): return "Any" if isinstance(schema, bool) else _orig_jst(schema, defs)
-    _gc_utils._json_schema_to_python_type = _safe_jst
-
-    lam_root = "/root/LAM"
-    if os.path.isdir(lam_root): os.chdir(lam_root)
-    sample_motions = sorted(glob(f"{lam_root}/model_zoo/sample_motion/export/*/*.mp4"))
-
-    def process(image_path, video_path, motion_choice):
-        import time, json, threading, uuid
-        
-        # --- FIX FOR FileNotFound ERROR ---
-        # The 'image_path' from Gradio is a temp path that might not be accessible or persistent.
-        # We read it immediately into bytes within this context.
-        if image_path is None:
-            yield "Error: Please upload a face image", None, None, None, None
-            return
-
-        try:
-            with open(image_path, "rb") as f: image_bytes = f.read()
-        except FileNotFoundError:
-            yield "Error: Image file lost during upload. Please try again.", None, None, None, None
-            return
-
-        video_bytes = b""
-        if motion_choice == "custom" and video_path:
-            try:
-                with open(video_path, "rb") as f: video_bytes = f.read()
-            except FileNotFoundError:
-                yield "Error: Video file lost during upload. Please try again.", None, None, None, None
+        def process(image_path, video_path, motion_choice):
+            """Direct pipeline execution — same as app_lam.py core_fn."""
+            if image_path is None:
+                yield "Error: Please upload a face image", None, None, None, None
                 return
 
-        job_id = uuid.uuid4().hex[:8]
-        status_file = os.path.join(OUTPUT_VOL_PATH, f"status_{job_id}.json")
-
-        # === CACHE FIX: Clear stale results from volume before starting ===
-        try:
-            for stale in ["concierge.zip", "preview.mp4", "tracked_face.png", "preproc_input.png"]:
-                p = os.path.join(OUTPUT_VOL_PATH, stale)
-                if os.path.exists(p):
-                    os.remove(p)
-            output_vol.commit()
-        except Exception:
-            pass
-
-        # Shared state between UI thread and GPU thread
-        gpu_error = {"error": None, "done": False}
-
-        def _call_gpu():
+            working_dir = tempfile.mkdtemp(prefix="concierge_")
             try:
-                gen = Generator()
-                gen.generate.remote(image_bytes, video_bytes, motion_choice or "custom", job_id)
+                # Clean stale FLAME tracking data
+                tracking_root = os.path.join(os.getcwd(), "output", "tracking")
+                if os.path.isdir(tracking_root):
+                    shutil.rmtree(tracking_root)
+                os.makedirs(tracking_root, exist_ok=True)
+
+                # Clean stale generate_glb() temp files
+                for stale in ["temp_ascii.fbx", "temp_bin.fbx"]:
+                    p = os.path.join(os.getcwd(), stale)
+                    if os.path.exists(p):
+                        os.remove(p)
+
+                # Step 1: FLAME tracking on source image
+                yield "Step 1: FLAME tracking on source image...", None, None, None, None
+
+                image_raw = os.path.join(working_dir, "raw.png")
+                with Image.open(image_path).convert("RGB") as img:
+                    img.save(image_raw)
+
+                ret = flametracking.preprocess(image_raw)
+                assert ret == 0, "FLAME preprocess failed"
+                ret = flametracking.optimize()
+                assert ret == 0, "FLAME optimize failed"
+                ret, output_dir = flametracking.export()
+                assert ret == 0, "FLAME export failed"
+
+                tracked_image = os.path.join(output_dir, "images/00000_00.png")
+                mask_path = os.path.join(output_dir, "fg_masks/00000_00.png")
+                yield "Step 1 done", None, None, tracked_image, None
+
+                # Step 2: Motion sequence
+                if motion_choice == "custom" and video_path and os.path.isfile(video_path):
+                    total_steps = 6
+                    yield f"Step 2/{total_steps}: Processing custom motion video...", None, None, None, None
+                    flame_params_dir = _track_video_to_motion(video_path, flametracking, working_dir)
+                else:
+                    total_steps = 5
+                    sample_dirs = glob("./model_zoo/sample_motion/export/*/flame_param")
+                    if not sample_dirs:
+                        raise RuntimeError("No motion sequences available.")
+                    flame_params_dir = sample_dirs[0]
+                    if motion_choice and motion_choice != "custom":
+                        for sp in sample_dirs:
+                            if os.path.basename(os.path.dirname(sp)) == motion_choice:
+                                flame_params_dir = sp
+                                break
+
+                # Step 3: Prepare LAM inference
+                yield f"Step 3/{total_steps}: Preparing LAM inference...", None, None, None, None
+
+                image_tensor, _, _, shape_param = preprocess_image(
+                    tracked_image, mask_path=mask_path, intr=None, pad_ratio=0, bg_color=1.0,
+                    max_tgt_size=None, aspect_standard=1.0, enlarge_ratio=[1.0, 1.0],
+                    render_tgt_size=cfg.source_size, multiply=14, need_mask=True, get_shape_param=True,
+                )
+
+                preproc_vis_path = os.path.join(working_dir, "preprocessed_input.png")
+                vis_img = (image_tensor[0].permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+                Image.fromarray(vis_img).save(preproc_vis_path)
+
+                src_name = os.path.splitext(os.path.basename(image_path))[0]
+                driven_name = os.path.basename(os.path.dirname(flame_params_dir))
+
+                motion_seq = prepare_motion_seqs(
+                    flame_params_dir, None, save_root=working_dir, fps=30,
+                    bg_color=1.0, aspect_standard=1.0, enlarge_ratio=[1.0, 1.0],
+                    render_image_res=cfg.render_size, multiply=16,
+                    need_mask=False, vis_motion=False, shape_param=shape_param, test_sample=False,
+                    cross_id=False, src_driven=[src_name, driven_name],
+                )
+
+                # Step 4: LAM inference
+                yield f"Step 4/{total_steps}: Running LAM inference...", None, None, None, preproc_vis_path
+
+                motion_seq["flame_params"]["betas"] = shape_param.unsqueeze(0)
+                with torch.no_grad():
+                    res = lam.infer_single_view(
+                        image_tensor.unsqueeze(0).to("cuda", torch.float32),
+                        None, None,
+                        render_c2ws=motion_seq["render_c2ws"].to("cuda"),
+                        render_intrs=motion_seq["render_intrs"].to("cuda"),
+                        render_bg_colors=motion_seq["render_bg_colors"].to("cuda"),
+                        flame_params={k: v.to("cuda") for k, v in motion_seq["flame_params"].items()},
+                    )
+
+                # Step 5: Generate GLB + ZIP
+                yield f"Step 5/{total_steps}: Generating 3D avatar (Blender GLB)...", None, None, None, preproc_vis_path
+
+                oac_dir = os.path.join(working_dir, "oac_export", "concierge")
+                os.makedirs(oac_dir, exist_ok=True)
+
+                saved_head_path = lam.renderer.flame_model.save_shaped_mesh(
+                    shape_param.unsqueeze(0).cuda(), fd=oac_dir,
+                )
+
+                generate_glb(
+                    input_mesh=Path(saved_head_path),
+                    template_fbx=Path("./model_zoo/sample_oac/template_file.fbx"),
+                    output_glb=Path(os.path.join(oac_dir, "skin.glb")),
+                    blender_exec=Path("/usr/local/bin/blender")
+                )
+
+                res["cano_gs_lst"][0].save_ply(
+                    os.path.join(oac_dir, "offset.ply"), rgb2sh=False, offset2xyz=True,
+                )
+                shutil.copy(
+                    src="./model_zoo/sample_oac/animation.glb",
+                    dst=os.path.join(oac_dir, "animation.glb"),
+                )
+                if os.path.exists(saved_head_path):
+                    os.remove(saved_head_path)
+
+                # Create ZIP
+                yield f"Step {total_steps}/{total_steps}: Creating concierge.zip...", None, None, None, preproc_vis_path
+
+                output_zip = os.path.join(working_dir, "concierge.zip")
+                with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+                    dir_info = zipfile.ZipInfo(os.path.basename(oac_dir) + "/")
+                    zf.writestr(dir_info, "")
+                    for root, _, files in os.walk(oac_dir):
+                        for fname in files:
+                            fpath = os.path.join(root, fname)
+                            arcname = os.path.relpath(fpath, os.path.dirname(oac_dir))
+                            zf.write(fpath, arcname)
+
+                # Preview video
+                preview_path = os.path.join(working_dir, "preview.mp4")
+                rgb = res["comp_rgb"].detach().cpu().numpy()
+                mask = res["comp_mask"].detach().cpu().numpy()
+                mask[mask < 0.5] = 0.0
+                rgb = rgb * mask + (1 - mask) * 1
+                rgb = (np.clip(rgb, 0, 1.0) * 255).astype(np.uint8)
+
+                save_images2video(rgb, preview_path, 30)
+
+                # Re-encode for browser
+                preview_browser = os.path.join(working_dir, "preview_browser.mp4")
+                subprocess.run(["ffmpeg", "-y", "-i", preview_path,
+                                "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                                "-movflags", "faststart", preview_browser],
+                               capture_output=True)
+                if os.path.isfile(preview_browser) and os.path.getsize(preview_browser) > 0:
+                    os.replace(preview_browser, preview_path)
+
+                final_preview = preview_path
+                if motion_choice == "custom" and video_path and os.path.isfile(video_path):
+                    try:
+                        preview_with_audio = os.path.join(working_dir, "preview_audio.mp4")
+                        add_audio_to_video(preview_path, preview_with_audio, video_path)
+                        preview_audio_browser = os.path.join(working_dir, "preview_audio_browser.mp4")
+                        subprocess.run(["ffmpeg", "-y", "-i", preview_with_audio,
+                                        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                                        "-c:a", "aac", "-movflags", "faststart",
+                                        preview_audio_browser], capture_output=True)
+                        if os.path.isfile(preview_audio_browser) and os.path.getsize(preview_audio_browser) > 0:
+                            os.replace(preview_audio_browser, preview_with_audio)
+                        final_preview = preview_with_audio
+                    except Exception:
+                        pass
+
+                size_mb = os.path.getsize(output_zip) / (1024 * 1024)
+                yield (
+                    f"Done! concierge.zip ({size_mb:.1f} MB)",
+                    output_zip, final_preview, None, preproc_vis_path,
+                )
+
             except Exception as e:
                 import traceback
                 tb = traceback.format_exc()
-                gpu_error["error"] = f"{e}\n\nTraceback:\n{tb}"
-                print(f"GPU Launch/Execution Error:\n{tb}")
-                # Write error status to volume so it persists even if UI is slow
-                try:
-                    with open(status_file, "w") as sf:
-                        json.dump({"type": "error", "msg": f"GPU error: {e}"}, sf)
-                    output_vol.commit()
-                except Exception:
-                    pass
-            finally:
-                gpu_error["done"] = True
+                print(f"\nPipeline ERROR:\n{tb}", flush=True)
+                yield f"Error: {str(e)}\n\nTraceback:\n{tb}", None, None, None, None
 
-        gpu_thread = threading.Thread(target=_call_gpu, daemon=True)
-        gpu_thread.start()
-        yield "Starting GPU worker...", None, None, None, None
+        # --- Gradio UI ---
+        with gr.Blocks(title="Concierge ZIP Generator") as demo:
+            gr.Markdown("# Concierge ZIP Generator")
+            with gr.Row():
+                with gr.Column():
+                    input_image = gr.Image(label="Face Image", type="filepath")
+                    motion_choice = gr.Radio(
+                        label="Motion",
+                        choices=["custom"] + [os.path.basename(os.path.dirname(m)) for m in sample_motions],
+                        value="custom",
+                    )
+                    input_video = gr.Video(label="Custom Video")
+                    btn = gr.Button("Generate", variant="primary")
+                    status = gr.Textbox(label="Status")
+                with gr.Column():
+                    with gr.Row():
+                        tracked = gr.Image(label="Tracked Face", height=200)
+                        preproc = gr.Image(label="Model Input", height=200)
+                    preview = gr.Video(label="Preview")
+                    dl = gr.File(label="Download ZIP")
 
-        start = time.time()
-        last_activity = time.time()  # Reset on each heartbeat
-        last_progress_msg = ""
-        progress_file = os.path.join(OUTPUT_VOL_PATH, f"progress_{job_id}.json")
-        IDLE_TIMEOUT = 600   # 10 min with no heartbeat = dead
-        MAX_TIMEOUT = 3600   # 1 hour absolute max (provisioning + setup + pipeline)
+            btn.click(process, [input_image, input_video, motion_choice],
+                      [status, dl, preview, tracked, preproc])
 
-        while True:
-            time.sleep(5)
-            output_vol.reload()
+        web_app = FastAPI()
 
-            tracked_p = os.path.join(OUTPUT_VOL_PATH, "tracked_face.png")
-            preproc_p = os.path.join(OUTPUT_VOL_PATH, "preproc_input.png")
-            last_tracked = tracked_p if os.path.isfile(tracked_p) else None
-            last_preproc = preproc_p if os.path.isfile(preproc_p) else None
+        import mimetypes
+        @web_app.api_route("/file={file_path:path}", methods=["GET", "HEAD"])
+        async def serve_file(file_path: str):
+            abs_path = "/" + file_path if not file_path.startswith("/") else file_path
+            if abs_path.startswith("/tmp/") and os.path.isfile(abs_path):
+                return FileResponse(abs_path, media_type=mimetypes.guess_type(abs_path)[0])
+            return {"error": "Not found"}
 
-            # Check for completion status file from GPU
-            if os.path.isfile(status_file):
-                with open(status_file) as f: result = json.load(f)
-                try: os.remove(status_file); output_vol.commit()
-                except: pass
-
-                if result["type"] == "error":
-                    yield f"Error: {result['msg']}", None, None, None, None
-                    return
-
-                zip_p = os.path.join(OUTPUT_VOL_PATH, "concierge.zip")
-                preview_p = os.path.join(OUTPUT_VOL_PATH, "preview.mp4")
-                yield result["msg"], zip_p if os.path.isfile(zip_p) else None, preview_p if os.path.isfile(preview_p) else None, last_tracked, last_preproc
-                return
-
-            # Check GPU heartbeat/progress — reset idle timer
-            gpu_step = ""
-            if os.path.isfile(progress_file):
-                try:
-                    with open(progress_file) as f: prog = json.load(f)
-                    gpu_step = prog.get("msg", "")
-                    if gpu_step != last_progress_msg:
-                        last_progress_msg = gpu_step
-                        last_activity = time.time()
-                except (json.JSONDecodeError, KeyError):
-                    pass
-
-            # Detect GPU thread death (crash, timeout, or remote exception)
-            if gpu_error["done"] and not os.path.isfile(status_file):
-                # One more reload in case of volume propagation delay
-                output_vol.reload()
-                if os.path.isfile(status_file):
-                    continue  # status arrived, re-check in next iteration
-                err = gpu_error.get("error")
-                if err:
-                    yield f"Error: GPU job failed — {err}", None, None, None, None
-                else:
-                    yield (
-                        "Error: GPU job finished without writing results. "
-                        "Likely cause: Modal container killed (timeout/OOM). "
-                        "Check Modal dashboard logs for details."
-                    ), None, None, None, None
-                return
-
-            elapsed = int(time.time() - start)
-            idle = int(time.time() - last_activity)
-
-            # Absolute timeout (includes provisioning + cold start + pipeline)
-            if elapsed > MAX_TIMEOUT:
-                yield f"Error: Absolute timeout ({MAX_TIMEOUT//60} min). GPU may be stuck.", None, None, None, None
-                return
-
-            # Idle timeout: no heartbeat for too long after GPU started
-            if idle > IDLE_TIMEOUT and last_progress_msg:
-                yield (
-                    f"Error: No GPU heartbeat for {idle//60}m{idle%60:02d}s "
-                    f"(last: \"{last_progress_msg}\"). GPU may have crashed."
-                ), None, None, None, None
-                return
-
-            mins, secs = divmod(elapsed, 60)
-            if gpu_step:
-                yield f"[{mins}m{secs:02d}s] {gpu_step}", None, None, last_tracked, last_preproc
-            else:
-                yield f"Waiting for GPU... ({mins}m{secs:02d}s) [provisioning/startup]", None, None, last_tracked, last_preproc
-
-    with gr.Blocks(title="Concierge ZIP Generator") as demo:
-        gr.Markdown("# Concierge ZIP Generator (Final Fixed Version)")
-        with gr.Row():
-            with gr.Column():
-                input_image = gr.Image(label="Face Image", type="filepath")
-                motion_choice = gr.Radio(label="Motion", choices=["custom"] + [os.path.basename(os.path.dirname(m)) for m in sample_motions], value="custom")
-                input_video = gr.Video(label="Custom Video")
-                btn = gr.Button("Generate", variant="primary")
-                status = gr.Textbox(label="Status")
-            with gr.Column():
-                with gr.Row():
-                    tracked = gr.Image(label="Tracked Face", height=200)
-                    preproc = gr.Image(label="Model Input", height=200)
-                preview = gr.Video(label="Preview")
-                dl = gr.File(label="Download ZIP")
-
-        btn.click(process, [input_image, input_video, motion_choice], [status, dl, preview, tracked, preproc])
-
-    web_app = FastAPI()
-    @web_app.get("/download-zip")
-    async def download_zip():
-        output_vol.reload()
-        p = os.path.join(OUTPUT_VOL_PATH, "concierge.zip")
-        return FileResponse(p, filename="concierge.zip") if os.path.isfile(p) else {"error": "Not found"}
-
-    import mimetypes
-    @web_app.api_route("/file={file_path:path}", methods=["GET", "HEAD"])
-    async def serve_file(file_path: str):
-        abs_path = "/" + file_path if not file_path.startswith("/") else file_path
-        if (abs_path.startswith("/tmp/") or abs_path.startswith(OUTPUT_VOL_PATH)) and os.path.isfile(abs_path):
-            return FileResponse(abs_path, media_type=mimetypes.guess_type(abs_path)[0])
-        return {"error": "Not found"}
-
-    return gr.mount_gradio_app(web_app, demo, path="/", allowed_paths=["/tmp/", OUTPUT_VOL_PATH])
-
-@app.function(image=dl_image, volumes={OUTPUT_VOL_PATH: output_vol})
-@modal.asgi_app()
-def download():
-    from fastapi import FastAPI
-    from fastapi.responses import FileResponse
-    dl_app = FastAPI()
-    @dl_app.get("/concierge.zip")
-    async def get_zip():
-        output_vol.reload()
-        p = os.path.join(OUTPUT_VOL_PATH, "concierge.zip")
-        return FileResponse(p, filename="concierge.zip") if os.path.isfile(p) else {"error": "Wait"}
-    return dl_app
+        return gr.mount_gradio_app(web_app, demo, path="/", allowed_paths=["/tmp/"])
