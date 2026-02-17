@@ -136,6 +136,22 @@ image = (
         "include_dirs=[numpy.get_include()])\" "
         "build_ext --inplace",
     )
+    # Pre-compile nvdiffrast CUDA JIT extensions during image build.
+    # Without this, nvdiffrast recompiles on EVERY container start (~10-30 min).
+    .env({"TORCH_EXTENSIONS_DIR": "/root/.cache/torch_extensions"})
+    .run_commands(
+        "python -c \""
+        "import torch.utils.cpp_extension as c; "
+        "orig = c.load; "
+        "def patched(*a, **kw): "
+        "    cflags = list(kw.get('extra_cflags', []) or []); "
+        "    cflags.append('-Wno-c++11-narrowing'); "
+        "    kw['extra_cflags'] = cflags; "
+        "    return orig(*a, **kw)\n"
+        "c.load = patched; "
+        "import nvdiffrast.torch as dr; "
+        "print('nvdiffrast pre-compiled OK')\"",
+    )
 )
 
 
@@ -271,11 +287,9 @@ def _setup_model_paths():
 
 def _init_lam_pipeline():
     """Initialize FLAME tracking and LAM model. Called once per container."""
+    import time as _time
     import torch
     import torch._dynamo
-    from safetensors.torch import load_file as _load_safetensors
-    from lam.models import ModelLAM
-    from app_lam import parse_configs
 
     os.chdir("/root/LAM")
     sys.path.insert(0, "/root/LAM")
@@ -292,16 +306,25 @@ def _init_lam_pipeline():
     torch._dynamo.config.disable = True
 
     # Parse config
+    t = _time.time()
+    from app_lam import parse_configs
     cfg, _ = parse_configs()
+    print(f"[TIMING] parse_configs: {_time.time()-t:.1f}s")
 
+    # Build model
+    t = _time.time()
+    from lam.models import ModelLAM
     print("Loading LAM model...")
     model_cfg = cfg.model
     lam = ModelLAM(**model_cfg)
+    print(f"[TIMING] ModelLAM init: {_time.time()-t:.1f}s")
 
+    # Load weights
+    t = _time.time()
+    from safetensors.torch import load_file as _load_safetensors
     ckpt_path = os.path.join(cfg.model_name, "model.safetensors")
     print(f"Loading checkpoint: {ckpt_path}")
 
-    # --- WEIGHT LOADING FIX (same as app_lam.py _build_model) ---
     ckpt = _load_safetensors(ckpt_path, device="cpu")
     state_dict = lam.state_dict()
     loaded_count = 0
@@ -315,12 +338,15 @@ def _init_lam_pipeline():
                 print(f"[WARN] mismatching shape for param {k}: ckpt {v.shape} != model {state_dict[k].shape}, ignored.")
 
     print(f"Finish loading pretrained weight. Loaded {loaded_count} keys.")
-    print("="*100)
+    print(f"[TIMING] weight loading: {_time.time()-t:.1f}s")
 
+    t = _time.time()
     lam.to("cuda")
     lam.eval()
+    print(f"[TIMING] lam.to(cuda): {_time.time()-t:.1f}s")
 
     # Initialize FLAME tracking
+    t = _time.time()
     from tools.flame_tracking_single_image import FlameTrackingSingleImage
     print("Initializing FLAME tracking...")
     flametracking = FlameTrackingSingleImage(
@@ -331,6 +357,7 @@ def _init_lam_pipeline():
         facebox_model_path="./model_zoo/flame_tracking_models/FaceBoxesV2.pth",
         detect_iris_landmarks=False,
     )
+    print(f"[TIMING] FLAME tracking init: {_time.time()-t:.1f}s")
 
     return cfg, lam, flametracking
 
@@ -519,9 +546,15 @@ class WebApp:
 
     @modal.enter()
     def setup(self):
+        import time as _time
+        t0 = _time.time()
+
         import torch.utils.cpp_extension as _cext
         os.chdir("/root/LAM")
         sys.path.insert(0, "/root/LAM")
+
+        # Use the same cache dir as image build — avoids re-compilation
+        os.environ.setdefault("TORCH_EXTENSIONS_DIR", "/root/.cache/torch_extensions")
 
         _orig_load = _cext.load
         def _patched_load(*args, **kwargs):
@@ -534,7 +567,9 @@ class WebApp:
 
         print("Initializing LAM pipeline on GPU...")
         self.cfg, self.lam, self.flametracking = _init_lam_pipeline()
-        print("GPU pipeline ready.")
+
+        elapsed = _time.time() - t0
+        print(f"GPU pipeline ready. @modal.enter() took {elapsed:.1f}s")
 
     @modal.asgi_app()
     def web(self):
