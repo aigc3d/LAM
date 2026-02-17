@@ -26,7 +26,7 @@ import sys
 import modal
 
 # Bump this to force Modal image rebuild after code changes
-_IMAGE_VERSION = "v3.0"
+_IMAGE_VERSION = "v3.1"
 
 app = modal.App("concierge-zip-generator")
 
@@ -39,7 +39,6 @@ _has_model_zoo = os.path.isdir("./model_zoo")
 _has_assets = os.path.isdir("./assets")
 _has_lam = os.path.isdir("./lam")
 _has_vhap = os.path.isdir("./vhap")
-_has_external = os.path.isdir("./external")
 _has_configs = os.path.isdir("./configs")
 
 if not _has_model_zoo and not _has_assets:
@@ -255,12 +254,12 @@ image = image.run_function(_download_missing_models)
 
 # Mount ALL local source directories so local changes always override git clone.
 # Order matters: mount after git clone so local files take precedence.
+# NOTE: Do NOT mount external/ - it contains compiled C extensions (cpu_nms.so)
+# built during image build. Mounting local external/ (source only) would hide them.
 if _has_lam:
     image = image.add_local_dir("./lam", remote_path="/root/LAM/lam")
 if _has_vhap:
     image = image.add_local_dir("./vhap", remote_path="/root/LAM/vhap")
-if _has_external:
-    image = image.add_local_dir("./external", remote_path="/root/LAM/external")
 if _has_configs:
     image = image.add_local_dir("./configs", remote_path="/root/LAM/configs")
 if os.path.isdir("./tools"):
@@ -875,11 +874,13 @@ def web():
     from fastapi import FastAPI
     from fastapi.responses import FileResponse
     from glob import glob
-    import gradio_client.utils as _gc_utils
-    
-    _orig_jst = _gc_utils._json_schema_to_python_type
-    def _safe_jst(schema, defs=None): return "Any" if isinstance(schema, bool) else _orig_jst(schema, defs)
-    _gc_utils._json_schema_to_python_type = _safe_jst
+    try:
+        import gradio_client.utils as _gc_utils
+        _orig_jst = _gc_utils._json_schema_to_python_type
+        def _safe_jst(schema, defs=None): return "Any" if isinstance(schema, bool) else _orig_jst(schema, defs)
+        _gc_utils._json_schema_to_python_type = _safe_jst
+    except (ImportError, AttributeError):
+        pass  # gradio_client API changed, patch not needed
 
     lam_root = "/root/LAM"
     if os.path.isdir(lam_root): os.chdir(lam_root)
