@@ -641,19 +641,18 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking, mot
         )
 
         # --- USE OFFICIAL GLB EXPORT ---
+        # generate_glb() internally calls gen_vertex_order_with_blender()
+        # which produces the correct vertex_order.json via Blender.
+        # DO NOT overwrite vertex_order.json with naive sequential ordering
+        # (list(range(n))) — Blender reorders vertices on FBX import,
+        # so OBJ vertex order != GLB vertex order. Using wrong ordering
+        # causes the "bird monster" avatar bug.
         generate_glb(
             input_mesh=Path(saved_head_path),
             template_fbx=Path("./model_zoo/sample_oac/template_file.fbx"),
             output_glb=Path(os.path.join(oac_dir, "skin.glb")),
             blender_exec=Path("/usr/local/bin/blender")
         )
-
-        import trimesh
-        _mesh = trimesh.load(saved_head_path)
-        _n_verts = _mesh.vertices.shape[0]
-        vertex_order = list(range(_n_verts))
-        with open(os.path.join(oac_dir, "vertex_order.json"), "w") as f:
-            json.dump(vertex_order, f)
 
         res["cano_gs_lst"][0].save_ply(
             os.path.join(oac_dir, "offset.ply"), rgb2sh=False, offset2xyz=True,
