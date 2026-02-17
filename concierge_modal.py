@@ -547,13 +547,20 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking, mot
     base_iid = "concierge"
     
     try:
-        # Step 0: Clean stale FLAME tracking data
+        # Step 0: Clean ALL stale intermediate data
+        # FLAME tracking state (the entire directory, not just subdirs)
         tracking_root = os.path.join(os.getcwd(), "output", "tracking")
         if os.path.isdir(tracking_root):
-            for subdir in ["preprocess", "tracking", "export"]:
-                stale = os.path.join(tracking_root, subdir)
-                if os.path.isdir(stale):
-                    shutil.rmtree(stale)
+            shutil.rmtree(tracking_root)
+            print(f"[CACHE] Cleaned entire {tracking_root}")
+        os.makedirs(tracking_root, exist_ok=True)
+
+        # Stale generate_glb() temp files left by previous crash
+        for stale_temp in ["temp_ascii.fbx", "temp_bin.fbx"]:
+            stale_p = os.path.join(os.getcwd(), stale_temp)
+            if os.path.exists(stale_p):
+                os.remove(stale_p)
+                print(f"[CACHE] Cleaned stale {stale_temp}")
 
         # Step 1: Source image FLAME tracking
         yield "Step 1: FLAME tracking on source image...", None, None, None, None
@@ -753,6 +760,38 @@ class Generator:
         import tempfile
         import json
 
+        # === CACHE FIX 1: Clean ALL stale output from volume ===
+        vol_dir = OUTPUT_VOL_PATH
+        os.makedirs(vol_dir, exist_ok=True)
+        for stale_name in [
+            "concierge.zip", "preview.mp4",
+            "tracked_face.png", "preproc_input.png",
+        ]:
+            stale_path = os.path.join(vol_dir, stale_name)
+            if os.path.exists(stale_path):
+                os.remove(stale_path)
+                print(f"[CACHE] Removed stale {stale_name}")
+        # Also clean any leftover status files from previous jobs
+        for f in os.listdir(vol_dir):
+            if f.startswith("status_") and f.endswith(".json"):
+                os.remove(os.path.join(vol_dir, f))
+                print(f"[CACHE] Removed stale {f}")
+        output_vol.commit()
+
+        # === CACHE FIX 2: Clean stale generate_glb() temp files in CWD ===
+        for stale_temp in ["temp_ascii.fbx", "temp_bin.fbx"]:
+            stale_p = os.path.join(os.getcwd(), stale_temp)
+            if os.path.exists(stale_p):
+                os.remove(stale_p)
+                print(f"[CACHE] Removed stale {stale_temp}")
+
+        # === CACHE FIX 3: Clean FLAME tracking output directory ===
+        tracking_root = os.path.join(os.getcwd(), "output", "tracking")
+        if os.path.isdir(tracking_root):
+            shutil.rmtree(tracking_root)
+            print(f"[CACHE] Removed entire output/tracking/")
+            os.makedirs(tracking_root, exist_ok=True)
+
         upload_dir = tempfile.mkdtemp(prefix="gpu_upload_")
         image_path = os.path.join(upload_dir, "input.png")
         with open(image_path, "wb") as f: f.write(image_bytes)
@@ -765,7 +804,6 @@ class Generator:
         effective_video = video_path if motion_name == "custom" else None
         selected_motion = motion_name if motion_name != "custom" else None
 
-        vol_dir = OUTPUT_VOL_PATH
         status_file = os.path.join(vol_dir, f"status_{job_id}.json")
 
         try:
@@ -837,7 +875,17 @@ def web():
 
         job_id = uuid.uuid4().hex[:8]
         status_file = os.path.join(OUTPUT_VOL_PATH, f"status_{job_id}.json")
-        
+
+        # === CACHE FIX: Clear stale results from volume before starting ===
+        try:
+            for stale in ["concierge.zip", "preview.mp4", "tracked_face.png", "preproc_input.png"]:
+                p = os.path.join(OUTPUT_VOL_PATH, stale)
+                if os.path.exists(p):
+                    os.remove(p)
+            output_vol.commit()
+        except Exception:
+            pass
+
         def _call_gpu():
             try:
                 gen = Generator()
@@ -845,7 +893,7 @@ def web():
                 gen.generate.remote(image_bytes, video_bytes, motion_choice or "custom", job_id)
             except Exception as e:
                 print(f"GPU Launch Error: {e}")
-        
+
         threading.Thread(target=_call_gpu, daemon=True).start()
         yield "Starting GPU worker...", None, None, None, None
 

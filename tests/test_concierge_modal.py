@@ -571,5 +571,110 @@ class TestBugRegression:
                     )
 
 
+# ============================================================
+# 7. Cache / Stale Data Prevention Tests
+# ============================================================
+class TestCachePrevention:
+    """Ensure stale data is cleaned before each generation run."""
+
+    @pytest.fixture
+    def modal_source(self):
+        return CONCIERGE_MODAL_PY.read_text()
+
+    def _extract_function_body(self, source, func_name):
+        """Extract the body of a function from source code."""
+        lines = source.split("\n")
+        fn_start = None
+        indent_level = None
+        for i, line in enumerate(lines):
+            if func_name in line and ("def " in line or "def\t" in line):
+                fn_start = i
+                indent_level = len(line) - len(line.lstrip())
+                continue
+            if fn_start is not None and i > fn_start:
+                if line.strip() and not line[0].isspace() and ":" in line:
+                    return "\n".join(lines[fn_start:i])
+                # Check for same-level or lower-level def/class
+                if line.strip().startswith(("def ", "class ")):
+                    current_indent = len(line) - len(line.lstrip())
+                    if current_indent <= indent_level:
+                        return "\n".join(lines[fn_start:i])
+        return "\n".join(lines[fn_start:]) if fn_start else ""
+
+    def test_volume_cleaned_before_generation_in_generator(self, modal_source):
+        """Generator.generate() must clean stale volume files before starting."""
+        gen_body = self._extract_function_body(modal_source, "def generate")
+        for stale_file in ["concierge.zip", "preview.mp4", "tracked_face.png", "preproc_input.png"]:
+            assert stale_file in gen_body, (
+                f"Generator.generate() should reference '{stale_file}' for cleanup"
+            )
+        assert "os.remove" in gen_body or "shutil.rmtree" in gen_body, (
+            "Generator.generate() must remove stale files"
+        )
+
+    def test_volume_cleaned_before_generation_in_web_ui(self, modal_source):
+        """Web UI process() must clean stale volume files before launching GPU job."""
+        # Find the process function inside web()
+        web_body = self._extract_function_body(modal_source, "def web")
+        # Look for cache cleanup in process()
+        assert "CACHE FIX" in web_body or "stale" in web_body.lower() or (
+            "os.remove" in web_body and "concierge.zip" in web_body
+        ), (
+            "Web UI process() should clean stale volume files before starting GPU job"
+        )
+
+    def test_flame_tracking_fully_cleaned(self, modal_source):
+        """FLAME tracking output must be FULLY cleaned (rmtree), not partially."""
+        gen_body = self._extract_function_body(modal_source, "def _generate_concierge_zip")
+        # Should use shutil.rmtree on the entire tracking directory
+        assert "shutil.rmtree(tracking_root)" in gen_body or \
+               "shutil.rmtree(tracking_root," in gen_body, (
+            "_generate_concierge_zip must rmtree the entire output/tracking/ directory. "
+            "Partial cleanup (only subdirs) misses internal state files."
+        )
+
+    def test_generate_glb_temp_files_cleaned(self, modal_source):
+        """Stale generate_glb temp files must be cleaned before pipeline runs."""
+        # Check that temp_ascii.fbx and temp_bin.fbx cleanup exists
+        assert "temp_ascii.fbx" in modal_source and "temp_bin.fbx" in modal_source, (
+            "Pipeline must reference generate_glb temp files for cleanup"
+        )
+        # Verify cleanup happens BEFORE generate_glb() call
+        gen_body = self._extract_function_body(modal_source, "def _generate_concierge_zip")
+        lines = gen_body.split("\n")
+        cleanup_line = None
+        generate_glb_line = None
+        for i, line in enumerate(lines):
+            if "temp_ascii.fbx" in line and "remove" in line:
+                cleanup_line = i
+            if "generate_glb(" in line and not line.strip().startswith("#"):
+                generate_glb_line = i
+        if cleanup_line is not None and generate_glb_line is not None:
+            assert cleanup_line < generate_glb_line, (
+                "Temp file cleanup must happen BEFORE generate_glb() call"
+            )
+
+    def test_stale_status_files_cleaned(self, modal_source):
+        """Leftover status_*.json files from previous jobs must be cleaned."""
+        gen_body = self._extract_function_body(modal_source, "def generate")
+        assert "status_" in gen_body and ".json" in gen_body, (
+            "Generator.generate() should clean stale status files"
+        )
+
+    def test_no_fixed_filename_collision_risk(self, modal_source):
+        """Output files use fixed names — verify cleanup prevents stale serving."""
+        # The output always goes to concierge.zip (fixed name)
+        # Cleanup must happen both in Generator.generate() AND web UI process()
+        gen_body = self._extract_function_body(modal_source, "def generate")
+        web_body = self._extract_function_body(modal_source, "def web")
+        # Both should clean concierge.zip
+        gen_cleans = "concierge.zip" in gen_body and ("remove" in gen_body or "rmtree" in gen_body)
+        web_cleans = "concierge.zip" in web_body and ("remove" in web_body or "rmtree" in web_body)
+        assert gen_cleans and web_cleans, (
+            "Both Generator.generate() and web UI must clean stale concierge.zip. "
+            "Double-cleanup prevents race: UI cleans volume, GPU cleans again before work."
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
