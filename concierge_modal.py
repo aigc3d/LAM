@@ -864,7 +864,6 @@ class Generator:
 
 
 @app.function(image=ui_image, timeout=7200, volumes={OUTPUT_VOL_PATH: output_vol})
-@modal.concurrent(max_inputs=100)
 @modal.asgi_app()
 def web():
     import gradio as gr
