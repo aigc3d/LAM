@@ -26,7 +26,7 @@ import sys
 import modal
 
 # Bump this to force Modal image rebuild after code changes
-_IMAGE_VERSION = "v3.1"
+_IMAGE_VERSION = "v3.2"
 
 app = modal.App("concierge-zip-generator")
 
@@ -268,9 +268,6 @@ if _has_model_zoo:
     image = image.add_local_dir("./model_zoo", remote_path="/root/LAM/model_zoo")
 if _has_assets:
     image = image.add_local_dir("./assets", remote_path="/root/LAM/assets")
-# Mount app_lam.py (used by _generate_concierge_zip for utility imports)
-if os.path.isfile("./app_lam.py"):
-    image = image.add_local_file("./app_lam.py", remote_path="/root/LAM/app_lam.py")
 
 dl_image = modal.Image.debian_slim(python_version="3.10").pip_install("fastapi")
 ui_image = modal.Image.debian_slim(python_version="3.10").pip_install(
