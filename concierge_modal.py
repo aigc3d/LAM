@@ -1,11 +1,20 @@
 """
-concierge_modal.py - Concierge ZIP Generator on Modal (FINAL FIXED VERSION v2)
+concierge_modal.py - Concierge ZIP Generator on Modal (v3 - Cache Fix)
 =====================================================
 
-Updates:
-1. Fixed "FileNotFoundError" in Gradio UI by handling file uploads correctly.
-2. Kept all quality fixes (Official Blender script, Xformers, Weight loading).
-3. Cost optimization settings applied (timeout=600).
+Updates (v3):
+1. Mount ALL local source dirs (lam/, vhap/, configs/, external/, app_lam.py)
+   so local code changes are always reflected in the container.
+2. Volume cleanup before each generation - old outputs never served stale.
+3. CUDA arch list includes 8.9 (Ada/L4) in addition to 8.6 (Ampere).
+4. Runtime diagnostics: assert xformers + log weight loading stats.
+5. Image build version tag forces rebuild when bumped.
+
+Prior fixes retained:
+- Official Blender GLB export (generateARKITGLBWithBlender).
+- xformers for DINOv2 attention accuracy.
+- Correct weight loading (copy_ method).
+- FileNotFoundError fix for Gradio uploads.
 
 Usage:
   modal run concierge_modal.py                              # Gradio UI
@@ -16,21 +25,30 @@ import os
 import sys
 import modal
 
+# Bump this to force Modal image rebuild after code changes
+_IMAGE_VERSION = "v3.0"
+
 app = modal.App("concierge-zip-generator")
 
 # Persistent storage for generated ZIPs
 output_vol = modal.Volume.from_name("concierge-output", create_if_missing=True)
 OUTPUT_VOL_PATH = "/vol/output"
 
-# Detect which local directories contain model files.
+# Detect which local directories contain source/model files.
 _has_model_zoo = os.path.isdir("./model_zoo")
 _has_assets = os.path.isdir("./assets")
+_has_lam = os.path.isdir("./lam")
+_has_vhap = os.path.isdir("./vhap")
+_has_external = os.path.isdir("./external")
+_has_configs = os.path.isdir("./configs")
 
 if not _has_model_zoo and not _has_assets:
     print(
         "WARNING: Neither ./model_zoo/ nor ./assets/ found.\n"
         "Run `modal serve concierge_modal.py` from your LAM repo root."
     )
+if not _has_lam:
+    print("WARNING: ./lam/ not found. Container will use git-cloned LAM code.")
 
 # ============================================================
 # Modal Image Build
@@ -63,13 +81,15 @@ image = (
         "--index-url https://download.pytorch.org/whl/cu118"
     )
     # CUDA build environment
+    # 8.6 = Ampere (A10G, RTX 3090), 8.9 = Ada Lovelace (L4, RTX 4090)
     .env({
         "FORCE_CUDA": "1",
         "CUDA_HOME": "/usr/local/cuda",
         "MAX_JOBS": "4",
-        "TORCH_CUDA_ARCH_LIST": "8.6",
+        "TORCH_CUDA_ARCH_LIST": "8.6;8.9",
         "CC": "clang",
         "CXX": "clang++",
+        "IMAGE_VERSION": _IMAGE_VERSION,
     })
     # CUDA extensions
     .run_commands(
@@ -233,12 +253,25 @@ def _download_missing_models():
 
 image = image.run_function(_download_missing_models)
 
+# Mount ALL local source directories so local changes always override git clone.
+# Order matters: mount after git clone so local files take precedence.
+if _has_lam:
+    image = image.add_local_dir("./lam", remote_path="/root/LAM/lam")
+if _has_vhap:
+    image = image.add_local_dir("./vhap", remote_path="/root/LAM/vhap")
+if _has_external:
+    image = image.add_local_dir("./external", remote_path="/root/LAM/external")
+if _has_configs:
+    image = image.add_local_dir("./configs", remote_path="/root/LAM/configs")
+if os.path.isdir("./tools"):
+    image = image.add_local_dir("./tools", remote_path="/root/LAM/tools")
 if _has_model_zoo:
     image = image.add_local_dir("./model_zoo", remote_path="/root/LAM/model_zoo")
 if _has_assets:
     image = image.add_local_dir("./assets", remote_path="/root/LAM/assets")
-if os.path.isdir("./tools"):
-    image = image.add_local_dir("./tools", remote_path="/root/LAM/tools")
+# Mount app_lam.py (used by _generate_concierge_zip for utility imports)
+if os.path.isfile("./app_lam.py"):
+    image = image.add_local_file("./app_lam.py", remote_path="/root/LAM/app_lam.py")
 
 dl_image = modal.Image.debian_slim(python_version="3.10").pip_install("fastapi")
 ui_image = modal.Image.debian_slim(python_version="3.10").pip_install(
@@ -298,6 +331,27 @@ def _init_lam_pipeline():
     sys.path.insert(0, "/root/LAM")
     _setup_model_paths()
 
+    # === RUNTIME DIAGNOSTICS ===
+    print(f"[DIAG] Image version: {os.environ.get('IMAGE_VERSION', 'unknown')}")
+    print(f"[DIAG] PyTorch: {torch.__version__}, CUDA: {torch.version.cuda}")
+    print(f"[DIAG] GPU: {torch.cuda.get_device_name(0)}")
+
+    # Verify xformers is available (CRITICAL for DINOv2 accuracy)
+    try:
+        from lam.models.encoders.dinov2.layers.attention import XFORMERS_AVAILABLE
+        print(f"[DIAG] xformers AVAILABLE: {XFORMERS_AVAILABLE}")
+        if not XFORMERS_AVAILABLE:
+            print("[CRITICAL] xformers NOT available! DINOv2 will use vanilla attention.")
+            print("[CRITICAL] This WILL produce 'bird monster' output!")
+    except ImportError:
+        print("[CRITICAL] Cannot import DINOv2 attention module to check xformers!")
+
+    try:
+        import xformers
+        print(f"[DIAG] xformers version: {xformers.__version__}")
+    except ImportError:
+        print("[CRITICAL] xformers package not installed!")
+
     os.environ.update({
         "APP_ENABLED": "1",
         "APP_MODEL_NAME": "./model_zoo/lam_models/releases/lam/lam-20k/step_045500/",
@@ -317,27 +371,36 @@ def _init_lam_pipeline():
 
     ckpt_path = os.path.join(cfg.model_name, "model.safetensors")
     print(f"Loading checkpoint: {ckpt_path}")
-    
-    # --- WEIGHT LOADING FIX ---
+
+    # --- WEIGHT LOADING WITH FULL DIAGNOSTICS ---
     ckpt = _load_safetensors(ckpt_path, device="cpu")
     state_dict = lam.state_dict()
     loaded_count = 0
-    skipped_count = 0
-    
+    skipped_shape = 0
+    missing_in_model = 0
+
     for k, v in ckpt.items():
         if k in state_dict:
             if state_dict[k].shape == v.shape:
                 state_dict[k].copy_(v)
                 loaded_count += 1
             else:
-                print(f"[WARN] mismatching shape for param {k}: ckpt {v.shape} != model {state_dict[k].shape}, ignored.")
-                skipped_count += 1
+                print(f"[WARN] Shape mismatch: {k} ckpt={v.shape} model={state_dict[k].shape}")
+                skipped_shape += 1
         else:
-            pass
+            missing_in_model += 1
 
-    print(f"Finish loading pretrained weight. Loaded {loaded_count} keys.")
-    print("="*100)
-    
+    total_model_keys = len(state_dict)
+    total_ckpt_keys = len(ckpt)
+    print(f"[DIAG] Weight loading: {loaded_count}/{total_ckpt_keys} ckpt keys loaded, "
+          f"{skipped_shape} shape mismatches, {missing_in_model} not in model")
+    print(f"[DIAG] Model has {total_model_keys} params total, "
+          f"{total_model_keys - loaded_count} uninitialized from ckpt")
+    if skipped_shape > 0:
+        print(f"[CRITICAL] {skipped_shape} weights skipped due to shape mismatch!")
+        print("[CRITICAL] This indicates config/checkpoint mismatch - output WILL be wrong!")
+    print("=" * 100)
+
     lam.to("cuda")
     lam.eval()
 
@@ -750,6 +813,21 @@ class Generator:
         import tempfile
         import json
 
+        # --- VOLUME CLEANUP: Remove stale outputs from previous runs ---
+        vol_dir = OUTPUT_VOL_PATH
+        os.makedirs(vol_dir, exist_ok=True)
+        for stale_file in ["concierge.zip", "preview.mp4", "tracked_face.png", "preproc_input.png"]:
+            stale_path = os.path.join(vol_dir, stale_file)
+            if os.path.isfile(stale_path):
+                os.remove(stale_path)
+                print(f"[CLEANUP] Removed stale {stale_file}")
+        # Also remove old status files
+        for f in os.listdir(vol_dir):
+            if f.startswith("status_") and f.endswith(".json"):
+                os.remove(os.path.join(vol_dir, f))
+        output_vol.commit()
+        print(f"[CLEANUP] Volume cleaned for job {job_id}")
+
         upload_dir = tempfile.mkdtemp(prefix="gpu_upload_")
         image_path = os.path.join(upload_dir, "input.png")
         with open(image_path, "wb") as f: f.write(image_bytes)
@@ -762,7 +840,6 @@ class Generator:
         effective_video = video_path if motion_name == "custom" else None
         selected_motion = motion_name if motion_name != "custom" else None
 
-        vol_dir = OUTPUT_VOL_PATH
         status_file = os.path.join(vol_dir, f"status_{job_id}.json")
 
         try:
@@ -834,7 +911,16 @@ def web():
 
         job_id = uuid.uuid4().hex[:8]
         status_file = os.path.join(OUTPUT_VOL_PATH, f"status_{job_id}.json")
-        
+
+        # Clean stale volume outputs so UI never shows old results
+        for stale in ["concierge.zip", "preview.mp4", "tracked_face.png", "preproc_input.png"]:
+            p = os.path.join(OUTPUT_VOL_PATH, stale)
+            if os.path.isfile(p):
+                try: os.remove(p)
+                except OSError: pass
+        try: output_vol.commit()
+        except Exception: pass
+
         def _call_gpu():
             try:
                 gen = Generator()
@@ -842,7 +928,7 @@ def web():
                 gen.generate.remote(image_bytes, video_bytes, motion_choice or "custom", job_id)
             except Exception as e:
                 print(f"GPU Launch Error: {e}")
-        
+
         threading.Thread(target=_call_gpu, daemon=True).start()
         yield "Starting GPU worker...", None, None, None, None
 
