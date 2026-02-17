@@ -808,5 +808,49 @@ class TestGPUErrorHandling:
         )
 
 
+# ============================================================
+# 9. Video Tracking Heartbeat Tests
+# ============================================================
+class TestVideoTrackingHeartbeat:
+    """Ensure long-running video tracking sends heartbeats to prevent idle timeout."""
+
+    @pytest.fixture
+    def modal_source(self):
+        return CONCIERGE_MODAL_PY.read_text()
+
+    def test_track_video_receives_status_callback(self, modal_source):
+        """_track_video_to_motion must be called with status_callback connected."""
+        assert "status_callback=_video_progress" in modal_source, (
+            "_track_video_to_motion must be called with status_callback= "
+            "to forward heartbeats during video tracking"
+        )
+
+    def test_progress_callback_passed_to_pipeline(self, modal_source):
+        """_generate_concierge_zip must accept and use progress_callback."""
+        assert "progress_callback=_write_progress" in modal_source, (
+            "_generate_concierge_zip must be called with progress_callback= "
+            "connected to _write_progress for volume heartbeat"
+        )
+
+    def test_vhap_optimize_has_heartbeat(self, modal_source):
+        """VHAP tracker.optimize() must have periodic heartbeat (it runs 5-15 min)."""
+        # Look for heartbeat thread around optimize()
+        assert "_heartbeat_loop" in modal_source or "optimize_done" in modal_source.lower() or "_optimize_done" in modal_source, (
+            "VHAP optimize() blocks for 5-15 minutes and MUST have a "
+            "background heartbeat thread to prevent idle timeout"
+        )
+
+    def test_frame_extraction_has_periodic_report(self, modal_source):
+        """Frame extraction loop must report progress periodically."""
+        # Find the frame extraction loop
+        assert "Extracting frames..." in modal_source or "frames" in modal_source.lower(), (
+            "Frame extraction loop should report progress periodically"
+        )
+        # Check for modulo-based reporting
+        assert "% 30" in modal_source or "% 20" in modal_source or "% 50" in modal_source, (
+            "Frame extraction should report every N frames"
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

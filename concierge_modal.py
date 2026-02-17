@@ -460,12 +460,17 @@ def _track_video_to_motion(video_path, flametracking, working_dir, status_callba
         processed_count += 1
         frame_idx += 1
 
+        # Periodic heartbeat during frame extraction
+        if processed_count % 30 == 0:
+            report(f"  Extracting frames... ({processed_count} done)")
+
     cap.release()
     torch.cuda.empty_cache()
 
     if processed_count == 0:
         raise RuntimeError("No valid face frames found in video")
 
+    report(f"  Extracted {processed_count} frames, saving landmarks...")
     stacked_landmarks = np.stack(all_landmarks, axis=0)
     np.savez(
         os.path.join(landmark_dir, "landmarks.npz"),
@@ -473,7 +478,7 @@ def _track_video_to_motion(video_path, flametracking, working_dir, status_callba
         face_landmark_2d=stacked_landmarks,
     )
 
-    report("  Running VHAP FLAME tracking...")
+    report(f"  Running VHAP FLAME tracking ({processed_count} frames)...")
     from vhap.config.base import (
         BaseTrackingConfig, DataConfig, ModelConfig, RenderConfig, LogConfig,
         ExperimentConfig, LearningRateConfig, LossWeightConfig, PipelineConfig,
@@ -508,7 +513,39 @@ def _track_video_to_motion(video_path, flametracking, working_dir, status_callba
     )
 
     tracker = GlobalTracker(vhap_cfg)
-    tracker.optimize()
+
+    # VHAP optimize() blocks for 5-15 minutes — send periodic heartbeats
+    import threading as _th
+    _optimize_done = _th.Event()
+    _optimize_error = [None]
+
+    def _heartbeat_loop():
+        """Send heartbeat every 60s while optimize() runs."""
+        import time as _t
+        tick = 0
+        while not _optimize_done.wait(timeout=60):
+            tick += 1
+            report(f"  VHAP tracking in progress... ({tick}m)")
+
+    def _run_optimize():
+        try:
+            tracker.optimize()
+        except Exception as exc:
+            _optimize_error[0] = exc
+        finally:
+            _optimize_done.set()
+
+    hb_thread = _th.Thread(target=_heartbeat_loop, daemon=True)
+    opt_thread = _th.Thread(target=_run_optimize, daemon=True)
+    hb_thread.start()
+    opt_thread.start()
+    opt_thread.join()  # Wait for optimize to finish
+    _optimize_done.set()  # Ensure heartbeat thread stops
+    hb_thread.join(timeout=5)
+
+    if _optimize_error[0] is not None:
+        raise _optimize_error[0]
+
     torch.cuda.empty_cache()
 
     report("  Exporting motion sequence...")
@@ -526,7 +563,7 @@ def _track_video_to_motion(video_path, flametracking, working_dir, status_callba
     return os.path.join(export_dir, "flame_param")
 
 
-def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking, motion_name=None):
+def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking, motion_name=None, progress_callback=None):
     """Full pipeline: image + video -> concierge.zip"""
     import torch
     import numpy as np
@@ -584,7 +621,12 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking, mot
         if video_path and os.path.isfile(video_path):
             total_steps = 6
             yield f"Step 2/{total_steps}: Processing custom motion video...", None, None, None, None
-            flame_params_dir = _track_video_to_motion(video_path, flametracking, working_dir)
+            def _video_progress(msg):
+                """Forward video tracking progress to heartbeat callback."""
+                full_msg = f"Step 2/{total_steps}: {msg}"
+                if progress_callback:
+                    progress_callback(full_msg)
+            flame_params_dir = _track_video_to_motion(video_path, flametracking, working_dir, status_callback=_video_progress)
             motion_source = "custom video"
         else:
             total_steps = 5
@@ -823,7 +865,8 @@ class Generator:
         try:
             final_msg = "Processing..."
             for status, _, _, tracked_img, preproc_img in _generate_concierge_zip(
-                image_path, effective_video, self.cfg, self.lam, self.flametracking, motion_name=selected_motion,
+                image_path, effective_video, self.cfg, self.lam, self.flametracking,
+                motion_name=selected_motion, progress_callback=_write_progress,
             ):
                 final_msg = status
                 _write_progress(status)
