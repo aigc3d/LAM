@@ -676,5 +676,92 @@ class TestCachePrevention:
         )
 
 
+# ============================================================
+# 8. GPU Error Handling & Timeout Tests
+# ============================================================
+class TestGPUErrorHandling:
+    """Ensure GPU errors propagate to the UI instead of silent timeout."""
+
+    @pytest.fixture
+    def modal_source(self):
+        return CONCIERGE_MODAL_PY.read_text()
+
+    def test_call_gpu_writes_error_to_volume(self, modal_source):
+        """_call_gpu() must write error status to volume on failure, not just print."""
+        # Find the _call_gpu function inside web()
+        assert 'gpu_error["error"]' in modal_source or "gpu_error[" in modal_source, (
+            "_call_gpu() must propagate error to shared state, not just print()"
+        )
+        # Must also write status file for volume-based detection
+        # Look for json.dump in _call_gpu context
+        lines = modal_source.split("\n")
+        in_call_gpu = False
+        writes_status = False
+        for line in lines:
+            if "def _call_gpu" in line:
+                in_call_gpu = True
+            if in_call_gpu and "json.dump" in line and "error" in line:
+                writes_status = True
+            if in_call_gpu and line.strip() and not line[0].isspace() and "def " in line and "_call_gpu" not in line:
+                break
+        assert writes_status, (
+            "_call_gpu() must write error status to volume on failure"
+        )
+
+    def test_ui_detects_dead_gpu_thread(self, modal_source):
+        """UI polling loop must detect when GPU thread dies without writing status."""
+        assert 'gpu_error["done"]' in modal_source or "gpu_error.get(" in modal_source, (
+            "UI must check shared gpu_error state to detect dead GPU thread"
+        )
+        assert "GPU job finished without writing results" in modal_source or \
+               "GPU process terminated unexpectedly" in modal_source or \
+               "gpu_error" in modal_source, (
+            "UI must report meaningful error when GPU thread dies silently"
+        )
+
+    def test_gpu_timeout_is_sufficient(self, modal_source):
+        """GPU container timeout must be >= 1200s for full pipeline."""
+        import re
+        # Match the @app.cls line with gpu= (the GPU Generator class)
+        match = re.search(r'@app\.cls\(.*gpu=.*timeout=(\d+)', modal_source)
+        assert match, "GPU class @app.cls must have timeout= parameter"
+        timeout_val = int(match.group(1))
+        assert timeout_val >= 1200, (
+            f"GPU timeout={timeout_val}s is too short. Full pipeline (FLAME tracking + "
+            f"LAM inference + GLB generation) typically takes 10-25 minutes. "
+            f"Must be >= 1200s (20 min)."
+        )
+
+    def test_generate_has_finally_status_guard(self, modal_source):
+        """Generator.generate() must write status file in finally block as last resort."""
+        lines = modal_source.split("\n")
+        in_generate = False
+        has_finally_guard = False
+        for i, line in enumerate(lines):
+            if "def generate(self" in line:
+                in_generate = True
+            if in_generate and "finally:" in line:
+                # Check next ~10 lines for status file write
+                for j in range(i+1, min(i+15, len(lines))):
+                    if "status_written" in lines[j] or "status_file" in lines[j]:
+                        has_finally_guard = True
+                        break
+        assert has_finally_guard, (
+            "Generator.generate() must have a finally block that writes status file "
+            "as a last resort (handles cases where except block also fails)"
+        )
+
+    def test_scaledown_window_reasonable(self, modal_source):
+        """scaledown_window should be >= 30s to avoid excessive cold starts."""
+        import re
+        match = re.search(r'scaledown_window=(\d+)', modal_source)
+        assert match, "GPU class must have scaledown_window= parameter"
+        val = int(match.group(1))
+        assert val >= 30, (
+            f"scaledown_window={val}s is too aggressive. Cold starts add 2-5 minutes. "
+            f"Use >= 30s to reuse warm containers for rapid iteration."
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

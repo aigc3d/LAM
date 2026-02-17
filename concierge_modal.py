@@ -5,7 +5,7 @@ concierge_modal.py - Concierge ZIP Generator on Modal (FINAL FIXED VERSION v2)
 Updates:
 1. Fixed "FileNotFoundError" in Gradio UI by handling file uploads correctly.
 2. Kept all quality fixes (Official Blender script, Xformers, Weight loading).
-3. Cost optimization settings applied (timeout=600).
+3. Cost optimization settings applied (timeout=1800 for GPU, scaledown_window=60).
 
 Usage:
   modal run concierge_modal.py                              # Gradio UI
@@ -734,7 +734,7 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking, mot
         yield f"Error: {str(e)}\n\nTraceback:\n{tb}", None, None, None, None
 
 
-@app.cls(gpu="L4", image=image, volumes={OUTPUT_VOL_PATH: output_vol}, timeout=600, scaledown_window=10)
+@app.cls(gpu="L4", image=image, volumes={OUTPUT_VOL_PATH: output_vol}, timeout=1800, scaledown_window=60)
 class Generator:
     @modal.enter()
     def setup(self):
@@ -806,6 +806,7 @@ class Generator:
 
         status_file = os.path.join(vol_dir, f"status_{job_id}.json")
 
+        status_written = False
         try:
             final_msg = "Processing..."
             for status, _, _, tracked_img, preproc_img in _generate_concierge_zip(
@@ -821,13 +822,28 @@ class Generator:
 
             with open(status_file, "w") as f: json.dump({"type": "done", "msg": final_msg}, f)
             output_vol.commit()
+            status_written = True
 
         except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            print(f"[GPU ERROR] {tb}", flush=True)
             try:
-                with open(status_file, "w") as f: json.dump({"type": "error", "msg": str(e)}, f)
+                with open(status_file, "w") as f:
+                    json.dump({"type": "error", "msg": f"{e}\n\n{tb}"}, f)
                 output_vol.commit()
-            except Exception: pass
+                status_written = True
+            except Exception:
+                pass
         finally:
+            # Last-resort: ensure status file exists even if above blocks failed
+            if not status_written:
+                try:
+                    with open(status_file, "w") as f:
+                        json.dump({"type": "error", "msg": "GPU process terminated unexpectedly (status not written)"}, f)
+                    output_vol.commit()
+                except Exception:
+                    pass
             shutil.rmtree(upload_dir, ignore_errors=True)
 
 
@@ -886,44 +902,75 @@ def web():
         except Exception:
             pass
 
+        # Shared state between UI thread and GPU thread
+        gpu_error = {"error": None, "done": False}
+
         def _call_gpu():
             try:
                 gen = Generator()
-                # Pass bytes, not paths, to the remote GPU function
                 gen.generate.remote(image_bytes, video_bytes, motion_choice or "custom", job_id)
             except Exception as e:
-                print(f"GPU Launch Error: {e}")
+                import traceback
+                tb = traceback.format_exc()
+                gpu_error["error"] = f"{e}\n\nTraceback:\n{tb}"
+                print(f"GPU Launch/Execution Error:\n{tb}")
+                # Write error status to volume so it persists even if UI is slow
+                try:
+                    with open(status_file, "w") as sf:
+                        json.dump({"type": "error", "msg": f"GPU error: {e}"}, sf)
+                    output_vol.commit()
+                except Exception:
+                    pass
+            finally:
+                gpu_error["done"] = True
 
-        threading.Thread(target=_call_gpu, daemon=True).start()
+        gpu_thread = threading.Thread(target=_call_gpu, daemon=True)
+        gpu_thread.start()
         yield "Starting GPU worker...", None, None, None, None
 
         start = time.time()
         while True:
             time.sleep(5)
             output_vol.reload()
-            
+
             tracked_p = os.path.join(OUTPUT_VOL_PATH, "tracked_face.png")
             preproc_p = os.path.join(OUTPUT_VOL_PATH, "preproc_input.png")
             last_tracked = tracked_p if os.path.isfile(tracked_p) else None
             last_preproc = preproc_p if os.path.isfile(preproc_p) else None
 
+            # Check for completion status file from GPU
             if os.path.isfile(status_file):
                 with open(status_file) as f: result = json.load(f)
                 try: os.remove(status_file); output_vol.commit()
                 except: pass
-                
+
                 if result["type"] == "error":
                     yield f"Error: {result['msg']}", None, None, None, None
                     return
-                
+
                 zip_p = os.path.join(OUTPUT_VOL_PATH, "concierge.zip")
                 preview_p = os.path.join(OUTPUT_VOL_PATH, "preview.mp4")
                 yield result["msg"], zip_p if os.path.isfile(zip_p) else None, preview_p if os.path.isfile(preview_p) else None, last_tracked, last_preproc
                 return
 
+            # Detect GPU thread death (crash, timeout, or remote exception)
+            if gpu_error["done"] and not os.path.isfile(status_file):
+                err = gpu_error.get("error")
+                if err:
+                    yield f"Error: GPU job failed — {err}", None, None, None, None
+                else:
+                    # Thread finished but no status file — Modal killed container
+                    # (timeout, OOM, infrastructure error)
+                    yield (
+                        "Error: GPU job finished without writing results. "
+                        "Likely cause: Modal container killed (timeout/OOM). "
+                        "Check Modal dashboard logs for details."
+                    ), None, None, None, None
+                return
+
             elapsed = int(time.time() - start)
-            if elapsed > 1800: # 30 min timeout for UI polling
-                 yield "Error: UI polling timed out", None, None, None, None
+            if elapsed > 1800:
+                 yield "Error: UI polling timed out (30 min)", None, None, None, None
                  return
 
             mins, secs = divmod(elapsed, 60)
