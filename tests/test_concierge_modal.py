@@ -762,6 +762,51 @@ class TestGPUErrorHandling:
             f"Use >= 30s to reuse warm containers for rapid iteration."
         )
 
+    def test_gpu_writes_progress_heartbeat(self, modal_source):
+        """GPU generate() must write progress heartbeats to volume."""
+        assert "progress_" in modal_source and "_write_progress" in modal_source, (
+            "GPU generate() must call _write_progress() to write heartbeat files"
+        )
+        # Must write progress at start AND during pipeline steps
+        lines = modal_source.split("\n")
+        in_generate = False
+        progress_calls = 0
+        for line in lines:
+            if "def generate(self" in line:
+                in_generate = True
+            if in_generate and "_write_progress(" in line and not line.strip().startswith("#"):
+                progress_calls += 1
+            if in_generate and line.strip().startswith("class "):
+                break
+        assert progress_calls >= 2, (
+            f"GPU generate() calls _write_progress() only {progress_calls} time(s). "
+            f"Must call at start AND during each pipeline step for reliable heartbeat."
+        )
+
+    def test_ui_reads_progress_heartbeat(self, modal_source):
+        """UI polling must read GPU progress heartbeat to detect liveness."""
+        assert "progress_file" in modal_source or "progress_" in modal_source, (
+            "UI must reference progress file for GPU heartbeat"
+        )
+        assert "last_activity" in modal_source, (
+            "UI must track last_activity timestamp from GPU heartbeat"
+        )
+
+    def test_ui_has_idle_timeout(self, modal_source):
+        """UI must have idle timeout (no heartbeat) separate from absolute timeout."""
+        assert "IDLE_TIMEOUT" in modal_source or "idle" in modal_source.lower(), (
+            "UI must have idle timeout to detect GPU death between heartbeats"
+        )
+        assert "MAX_TIMEOUT" in modal_source or "max_timeout" in modal_source.lower() or "3600" in modal_source, (
+            "UI must have absolute max timeout that accounts for provisioning+setup+pipeline"
+        )
+
+    def test_ui_shows_provisioning_status(self, modal_source):
+        """UI must show 'provisioning/startup' when no GPU heartbeat yet."""
+        assert "provisioning" in modal_source.lower() or "startup" in modal_source.lower(), (
+            "UI must distinguish 'waiting for GPU provisioning' from 'GPU is processing'"
+        )
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

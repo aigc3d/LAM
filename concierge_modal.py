@@ -805,6 +805,19 @@ class Generator:
         selected_motion = motion_name if motion_name != "custom" else None
 
         status_file = os.path.join(vol_dir, f"status_{job_id}.json")
+        progress_file = os.path.join(vol_dir, f"progress_{job_id}.json")
+
+        def _write_progress(msg):
+            """Write progress heartbeat to volume so UI knows GPU is alive."""
+            import time as _time
+            try:
+                with open(progress_file, "w") as f:
+                    json.dump({"msg": msg, "ts": _time.time()}, f)
+                output_vol.commit()
+            except Exception:
+                pass
+
+        _write_progress("GPU generate() started, running pipeline...")
 
         status_written = False
         try:
@@ -813,6 +826,7 @@ class Generator:
                 image_path, effective_video, self.cfg, self.lam, self.flametracking, motion_name=selected_motion,
             ):
                 final_msg = status
+                _write_progress(status)
                 if tracked_img and os.path.isfile(tracked_img):
                     shutil.copy2(tracked_img, os.path.join(vol_dir, "tracked_face.png"))
                     output_vol.commit()
@@ -844,6 +858,13 @@ class Generator:
                     output_vol.commit()
                 except Exception:
                     pass
+            # Clean up progress file
+            try:
+                if os.path.exists(progress_file):
+                    os.remove(progress_file)
+                    output_vol.commit()
+            except Exception:
+                pass
             shutil.rmtree(upload_dir, ignore_errors=True)
 
 
@@ -929,6 +950,12 @@ def web():
         yield "Starting GPU worker...", None, None, None, None
 
         start = time.time()
+        last_activity = time.time()  # Reset on each heartbeat
+        last_progress_msg = ""
+        progress_file = os.path.join(OUTPUT_VOL_PATH, f"progress_{job_id}.json")
+        IDLE_TIMEOUT = 600   # 10 min with no heartbeat = dead
+        MAX_TIMEOUT = 3600   # 1 hour absolute max (provisioning + setup + pipeline)
+
         while True:
             time.sleep(5)
             output_vol.reload()
@@ -953,14 +980,28 @@ def web():
                 yield result["msg"], zip_p if os.path.isfile(zip_p) else None, preview_p if os.path.isfile(preview_p) else None, last_tracked, last_preproc
                 return
 
+            # Check GPU heartbeat/progress — reset idle timer
+            gpu_step = ""
+            if os.path.isfile(progress_file):
+                try:
+                    with open(progress_file) as f: prog = json.load(f)
+                    gpu_step = prog.get("msg", "")
+                    if gpu_step != last_progress_msg:
+                        last_progress_msg = gpu_step
+                        last_activity = time.time()
+                except (json.JSONDecodeError, KeyError):
+                    pass
+
             # Detect GPU thread death (crash, timeout, or remote exception)
             if gpu_error["done"] and not os.path.isfile(status_file):
+                # One more reload in case of volume propagation delay
+                output_vol.reload()
+                if os.path.isfile(status_file):
+                    continue  # status arrived, re-check in next iteration
                 err = gpu_error.get("error")
                 if err:
                     yield f"Error: GPU job failed — {err}", None, None, None, None
                 else:
-                    # Thread finished but no status file — Modal killed container
-                    # (timeout, OOM, infrastructure error)
                     yield (
                         "Error: GPU job finished without writing results. "
                         "Likely cause: Modal container killed (timeout/OOM). "
@@ -969,12 +1010,26 @@ def web():
                 return
 
             elapsed = int(time.time() - start)
-            if elapsed > 1800:
-                 yield "Error: UI polling timed out (30 min)", None, None, None, None
-                 return
+            idle = int(time.time() - last_activity)
+
+            # Absolute timeout (includes provisioning + cold start + pipeline)
+            if elapsed > MAX_TIMEOUT:
+                yield f"Error: Absolute timeout ({MAX_TIMEOUT//60} min). GPU may be stuck.", None, None, None, None
+                return
+
+            # Idle timeout: no heartbeat for too long after GPU started
+            if idle > IDLE_TIMEOUT and last_progress_msg:
+                yield (
+                    f"Error: No GPU heartbeat for {idle//60}m{idle%60:02d}s "
+                    f"(last: \"{last_progress_msg}\"). GPU may have crashed."
+                ), None, None, None, None
+                return
 
             mins, secs = divmod(elapsed, 60)
-            yield f"Processing... ({mins}m{secs:02d}s)", None, None, last_tracked, last_preproc
+            if gpu_step:
+                yield f"[{mins}m{secs:02d}s] {gpu_step}", None, None, last_tracked, last_preproc
+            else:
+                yield f"Waiting for GPU... ({mins}m{secs:02d}s) [provisioning/startup]", None, None, last_tracked, last_preproc
 
     with gr.Blocks(title="Concierge ZIP Generator") as demo:
         gr.Markdown("# Concierge ZIP Generator (Final Fixed Version)")
