@@ -136,23 +136,30 @@ image = (
         "include_dirs=[numpy.get_include()])\" "
         "build_ext --inplace",
     )
-    # Pre-compile nvdiffrast CUDA JIT extensions during image build.
-    # Without this, nvdiffrast recompiles on EVERY container start (~10-30 min).
+    # Set persistent cache dir for JIT-compiled CUDA extensions
     .env({"TORCH_EXTENSIONS_DIR": "/root/.cache/torch_extensions"})
-    .run_commands(
-        "python -c \""
-        "import torch.utils.cpp_extension as c; "
-        "orig = c.load; "
-        "def patched(*a, **kw): "
-        "    cflags = list(kw.get('extra_cflags', []) or []); "
-        "    cflags.append('-Wno-c++11-narrowing'); "
-        "    kw['extra_cflags'] = cflags; "
-        "    return orig(*a, **kw)\n"
-        "c.load = patched; "
-        "import nvdiffrast.torch as dr; "
-        "print('nvdiffrast pre-compiled OK')\"",
-    )
 )
+
+
+def _precompile_nvdiffrast():
+    """Pre-compile nvdiffrast CUDA JIT extensions during image build.
+
+    Without this, nvdiffrast recompiles on EVERY container cold start (~10-30 min).
+    run_function() avoids shell quoting issues with python -c.
+    """
+    import torch.utils.cpp_extension as c
+    orig = c.load
+    def patched(*a, **kw):
+        cflags = list(kw.get("extra_cflags", []) or [])
+        cflags.append("-Wno-c++11-narrowing")
+        kw["extra_cflags"] = cflags
+        return orig(*a, **kw)
+    c.load = patched
+    import nvdiffrast.torch as dr  # noqa: F401 — triggers JIT compilation
+    print("nvdiffrast pre-compiled OK")
+
+
+image = image.run_function(_precompile_nvdiffrast)
 
 
 def _download_missing_models():
