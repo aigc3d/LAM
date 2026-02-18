@@ -267,8 +267,13 @@ if _has_model_zoo:
     image = image.add_local_dir("./model_zoo", remote_path="/root/LAM/model_zoo")
 if _has_assets:
     image = image.add_local_dir("./assets", remote_path="/root/LAM/assets")
-if os.path.isdir("./tools"):
-    image = image.add_local_dir("./tools", remote_path="/root/LAM/tools")
+
+# Override upstream clone with local source directories.
+# The upstream git clone may lack fixes (compile disable, attention behaviour, etc.)
+# that the local repo has.  Mounting these ensures the container runs the same code.
+for _local_dir in ("tools", "lam", "configs", "vhap", "external"):
+    if os.path.isdir(f"./{_local_dir}"):
+        image = image.add_local_dir(f"./{_local_dir}", remote_path=f"/root/LAM/{_local_dir}")
 
 
 # ============================================================
