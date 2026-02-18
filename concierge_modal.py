@@ -136,15 +136,8 @@ image = (
         "include_dirs=[numpy.get_include()])\" "
         "build_ext --inplace",
     )
-    # Set persistent cache dir for JIT-compiled CUDA extensions.
-    # TORCHDYNAMO_DISABLE=1 is a global kill-switch that makes @torch.compile
-    # a no-op.  Two critical methods (Dinov2FusionWrapper.forward and
-    # ModelLAM.forward_latent_points) have @torch.compile decorators that can
-    # silently corrupt inference output when dynamo is active.
-    .env({
-        "TORCH_EXTENSIONS_DIR": "/root/.cache/torch_extensions",
-        "TORCHDYNAMO_DISABLE": "1",
-    })
+    # Set persistent cache dir for JIT-compiled CUDA extensions
+    .env({"TORCH_EXTENSIONS_DIR": "/root/.cache/torch_extensions"})
 )
 
 
@@ -327,6 +320,16 @@ def _setup_model_paths():
 def _init_lam_pipeline():
     """Initialize FLAME tracking and LAM model. Called once per container."""
     import time as _time
+
+    # TORCHDYNAMO_DISABLE must be set BEFORE importing torch._dynamo.
+    # This is a global kill-switch that makes @torch.compile a no-op.
+    # Two critical methods (Dinov2FusionWrapper.forward and
+    # ModelLAM.forward_latent_points) have @torch.compile decorators
+    # that can silently corrupt inference output when dynamo is active.
+    # Set at runtime (not in image .env()) to avoid invalidating the
+    # Modal image cache on every deploy.
+    os.environ["TORCHDYNAMO_DISABLE"] = "1"
+
     import torch
     import torch._dynamo
 
