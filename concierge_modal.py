@@ -244,6 +244,20 @@ def _download_missing_models():
             shell=True, check=True,
         )
 
+    # DINOv2 weights — used by LAM encoder, downloaded by torch.hub at runtime
+    # if not baked into the image.  Pre-download to avoid 1.1 GB fetch on every
+    # container cold-start (and bandwidth contention when multiple containers
+    # spin up simultaneously).
+    dinov2_cache = "/root/.cache/torch/hub/checkpoints/dinov2_vitl14_reg4_pretrain.pth"
+    if not os.path.isfile(dinov2_cache):
+        print("[+] Pre-downloading DINOv2 weights (1.1 GB)...")
+        os.makedirs(os.path.dirname(dinov2_cache), exist_ok=True)
+        subprocess.run([
+            "wget", "-q",
+            "https://dl.fbaipublicfiles.com/dinov2/dinov2_vitl14/dinov2_vitl14_reg4_pretrain.pth",
+            "-O", dinov2_cache,
+        ], check=True)
+
     print("Model downloads complete.")
 
 
@@ -547,7 +561,7 @@ def _track_video_to_motion(video_path, flametracking, working_dir, status_callba
 # Single GPU Container: Gradio UI + Pipeline (like app_lam.py)
 # ============================================================
 
-@app.cls(gpu="L4", image=image, timeout=7200, scaledown_window=300, keep_warm=1)
+@app.cls(gpu="L4", image=image, timeout=7200, scaledown_window=300, keep_warm=1, max_containers=1)
 class WebApp:
     """Single container: Gradio + GPU pipeline. Same architecture as app_lam.py."""
 
