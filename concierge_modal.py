@@ -547,7 +547,7 @@ def _track_video_to_motion(video_path, flametracking, working_dir, status_callba
 # Single GPU Container: Gradio UI + Pipeline (like app_lam.py)
 # ============================================================
 
-@app.cls(gpu="L4", image=image, timeout=7200, scaledown_window=300)
+@app.cls(gpu="L4", image=image, timeout=7200, scaledown_window=300, keep_warm=1)
 class WebApp:
     """Single container: Gradio + GPU pipeline. Same architecture as app_lam.py."""
 
