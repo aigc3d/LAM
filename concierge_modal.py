@@ -136,8 +136,15 @@ image = (
         "include_dirs=[numpy.get_include()])\" "
         "build_ext --inplace",
     )
-    # Set persistent cache dir for JIT-compiled CUDA extensions
-    .env({"TORCH_EXTENSIONS_DIR": "/root/.cache/torch_extensions"})
+    # Set persistent cache dir for JIT-compiled CUDA extensions.
+    # TORCHDYNAMO_DISABLE=1 is a global kill-switch that makes @torch.compile
+    # a no-op.  Two critical methods (Dinov2FusionWrapper.forward and
+    # ModelLAM.forward_latent_points) have @torch.compile decorators that can
+    # silently corrupt inference output when dynamo is active.
+    .env({
+        "TORCH_EXTENSIONS_DIR": "/root/.cache/torch_extensions",
+        "TORCHDYNAMO_DISABLE": "1",
+    })
 )
 
 
@@ -275,6 +282,12 @@ for _local_dir in ("tools", "lam", "configs", "vhap", "external"):
     if os.path.isdir(f"./{_local_dir}"):
         image = image.add_local_dir(f"./{_local_dir}", remote_path=f"/root/LAM/{_local_dir}")
 
+# Mount app_lam.py — the container imports parse_configs, save_images2video,
+# add_audio_to_video from it.  Without this mount the upstream git-clone version
+# is used, which may lack local fixes.
+if os.path.isfile("./app_lam.py"):
+    image = image.add_local_file("./app_lam.py", remote_path="/root/LAM/app_lam.py")
+
 
 # ============================================================
 # Pipeline Functions (same logic as app_lam.py)
@@ -330,6 +343,21 @@ def _init_lam_pipeline():
     })
 
     torch._dynamo.config.disable = True
+
+    # --- Runtime diagnostics (helps debug bird-monster issues) ---
+    print(f"[DIAG] TORCHDYNAMO_DISABLE={os.environ.get('TORCHDYNAMO_DISABLE', '<unset>')}")
+    print(f"[DIAG] torch._dynamo.config.disable={torch._dynamo.config.disable}")
+    try:
+        from xformers.ops import memory_efficient_attention  # noqa: F401
+        print("[DIAG] xformers memory_efficient_attention: AVAILABLE")
+    except ImportError as e:
+        print(f"[DIAG] xformers memory_efficient_attention: NOT AVAILABLE ({e})")
+    try:
+        from lam.models.encoders.dinov2.layers.attention import XFORMERS_AVAILABLE
+        print(f"[DIAG] dinov2 attention.XFORMERS_AVAILABLE = {XFORMERS_AVAILABLE}")
+    except Exception as e:
+        print(f"[DIAG] could not check dinov2 XFORMERS_AVAILABLE: {e}")
+    # ---------------------------------------------------------------
 
     # Parse config
     t = _time.time()
