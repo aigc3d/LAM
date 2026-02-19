@@ -330,6 +330,15 @@ def _init_lam_pipeline():
     # Modal image cache on every deploy.
     os.environ["TORCHDYNAMO_DISABLE"] = "1"
 
+    # XFORMERS_DISABLED forces DINOv2 to use standard attention instead
+    # of xformers memory_efficient_attention.  The LAM-20K model was
+    # fine-tuned (encoder_freeze: false) with standard attention (xformers
+    # is NOT in requirements.txt).  Using xformers at inference produces
+    # different features due to floating-point order differences, which
+    # compound over 24 transformer layers → "bird monster" output.
+    # Must be set BEFORE the dinov2 attention module is imported.
+    os.environ["XFORMERS_DISABLED"] = "1"
+
     import torch
     import torch._dynamo
 
@@ -347,19 +356,10 @@ def _init_lam_pipeline():
 
     torch._dynamo.config.disable = True
 
-    # --- Runtime diagnostics (helps debug bird-monster issues) ---
+    # --- Runtime diagnostics ---
     print(f"[DIAG] TORCHDYNAMO_DISABLE={os.environ.get('TORCHDYNAMO_DISABLE', '<unset>')}")
+    print(f"[DIAG] XFORMERS_DISABLED={os.environ.get('XFORMERS_DISABLED', '<unset>')}")
     print(f"[DIAG] torch._dynamo.config.disable={torch._dynamo.config.disable}")
-    try:
-        from xformers.ops import memory_efficient_attention  # noqa: F401
-        print("[DIAG] xformers memory_efficient_attention: AVAILABLE")
-    except ImportError as e:
-        print(f"[DIAG] xformers memory_efficient_attention: NOT AVAILABLE ({e})")
-    try:
-        from lam.models.encoders.dinov2.layers.attention import XFORMERS_AVAILABLE
-        print(f"[DIAG] dinov2 attention.XFORMERS_AVAILABLE = {XFORMERS_AVAILABLE}")
-    except Exception as e:
-        print(f"[DIAG] could not check dinov2 XFORMERS_AVAILABLE: {e}")
     # ---------------------------------------------------------------
 
     # Parse config
