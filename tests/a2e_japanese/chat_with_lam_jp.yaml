@@ -44,6 +44,9 @@ default:
         enabled: true
         module: asr/sensevoice/asr_handler_sensevoice
         model_name: "iic/SenseVoiceSmall"
+        # 日本語を強制指定（autoだと中国語と誤検出される）
+        # patch_asr_language.py を適用後に有効
+        language: "ja"
 
       Edge_TTS:
         enabled: true

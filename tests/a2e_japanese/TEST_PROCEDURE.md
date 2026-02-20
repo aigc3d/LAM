@@ -77,6 +77,26 @@ python tests/a2e_japanese/save_a2e_output.py
 python tests/a2e_japanese/analyze_blendshapes.py --input-dir tests/a2e_japanese/blendshape_outputs/
 ```
 
+### Step 4.5: パッチ適用（初回のみ）
+
+OpenAvatarChatのハンドラーにバグ修正・日本語対応パッチを適用する。
+
+```powershell
+# ASR: 日本語言語強制（中国語誤検出の修正）
+python tests/a2e_japanese/patch_asr_language.py
+
+# VAD/ASR: numpy dtype修正
+python tests/a2e_japanese/patch_vad_handler.py
+
+# LLM: Gemini dict content修正
+python tests/a2e_japanese/patch_llm_handler.py
+```
+
+パッチが自動適用できない場合は `--help` で手動修正ガイドを表示:
+```powershell
+python tests/a2e_japanese/patch_asr_language.py --help
+```
+
 ### Step 5: OpenAvatarChatでの統合テスト
 
 ```powershell
@@ -86,7 +106,7 @@ copy tests\a2e_japanese\chat_with_lam_jp.yaml config\chat_with_lam_jp.yaml
 # Gemini APIキーを設定（既に設定済みの場合はスキップ）
 # config/chat_with_lam_jp.yaml の api_key を編集
 
-# 起動
+# 起動（※ chat_with_lam.yaml ではなく _jp.yaml を指定）
 python src/demo.py --config config/chat_with_lam_jp.yaml
 ```
 
