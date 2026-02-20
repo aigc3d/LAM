@@ -55,7 +55,7 @@ default:
       LLMOpenAICompatible:
         enabled: true
         module: llm/openai_compatible/llm_handler_openai_compatible
-        model_name: "gemini-2.0-flash"
+        model_name: "gemini-2.5-flash"
         enable_video_input: false
         history_length: 20
         system_prompt: "あなたはAIコンシェルジュです。日本語で簡潔に2〜3文で回答してください。"
