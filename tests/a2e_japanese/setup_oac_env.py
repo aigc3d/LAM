@@ -46,6 +46,7 @@ class OACSetupChecker:
         self._check_config_yaml()
         self._check_ssl_certs()
         self._check_vad_handler_bugs()
+        self._check_llm_handler_bugs()
 
         print("\n" + "=" * 60)
         print("RESULTS")
@@ -344,6 +345,33 @@ class OACSetupChecker:
         else:
             print("  [WARN] silero_vad.onnx not found")
             self.issues.append("SileroVAD ONNX model not found")
+
+
+    def _check_llm_handler_bugs(self):
+        """LLMハンドラーの既知バグ確認 (Gemini dict content)"""
+        print("\n[8/8] LLM Handler Known Bugs")
+
+        llm_path = (self.oac_dir / "src" / "handlers" / "llm" /
+                    "openai_compatible" / "llm_handler_openai_compatible.py")
+
+        if not llm_path.exists():
+            print(f"  [SKIP] LLM handler not found")
+            return
+
+        content = llm_path.read_text(encoding="utf-8")
+
+        # Bug: Gemini API returns delta.content as dict instead of str
+        # This causes: TypeError: float() argument must be a string or
+        #              a real number, not 'dict'
+        if ("set_main_data(" in content
+                and "# [PATCH] Gemini dict content fix" not in content):
+            print("  [BUG] Gemini dict content not handled!")
+            print("    Gemini OpenAI-compatible API may return delta.content")
+            print("    as dict/list instead of str, causing TypeError.")
+            print("    FIX: python tests/a2e_japanese/patch_llm_handler.py")
+            self.issues.append("LLM handler: Gemini dict content bug")
+        else:
+            print("  [OK] Gemini dict content handling")
 
 
 def main():
