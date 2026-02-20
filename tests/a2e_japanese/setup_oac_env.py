@@ -45,6 +45,7 @@ class OACSetupChecker:
         self._check_cuda_cpu()
         self._check_config_yaml()
         self._check_ssl_certs()
+        self._check_vad_handler_bugs()
 
         print("\n" + "=" * 60)
         print("RESULTS")
@@ -280,6 +281,69 @@ class OACSetupChecker:
             print(f"  Or use mkcert: mkcert -install && mkcert localhost")
             # SSLは必須ではない（localhost HTTPでもマイク動く場合あり）
             # self.issues.append("SSL certificates missing")
+
+
+    def _check_vad_handler_bugs(self):
+        """VADハンドラーの既知バグ確認"""
+        print("\n[7/7] VAD Handler Known Bugs")
+
+        vad_path = (self.oac_dir / "src" / "handlers" / "vad" / "silerovad" /
+                    "vad_handler_silero.py")
+
+        if not vad_path.exists():
+            print(f"  [SKIP] VAD handler not found")
+            return
+
+        content = vad_path.read_text(encoding="utf-8")
+
+        # Bug 1: timestamp[0] NoneType crash
+        if ("context.slice_context.update_start_id(timestamp[0]" in content
+                and "if timestamp is not None" not in content):
+            print("  [BUG] timestamp[0] NoneType crash detected!")
+            print("    When audio arrives without valid timestamp,")
+            print("    timestamp[0] crashes with TypeError.")
+            print("    FIX: Apply patch_vad_handler.py")
+            self.issues.append("VAD handler: timestamp[0] NoneType bug")
+        else:
+            print("  [OK] timestamp null check")
+
+        # Bug 2: No defensive type check on ONNX inputs
+        if ("isinstance(clip, np.ndarray)" not in content
+                and "isinstance(context.model_state" not in content):
+            print("  [WARN] No defensive type checking on ONNX inputs")
+            print("    If upstream data is not numpy, ONNX will crash with:")
+            print("    RuntimeError: Input data type <class 'list'> is not supported.")
+            print("    FIX: Apply patch_vad_handler.py")
+            self.issues.append("VAD handler: missing ONNX input type validation")
+        else:
+            print("  [OK] ONNX input type checking")
+
+        # Check SenseVoice handler
+        asr_path = (self.oac_dir / "src" / "handlers" / "asr" / "sensevoice" /
+                    "asr_handler_sensevoice.py")
+
+        if asr_path.exists():
+            asr_content = asr_path.read_text(encoding="utf-8")
+            if "np.zeros(shape=" in asr_content and "dtype=remainder_audio.dtype" not in asr_content:
+                print("  [WARN] SenseVoice np.zeros dtype mismatch")
+                print("    np.zeros without dtype creates float64, audio is float32")
+                self.issues.append("SenseVoice handler: np.zeros dtype mismatch")
+            else:
+                print("  [OK] SenseVoice dtype handling")
+
+        # Check SileroVAD ONNX model
+        model_candidates = list(self.oac_dir.rglob("silero_vad.onnx"))
+        if model_candidates:
+            print(f"  [OK] SileroVAD ONNX model found: {model_candidates[0]}")
+            try:
+                import onnxruntime
+                print(f"  [OK] onnxruntime {onnxruntime.__version__}")
+            except ImportError:
+                print("  [FAIL] onnxruntime not installed")
+                self.issues.append("onnxruntime not installed")
+        else:
+            print("  [WARN] silero_vad.onnx not found")
+            self.issues.append("SileroVAD ONNX model not found")
 
 
 def main():
