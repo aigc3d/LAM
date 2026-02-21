@@ -3,12 +3,14 @@
 // src/scripts/chat/concierge-controller.ts
 import { CoreController } from './core-controller';
 import { AudioManager } from './audio-manager';
+import { ExpressionManager, ExpressionData } from '../avatar/vrm-expression-manager'; // ★A2E統合
 
 declare const io: any;
 
 export class ConciergeController extends CoreController {
   // Audio2Expression はバックエンドTTSエンドポイント経由で統合済み
   private pendingAckPromise: Promise<void> | null = null;
+  private expressionManager: ExpressionManager | null = null; // ★A2E ExpressionManager
 
   constructor(container: HTMLElement, apiBase: string) {
     super(container, apiBase);
@@ -39,19 +41,10 @@ export class ConciergeController extends CoreController {
       });
     }
 
-    // ★ LAMAvatar との統合: 外部TTSプレーヤーをリンク
-    // LAMAvatar が後から初期化される可能性があるため、即時 + 遅延でリンク
-    const linkTtsPlayer = () => {
-      const lam = (window as any).lamAvatarController;
-      if (lam && typeof lam.setExternalTtsPlayer === 'function') {
-        lam.setExternalTtsPlayer(this.ttsPlayer);
-        console.log('[Concierge] Linked external TTS player with LAMAvatar');
-        return true;
-      }
-      return false;
-    };
-    if (!linkTtsPlayer()) {
-      setTimeout(() => linkTtsPlayer(), 2000);
+    // ★A2E統合: ExpressionManager初期化（GVRMレンダラーが利用可能な場合）
+    if (this.guavaRenderer) {
+      this.expressionManager = new ExpressionManager(this.guavaRenderer);
+      console.log('[Concierge] ExpressionManager initialized for A2E lip sync');
     }
   }
 
@@ -242,26 +235,16 @@ export class ConciergeController extends CoreController {
   }
 
   /**
-   * TTS応答に同梱されたExpressionデータをバッファに即投入（遅延ゼロ）
-   * 同期方式: バックエンドがTTS+audio2expを同期実行し、結果を同梱して返す
+   * ★A2E統合: TTS応答に同梱されたExpressionデータでリップシンク再生
+   * ExpressionManagerがaudioElement.currentTimeに同期してフレームを選択し、
+   * GVRMのupdateLipSync()を直接呼び出す。
    */
   private applyExpressionFromTts(expression: any): void {
-    const lamController = (window as any).lamAvatarController;
-    if (!lamController) return;
+    if (!this.expressionManager) return;
 
-    // 新セグメント開始時は必ずバッファクリア（前セグメントのフレーム混入防止）
-    if (typeof lamController.clearFrameBuffer === 'function') {
-      lamController.clearFrameBuffer();
-    }
-
-    if (expression?.names && expression?.frames?.length > 0) {
-      const frames = expression.frames.map((frameData: number[]) => {
-        const frame: { [key: string]: number } = {};
-        expression.names.forEach((name: string, i: number) => { frame[name] = frameData[i]; });
-        return frame;
-      });
-      lamController.queueExpressionFrames(frames, expression.frame_rate || 30);
-      console.log(`[Concierge] Expression sync: ${frames.length} frames queued`);
+    if (ExpressionManager.isValid(expression)) {
+      this.expressionManager.playExpressionFrames(expression, this.ttsPlayer);
+      console.log(`[Concierge] A2E expression: ${expression.frames.length} frames @ ${expression.frame_rate}fps`);
     }
   }
 
@@ -270,7 +253,8 @@ export class ConciergeController extends CoreController {
     if (this.els.avatarContainer) {
       this.els.avatarContainer.classList.remove('speaking');
     }
-    // ※ LAMAvatar の状態は ttsPlayer イベント（ended/pause）で管理
+    // ★A2E統合: ExpressionManager停止（口を閉じる）
+    this.expressionManager?.stop();
   }
 
 
