@@ -97,44 +97,69 @@ class Audio2ExpressionEngine:
         # A2Eデコーダー ロード
         # ========================================
         self.a2e_decoder = None
-        a2e_dir = self.model_dir / "LAM_audio2exp"
-
-        if a2e_dir.exists():
-            self._load_a2e_decoder(a2e_dir)
-        else:
-            logger.warning(f"[A2E Engine] LAM_audio2exp not found at {a2e_dir}")
-            logger.warning("[A2E Engine] Will use Wav2Vec2-based fallback")
+        self._load_a2e_decoder(self.model_dir)
 
         self._ready = True
         logger.info("[A2E Engine] Ready")
 
-    def _load_a2e_decoder(self, a2e_dir: Path):
-        """LAM A2Eデコーダーのロード"""
+    def _load_a2e_decoder(self, model_dir: Path):
+        """
+        LAM A2Eデコーダーのロード
+
+        対応するディレクトリ構造:
+          パターン1 (フラット): models/LAM_audio2exp_streaming.tar
+          パターン2 (サブディレクトリ): models/LAM_audio2exp/pretrained_models/lam_audio2exp_streaming.tar
+          パターン3 (サブディレクトリ直下): models/LAM_audio2exp/LAM_audio2exp_streaming.tar
+        """
         import torch
 
-        # LAM_Audio2Expression のパスを追加
-        lam_a2e_path = a2e_dir / "LAM_Audio2Expression"
-        if lam_a2e_path.exists():
-            if str(lam_a2e_path) not in sys.path:
-                sys.path.insert(0, str(lam_a2e_path))
+        # チェックポイントを探索
+        checkpoint_path = None
+        search_patterns = [
+            # パターン1: models/ 直下にtar (フラット配置)
+            model_dir / "LAM_audio2exp_streaming.tar",
+            model_dir / "lam_audio2exp_streaming.tar",
+            # パターン2: models/LAM_audio2exp/pretrained_models/
+            model_dir / "LAM_audio2exp" / "pretrained_models" / "lam_audio2exp_streaming.tar",
+            model_dir / "LAM_audio2exp" / "pretrained_models" / "LAM_audio2exp_streaming.tar",
+            # パターン3: models/LAM_audio2exp/ 直下
+            model_dir / "LAM_audio2exp" / "LAM_audio2exp_streaming.tar",
+            model_dir / "LAM_audio2exp" / "lam_audio2exp_streaming.tar",
+        ]
 
-        # pretrained model のチェックポイント
-        pretrained_dir = a2e_dir / "pretrained_models"
-        tar_files = list(pretrained_dir.glob("*.tar")) if pretrained_dir.exists() else []
+        for path in search_patterns:
+            if path.exists():
+                checkpoint_path = path
+                break
 
-        if not tar_files:
-            logger.warning("[A2E Engine] No pretrained model found, using fallback")
+        # パターンに一致しなければ、model_dir以下の全tarを検索
+        if checkpoint_path is None:
+            tar_files = list(model_dir.rglob("*audio2exp*.tar"))
+            if tar_files:
+                checkpoint_path = tar_files[0]
+
+        if checkpoint_path is None:
+            logger.warning(f"[A2E Engine] No A2E checkpoint found in {model_dir}")
+            logger.warning("[A2E Engine] Searched patterns: models/*.tar, models/LAM_audio2exp/**/*.tar")
+            logger.warning("[A2E Engine] Will use Wav2Vec2-based fallback")
             return
 
-        checkpoint_path = str(tar_files[0])
-        logger.info(f"[A2E Engine] Loading A2E decoder: {checkpoint_path}")
+        logger.info(f"[A2E Engine] Found A2E checkpoint: {checkpoint_path}")
+
+        # LAM_Audio2Expression のPythonモジュールパスを追加
+        for lam_path in [
+            model_dir / "LAM_Audio2Expression",
+            model_dir / "LAM_audio2exp" / "LAM_Audio2Expression",
+            model_dir.parent / "LAM_Audio2Expression",
+        ]:
+            if lam_path.exists() and str(lam_path) not in sys.path:
+                sys.path.insert(0, str(lam_path))
 
         try:
-            # A2Eデコーダーのインポートと初期化
             from engines.infer import Audio2ExpressionInfer
 
             self.a2e_decoder = Audio2ExpressionInfer()
-            checkpoint = torch.load(checkpoint_path, map_location=self.device)
+            checkpoint = torch.load(str(checkpoint_path), map_location=self.device)
             self.a2e_decoder.load_state_dict(checkpoint)
             self.a2e_decoder.to(self.device)
             self.a2e_decoder.eval()
@@ -142,10 +167,10 @@ class Audio2ExpressionEngine:
 
         except ImportError:
             logger.warning("[A2E Engine] LAM_Audio2Expression module not importable")
-            logger.warning("[A2E Engine] Using fallback mode")
+            logger.warning("[A2E Engine] Using Wav2Vec2-based fallback")
         except Exception as e:
             logger.warning(f"[A2E Engine] Failed to load A2E decoder: {e}")
-            logger.warning("[A2E Engine] Using fallback mode")
+            logger.warning("[A2E Engine] Using Wav2Vec2-based fallback")
 
     def is_ready(self) -> bool:
         return self._ready

@@ -30,12 +30,28 @@
 #### 1a. モデルの準備
 
 ```bash
-# LAM_audio2exp モデル (HuggingFace)
-git lfs install
-git clone https://huggingface.co/3DAIGC/LAM_audio2exp models/LAM_audio2exp
+# LAM_audio2exp モデル (HuggingFace) - 直接ダウンロード
+mkdir -p models
+wget -O models/LAM_audio2exp_streaming.tar \
+  https://huggingface.co/3DAIGC/LAM_audio2exp/resolve/main/LAM_audio2exp_streaming.tar
 
 # Wav2Vec2 モデル
+git lfs install
 git clone https://huggingface.co/facebook/wav2vec2-base-960h models/wav2vec2-base-960h
+```
+
+対応するディレクトリ構造（どちらでもOK）:
+```
+models/
+├── LAM_audio2exp_streaming.tar          ← フラット配置（推奨）
+└── wav2vec2-base-960h/
+
+# または
+models/
+├── LAM_audio2exp/
+│   └── pretrained_models/
+│       └── lam_audio2exp_streaming.tar  ← サブディレクトリ配置
+└── wav2vec2-base-960h/
 ```
 
 #### 1b. ローカルテスト
