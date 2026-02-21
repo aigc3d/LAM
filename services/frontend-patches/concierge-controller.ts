@@ -291,10 +291,13 @@ export class ConciergeController extends CoreController {
       lamController.clearFrameBuffer();
     }
 
-    // number[][] → {name: value}[] に変換
-    const frames = expression.frames.map((frameData: number[]) => {
+    // frames を {name: value}[] に変換
+    // 形式A (audio2exp-service直接): frames = [[0.1, 0.2, ...], ...]  → number[][]
+    // 形式B (gourmet-sp test data): frames = [{weights: [0.1, ...]}, ...] → {weights: number[]}[]
+    const frames = expression.frames.map((f: any) => {
       const frame: { [key: string]: number } = {};
-      expression.names.forEach((name: string, i: number) => { frame[name] = frameData[i]; });
+      const values = Array.isArray(f) ? f : (f.weights || []);
+      expression.names.forEach((name: string, i: number) => { frame[name] = values[i] ?? 0; });
       return frame;
     });
 
@@ -306,14 +309,12 @@ export class ConciergeController extends CoreController {
     console.log(`[A2E Chain3] ✅ ${frames.length}frames queued @ ${expression.frame_rate || 30}fps, jawOpen[0]=${typeof sampleJaw === 'number' ? sampleJaw.toFixed(3) : sampleJaw}`);
   }
 
-  // アバターアニメーション停止 → LAMAvatar のバッファクリア（口を閉じる）
+  // アバターアニメーション停止
+  // ※ LAMAvatar の状態（fade-out等）は ttsPlayer の ended イベント経由で自動管理される
+  // ※ ここで clearFrameBuffer() を呼ぶと fadeOutStartTime がリセットされ fade-out が途切れる
   private stopAvatarAnimation() {
     if (this.els.avatarContainer) {
       this.els.avatarContainer.classList.remove('speaking');
-    }
-    const lamController = (window as any).lamAvatarController;
-    if (lamController && typeof lamController.clearFrameBuffer === 'function') {
-      lamController.clearFrameBuffer();
     }
   }
 
