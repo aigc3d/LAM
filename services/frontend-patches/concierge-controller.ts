@@ -6,127 +6,9 @@ import { AudioManager } from './audio-manager';
 
 declare const io: any;
 
-// ========================================
-// ★A2E統合: ExpressionManager（インライン定義）
-// A2Eサービスから受け取った52次元ARKitブレンドシェイプ係数を
-// GVRMのボーンシステムにマッピングする。
-// ========================================
-
-interface ExpressionData {
-  names: string[];       // 52個のARKitブレンドシェイプ名
-  frames: number[][];    // フレームごとの52次元係数
-  frame_rate: number;    // fps (通常30)
-}
-
-// ARKitブレンドシェイプ名→インデックスのマップ
-const ARKIT_INDEX: Record<string, number> = {
-  jawOpen: 17,
-  mouthFunnel: 19, mouthPucker: 20,
-  mouthLowerDownLeft: 37, mouthLowerDownRight: 38,
-  mouthUpperUpLeft: 39, mouthUpperUpRight: 40,
-};
-
-class ExpressionManager {
-  private renderer: any;
-  private currentFrames: number[][] | null = null;
-  private frameRate: number = 30;
-  private animationFrameId: number | null = null;
-  private audioElement: HTMLAudioElement | null = null;
-  private isPlaying: boolean = false;
-
-  constructor(renderer: any) {
-    this.renderer = renderer;
-  }
-
-  /** A2E expressionデータを使って音声と同期したリップシンクを再生 */
-  public playExpressionFrames(expression: ExpressionData, audioElement: HTMLAudioElement) {
-    this.stop();
-    this.currentFrames = expression.frames;
-    this.frameRate = expression.frame_rate || 30;
-    this.audioElement = audioElement;
-    this.isPlaying = true;
-    this.tick();
-  }
-
-  /** フレーム更新ループ: 音声の再生位置に合わせてフレームを選択 */
-  private tick = () => {
-    if (!this.isPlaying || !this.currentFrames || !this.audioElement) {
-      this.applyLipSyncLevel(0);
-      return;
-    }
-
-    if (this.audioElement.ended) {
-      this.applyLipSyncLevel(0);
-      this.isPlaying = false;
-      return;
-    }
-
-    const currentTime = this.audioElement.currentTime;
-    const frameIdx = Math.floor(currentTime * this.frameRate);
-
-    if (frameIdx >= 0 && frameIdx < this.currentFrames.length) {
-      this.applyBlendshapes(this.currentFrames[frameIdx]);
-    } else if (frameIdx >= this.currentFrames.length) {
-      this.applyLipSyncLevel(0);
-    }
-
-    this.animationFrameId = requestAnimationFrame(this.tick);
-  };
-
-  /** 52次元ブレンドシェイプ係数をGVRMのupdateLipSync(0~1)に変換 */
-  private applyBlendshapes(c: number[]) {
-    if (!this.renderer) return;
-
-    const jawOpen = c[ARKIT_INDEX.jawOpen] || 0;
-    const mouthFunnel = c[ARKIT_INDEX.mouthFunnel] || 0;
-    const mouthPucker = c[ARKIT_INDEX.mouthPucker] || 0;
-    const mouthLowerDownL = c[ARKIT_INDEX.mouthLowerDownLeft] || 0;
-    const mouthLowerDownR = c[ARKIT_INDEX.mouthLowerDownRight] || 0;
-    const mouthUpperUpL = c[ARKIT_INDEX.mouthUpperUpLeft] || 0;
-    const mouthUpperUpR = c[ARKIT_INDEX.mouthUpperUpRight] || 0;
-
-    const mouthOpenness = Math.min(1.0,
-      jawOpen * 0.6 +
-      ((mouthLowerDownL + mouthLowerDownR) / 2) * 0.2 +
-      ((mouthUpperUpL + mouthUpperUpR) / 2) * 0.1 +
-      mouthFunnel * 0.05 +
-      mouthPucker * 0.05
-    );
-
-    this.renderer.updateLipSync(mouthOpenness);
-  }
-
-  private applyLipSyncLevel(level: number) {
-    if (this.renderer) this.renderer.updateLipSync(level);
-  }
-
-  /** 再生停止 */
-  public stop() {
-    this.isPlaying = false;
-    if (this.animationFrameId) {
-      cancelAnimationFrame(this.animationFrameId);
-      this.animationFrameId = null;
-    }
-    this.currentFrames = null;
-    this.applyLipSyncLevel(0);
-  }
-
-  /** expressionデータが有効かどうか */
-  public static isValid(expression: any): expression is ExpressionData {
-    return (
-      expression &&
-      Array.isArray(expression.names) &&
-      Array.isArray(expression.frames) &&
-      expression.frames.length > 0 &&
-      typeof expression.frame_rate === 'number'
-    );
-  }
-}
-
 export class ConciergeController extends CoreController {
   // Audio2Expression はバックエンドTTSエンドポイント経由で統合済み
   private pendingAckPromise: Promise<void> | null = null;
-  private expressionManager: ExpressionManager | null = null; // ★A2E ExpressionManager
 
   constructor(container: HTMLElement, apiBase: string) {
     super(container, apiBase);
@@ -157,10 +39,27 @@ export class ConciergeController extends CoreController {
       });
     }
 
-    // ★A2E統合: ExpressionManager初期化（GVRMレンダラーが利用可能な場合）
-    if (this.guavaRenderer) {
-      this.expressionManager = new ExpressionManager(this.guavaRenderer);
-      console.log('[Concierge] ExpressionManager initialized for A2E lip sync');
+    // ★A2E統合: LAMAvatarコントローラーとttsPlayerをリンク
+    // LAMAvatar.astro が後から初期化される可能性があるため、リトライ付きでリンク
+    const linkTtsPlayer = () => {
+      const lam = (window as any).lamAvatarController;
+      if (lam && typeof lam.setExternalTtsPlayer === 'function') {
+        lam.setExternalTtsPlayer(this.ttsPlayer);
+        console.log('[Concierge] ✅ Linked ttsPlayer with LAMAvatar controller');
+        return true;
+      }
+      return false;
+    };
+    if (!linkTtsPlayer()) {
+      // LAMAvatar未初期化 → 500ms間隔で最大20回(10秒)リトライ
+      let retries = 0;
+      const retryInterval = setInterval(() => {
+        retries++;
+        if (linkTtsPlayer() || retries >= 20) {
+          clearInterval(retryInterval);
+          if (retries >= 20) console.warn('[Concierge] ⚠️ LAMAvatar controller not found after 10s');
+        }
+      }, 500);
     }
   }
 
@@ -351,16 +250,31 @@ export class ConciergeController extends CoreController {
   }
 
   /**
-   * ★A2E統合: TTS応答に同梱されたExpressionデータでリップシンク再生
-   * ExpressionManagerがaudioElement.currentTimeに同期してフレームを選択し、
-   * GVRMのupdateLipSync()を直接呼び出す。
+   * ★A2E統合: TTS応答に同梱されたExpressionデータをLAMAvatarのバッファに投入
+   * LAMAvatar.astro の独自アニメーションループが ttsPlayer.currentTime に同期して
+   * バッファからフレームを読み出し、jawボーンを駆動する。
    */
   private applyExpressionFromTts(expression: any): void {
-    if (!this.expressionManager) return;
+    const lamController = (window as any).lamAvatarController;
+    if (!lamController) {
+      console.warn('[Concierge] lamAvatarController not found, skipping expression');
+      return;
+    }
 
-    if (ExpressionManager.isValid(expression)) {
-      this.expressionManager.playExpressionFrames(expression, this.ttsPlayer);
-      console.log(`[Concierge] A2E expression: ${expression.frames.length} frames @ ${expression.frame_rate}fps`);
+    if (expression?.names && expression?.frames?.length > 0) {
+      // 新セグメント開始時は前のバッファをクリア
+      if (typeof lamController.clearFrameBuffer === 'function') {
+        lamController.clearFrameBuffer();
+      }
+
+      // number[][] → {name: value}[] に変換してLAMAvatarのキューに投入
+      const frames = expression.frames.map((frameData: number[]) => {
+        const frame: { [key: string]: number } = {};
+        expression.names.forEach((name: string, i: number) => { frame[name] = frameData[i]; });
+        return frame;
+      });
+      lamController.queueExpressionFrames(frames, expression.frame_rate || 30);
+      console.log(`[Concierge] A2E: ${frames.length} frames queued @ ${expression.frame_rate || 30}fps`);
     }
   }
 
@@ -369,8 +283,11 @@ export class ConciergeController extends CoreController {
     if (this.els.avatarContainer) {
       this.els.avatarContainer.classList.remove('speaking');
     }
-    // ★A2E統合: ExpressionManager停止（口を閉じる）
-    this.expressionManager?.stop();
+    // ★A2E統合: LAMAvatarのフレームバッファをクリア（口を閉じる）
+    const lamController = (window as any).lamAvatarController;
+    if (lamController && typeof lamController.clearFrameBuffer === 'function') {
+      lamController.clearFrameBuffer();
+    }
   }
 
 
