@@ -39,25 +39,36 @@ export class ConciergeController extends CoreController {
       });
     }
 
+    // ========================================
     // ★A2E統合: LAMAvatarコントローラーとttsPlayerをリンク
-    // LAMAvatar.astro が後から初期化される可能性があるため、リトライ付きでリンク
+    // チェーン2: setExternalTtsPlayer で ttsPlayer の play/ended イベントを LAMAvatar に伝える
+    // これが成功しないと LAMAvatar は ttsActive=false のまま → 口が動かない
+    // ========================================
     const linkTtsPlayer = () => {
       const lam = (window as any).lamAvatarController;
       if (lam && typeof lam.setExternalTtsPlayer === 'function') {
         lam.setExternalTtsPlayer(this.ttsPlayer);
-        console.log('[Concierge] ✅ Linked ttsPlayer with LAMAvatar controller');
+        console.log('[A2E Chain2] ✅ setExternalTtsPlayer 成功 → LAMAvatar が ttsPlayer.play/ended を監視開始');
         return true;
       }
       return false;
     };
+
+    // 即時試行
+    const lamExists = !!(window as any).lamAvatarController;
+    console.log(`[A2E Chain2] init: lamAvatarController=${lamExists ? 'EXISTS' : 'NOT YET'}, ttsPlayer=${this.ttsPlayer ? 'EXISTS' : 'NULL'}`);
+
     if (!linkTtsPlayer()) {
-      // LAMAvatar未初期化 → 500ms間隔で最大20回(10秒)リトライ
+      // LAMAvatar.astro の DOMContentLoaded がまだ → リトライ
       let retries = 0;
       const retryInterval = setInterval(() => {
         retries++;
         if (linkTtsPlayer() || retries >= 20) {
           clearInterval(retryInterval);
-          if (retries >= 20) console.warn('[Concierge] ⚠️ LAMAvatar controller not found after 10s');
+          if (retries >= 20) {
+            console.error('[A2E Chain2] ❌ LAMAvatar controller が10秒以内に見つからない → リップシンク不可');
+            console.error('[A2E Chain2] 確認: LAMAvatar.astro がページに含まれているか？');
+          }
         }
       }, 500);
     }
@@ -203,8 +214,13 @@ export class ConciergeController extends CoreController {
       const data = await response.json();
 
       if (data.success && data.audio) {
-        // ★ TTS応答に同梱されたExpressionを即バッファ投入（遅延ゼロ）
-        if (data.expression) this.applyExpressionFromTts(data.expression);
+        // ★ チェーン1診断: バックエンドが expression データを返したか？
+        if (data.expression) {
+          console.log(`[A2E Chain1] ✅ expression受信: ${data.expression.frames?.length || 0}frames @ ${data.expression.frame_rate || '?'}fps, names=${data.expression.names?.length || 0}ch`);
+          this.applyExpressionFromTts(data.expression);
+        } else {
+          console.warn('[A2E Chain1] ⚠️ expression=null → バックエンドの AUDIO2EXP_SERVICE_URL 環境変数が未設定の可能性');
+        }
         this.ttsPlayer.src = `data:audio/mp3;base64,${data.audio}`;
         const playPromise = new Promise<void>((resolve) => {
           this.ttsPlayer.onended = async () => {
@@ -250,40 +266,51 @@ export class ConciergeController extends CoreController {
   }
 
   /**
-   * ★A2E統合: TTS応答に同梱されたExpressionデータをLAMAvatarのバッファに投入
-   * LAMAvatar.astro の独自アニメーションループが ttsPlayer.currentTime に同期して
-   * バッファからフレームを読み出し、jawボーンを駆動する。
+   * ★A2E チェーン3: TTS応答の expression データを LAMAvatar のバッファに投入
+   *
+   * データフロー:
+   *   backend response.expression = {names: string[52], frames: number[][], frame_rate: 30}
+   *   → number[][] を {blendshapeName: value}[] に変換
+   *   → lamAvatarController.queueExpressionFrames(frames, fps)
+   *   → LAMAvatar.getExpressionData() が ttsPlayer.currentTime でフレームを読む
    */
   private applyExpressionFromTts(expression: any): void {
     const lamController = (window as any).lamAvatarController;
     if (!lamController) {
-      console.warn('[Concierge] lamAvatarController not found, skipping expression');
+      console.error('[A2E Chain3] ❌ lamAvatarController が存在しない → Chain2 のリンクが失敗している');
       return;
     }
 
-    if (expression?.names && expression?.frames?.length > 0) {
-      // 新セグメント開始時は前のバッファをクリア
-      if (typeof lamController.clearFrameBuffer === 'function') {
-        lamController.clearFrameBuffer();
-      }
-
-      // number[][] → {name: value}[] に変換してLAMAvatarのキューに投入
-      const frames = expression.frames.map((frameData: number[]) => {
-        const frame: { [key: string]: number } = {};
-        expression.names.forEach((name: string, i: number) => { frame[name] = frameData[i]; });
-        return frame;
-      });
-      lamController.queueExpressionFrames(frames, expression.frame_rate || 30);
-      console.log(`[Concierge] A2E: ${frames.length} frames queued @ ${expression.frame_rate || 30}fps`);
+    if (!expression?.names || !expression?.frames?.length) {
+      console.warn('[A2E Chain3] ⚠️ expression データが不正:', JSON.stringify(expression).substring(0, 200));
+      return;
     }
+
+    // 新セグメント開始: 前のバッファをクリア（ttsActive=false にリセットされる）
+    if (typeof lamController.clearFrameBuffer === 'function') {
+      lamController.clearFrameBuffer();
+    }
+
+    // number[][] → {name: value}[] に変換
+    const frames = expression.frames.map((frameData: number[]) => {
+      const frame: { [key: string]: number } = {};
+      expression.names.forEach((name: string, i: number) => { frame[name] = frameData[i]; });
+      return frame;
+    });
+
+    // LAMAvatar のバッファに投入
+    lamController.queueExpressionFrames(frames, expression.frame_rate || 30);
+
+    // 診断: 最初のフレームのjawOpenを表示（0なら A2E の出力自体が無音声）
+    const sampleJaw = frames[0]?.jawOpen ?? frames[0]?.['jawOpen'] ?? 'N/A';
+    console.log(`[A2E Chain3] ✅ ${frames.length}frames queued @ ${expression.frame_rate || 30}fps, jawOpen[0]=${typeof sampleJaw === 'number' ? sampleJaw.toFixed(3) : sampleJaw}`);
   }
 
-  // アバターアニメーション停止
+  // アバターアニメーション停止 → LAMAvatar のバッファクリア（口を閉じる）
   private stopAvatarAnimation() {
     if (this.els.avatarContainer) {
       this.els.avatarContainer.classList.remove('speaking');
     }
-    // ★A2E統合: LAMAvatarのフレームバッファをクリア（口を閉じる）
     const lamController = (window as any).lamAvatarController;
     if (lamController && typeof lamController.clearFrameBuffer === 'function') {
       lamController.clearFrameBuffer();
@@ -431,11 +458,14 @@ export class ConciergeController extends CoreController {
             }).then(r => r.json())
           : null;
 
-        // ★ 最初のTTSが返ったら即再生（Expression同梱済み）
+        // ★ 最初のTTSが返ったら即再生
         const firstTtsResult = await firstTtsPromise;
         if (firstTtsResult.success && firstTtsResult.audio) {
-          // ★ TTS応答に同梱されたExpressionを即バッファ投入（遅延ゼロ）
-          if (firstTtsResult.expression) this.applyExpressionFromTts(firstTtsResult.expression);
+          if (firstTtsResult.expression) {
+            this.applyExpressionFromTts(firstTtsResult.expression);
+          } else {
+            console.warn('[A2E Chain1] ⚠️ chunks[0]: expression=null');
+          }
 
           this.lastAISpeech = this.normalizeText(cleanFirst);
           this.stopCurrentAudio();
@@ -463,8 +493,11 @@ export class ConciergeController extends CoreController {
           if (remainingTtsResult?.success && remainingTtsResult?.audio) {
             this.lastAISpeech = this.normalizeText(cleanRemaining || '');
 
-            // ★ TTS応答に同梱されたExpressionを即バッファ投入
-            if (remainingTtsResult.expression) this.applyExpressionFromTts(remainingTtsResult.expression);
+            if (remainingTtsResult.expression) {
+              this.applyExpressionFromTts(remainingTtsResult.expression);
+            } else {
+              console.warn('[A2E Chain1] ⚠️ chunks[1]: expression=null');
+            }
 
             this.stopCurrentAudio();
             this.ttsPlayer.src = `data:audio/mp3;base64,${remainingTtsResult.audio}`;
