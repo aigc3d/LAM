@@ -255,9 +255,9 @@ export class ConciergeController extends CoreController {
     }
 
     if (expression?.names && expression?.frames?.length > 0) {
-      const frames = expression.frames.map((f: { weights: number[] }) => {
+      const frames = expression.frames.map((frameData: number[]) => {
         const frame: { [key: string]: number } = {};
-        expression.names.forEach((name: string, i: number) => { frame[name] = f.weights[i]; });
+        expression.names.forEach((name: string, i: number) => { frame[name] = frameData[i]; });
         return frame;
       });
       lamController.queueExpressionFrames(frames, expression.frame_rate || 30);
