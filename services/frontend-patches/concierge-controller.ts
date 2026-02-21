@@ -3,9 +3,125 @@
 // src/scripts/chat/concierge-controller.ts
 import { CoreController } from './core-controller';
 import { AudioManager } from './audio-manager';
-import { ExpressionManager, ExpressionData } from '../avatar/vrm-expression-manager'; // ★A2E統合
 
 declare const io: any;
+
+// ========================================
+// ★A2E統合: ExpressionManager（インライン定義）
+// A2Eサービスから受け取った52次元ARKitブレンドシェイプ係数を
+// GVRMのボーンシステムにマッピングする。
+// ========================================
+
+interface ExpressionData {
+  names: string[];       // 52個のARKitブレンドシェイプ名
+  frames: number[][];    // フレームごとの52次元係数
+  frame_rate: number;    // fps (通常30)
+}
+
+// ARKitブレンドシェイプ名→インデックスのマップ
+const ARKIT_INDEX: Record<string, number> = {
+  jawOpen: 17,
+  mouthFunnel: 19, mouthPucker: 20,
+  mouthLowerDownLeft: 37, mouthLowerDownRight: 38,
+  mouthUpperUpLeft: 39, mouthUpperUpRight: 40,
+};
+
+class ExpressionManager {
+  private renderer: any;
+  private currentFrames: number[][] | null = null;
+  private frameRate: number = 30;
+  private animationFrameId: number | null = null;
+  private audioElement: HTMLAudioElement | null = null;
+  private isPlaying: boolean = false;
+
+  constructor(renderer: any) {
+    this.renderer = renderer;
+  }
+
+  /** A2E expressionデータを使って音声と同期したリップシンクを再生 */
+  public playExpressionFrames(expression: ExpressionData, audioElement: HTMLAudioElement) {
+    this.stop();
+    this.currentFrames = expression.frames;
+    this.frameRate = expression.frame_rate || 30;
+    this.audioElement = audioElement;
+    this.isPlaying = true;
+    this.tick();
+  }
+
+  /** フレーム更新ループ: 音声の再生位置に合わせてフレームを選択 */
+  private tick = () => {
+    if (!this.isPlaying || !this.currentFrames || !this.audioElement) {
+      this.applyLipSyncLevel(0);
+      return;
+    }
+
+    if (this.audioElement.ended) {
+      this.applyLipSyncLevel(0);
+      this.isPlaying = false;
+      return;
+    }
+
+    const currentTime = this.audioElement.currentTime;
+    const frameIdx = Math.floor(currentTime * this.frameRate);
+
+    if (frameIdx >= 0 && frameIdx < this.currentFrames.length) {
+      this.applyBlendshapes(this.currentFrames[frameIdx]);
+    } else if (frameIdx >= this.currentFrames.length) {
+      this.applyLipSyncLevel(0);
+    }
+
+    this.animationFrameId = requestAnimationFrame(this.tick);
+  };
+
+  /** 52次元ブレンドシェイプ係数をGVRMのupdateLipSync(0~1)に変換 */
+  private applyBlendshapes(c: number[]) {
+    if (!this.renderer) return;
+
+    const jawOpen = c[ARKIT_INDEX.jawOpen] || 0;
+    const mouthFunnel = c[ARKIT_INDEX.mouthFunnel] || 0;
+    const mouthPucker = c[ARKIT_INDEX.mouthPucker] || 0;
+    const mouthLowerDownL = c[ARKIT_INDEX.mouthLowerDownLeft] || 0;
+    const mouthLowerDownR = c[ARKIT_INDEX.mouthLowerDownRight] || 0;
+    const mouthUpperUpL = c[ARKIT_INDEX.mouthUpperUpLeft] || 0;
+    const mouthUpperUpR = c[ARKIT_INDEX.mouthUpperUpRight] || 0;
+
+    const mouthOpenness = Math.min(1.0,
+      jawOpen * 0.6 +
+      ((mouthLowerDownL + mouthLowerDownR) / 2) * 0.2 +
+      ((mouthUpperUpL + mouthUpperUpR) / 2) * 0.1 +
+      mouthFunnel * 0.05 +
+      mouthPucker * 0.05
+    );
+
+    this.renderer.updateLipSync(mouthOpenness);
+  }
+
+  private applyLipSyncLevel(level: number) {
+    if (this.renderer) this.renderer.updateLipSync(level);
+  }
+
+  /** 再生停止 */
+  public stop() {
+    this.isPlaying = false;
+    if (this.animationFrameId) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
+    this.currentFrames = null;
+    this.applyLipSyncLevel(0);
+  }
+
+  /** expressionデータが有効かどうか */
+  public static isValid(expression: any): expression is ExpressionData {
+    return (
+      expression &&
+      Array.isArray(expression.names) &&
+      Array.isArray(expression.frames) &&
+      expression.frames.length > 0 &&
+      typeof expression.frame_rate === 'number'
+    );
+  }
+}
 
 export class ConciergeController extends CoreController {
   // Audio2Expression はバックエンドTTSエンドポイント経由で統合済み
