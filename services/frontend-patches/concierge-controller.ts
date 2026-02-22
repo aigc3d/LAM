@@ -39,38 +39,19 @@ export class ConciergeController extends CoreController {
       });
     }
 
-    // ========================================
-    // ★A2E統合: LAMAvatarコントローラーとttsPlayerをリンク
-    // チェーン2: setExternalTtsPlayer で ttsPlayer の play/ended イベントを LAMAvatar に伝える
-    // これが成功しないと LAMAvatar は ttsActive=false のまま → 口が動かない
-    // ========================================
+    // ★ LAMAvatar との統合: 外部TTSプレーヤーをリンク
+    // LAMAvatar が後から初期化される可能性があるため、即時 + 遅延でリンク
     const linkTtsPlayer = () => {
       const lam = (window as any).lamAvatarController;
       if (lam && typeof lam.setExternalTtsPlayer === 'function') {
         lam.setExternalTtsPlayer(this.ttsPlayer);
-        console.log('[A2E Chain2] ✅ setExternalTtsPlayer 成功 → LAMAvatar が ttsPlayer.play/ended を監視開始');
+        console.log('[Concierge] Linked external TTS player with LAMAvatar');
         return true;
       }
       return false;
     };
-
-    // 即時試行
-    const lamExists = !!(window as any).lamAvatarController;
-    console.log(`[A2E Chain2] init: lamAvatarController=${lamExists ? 'EXISTS' : 'NOT YET'}, ttsPlayer=${this.ttsPlayer ? 'EXISTS' : 'NULL'}`);
-
     if (!linkTtsPlayer()) {
-      // LAMAvatar.astro の DOMContentLoaded がまだ → リトライ
-      let retries = 0;
-      const retryInterval = setInterval(() => {
-        retries++;
-        if (linkTtsPlayer() || retries >= 20) {
-          clearInterval(retryInterval);
-          if (retries >= 20) {
-            console.error('[A2E Chain2] ❌ LAMAvatar controller が10秒以内に見つからない → リップシンク不可');
-            console.error('[A2E Chain2] 確認: LAMAvatar.astro がページに含まれているか？');
-          }
-        }
-      }, 500);
+      setTimeout(() => linkTtsPlayer(), 2000);
     }
   }
 
@@ -109,13 +90,13 @@ export class ConciergeController extends CoreController {
       // ✅ バックエンドからの初回メッセージを使用（長期記憶対応）
       const greetingText = data.initial_message || this.t('initialGreetingConcierge');
       this.addMessage('assistant', greetingText, null, true);
-      
+
       const ackTexts = [
-        this.t('ackConfirm'), this.t('ackSearch'), this.t('ackUnderstood'), 
+        this.t('ackConfirm'), this.t('ackSearch'), this.t('ackUnderstood'),
         this.t('ackYes'), this.t('ttsIntro')
       ];
       const langConfig = this.LANGUAGE_CODE_MAP[this.currentLanguage];
-      
+
       const ackPromises = ackTexts.map(async (text) => {
         try {
           const ackResponse = await fetch(`${this.apiBase}/api/tts/synthesize`, {
@@ -134,10 +115,10 @@ export class ConciergeController extends CoreController {
       });
 
       await Promise.all([
-        this.speakTextGCP(greetingText), 
+        this.speakTextGCP(greetingText),
         ...ackPromises
       ]);
-      
+
       this.els.userInput.disabled = false;
       this.els.sendBtn.disabled = false;
       this.els.micBtn.disabled = false;
@@ -156,9 +137,9 @@ export class ConciergeController extends CoreController {
   protected initSocket() {
     // @ts-ignore
     this.socket = io(this.apiBase || window.location.origin);
-    
+
     this.socket.on('connect', () => { });
-    
+
     // ✅ コンシェルジュ版のhandleStreamingSTTCompleteを呼ぶように再登録
     this.socket.on('transcript', (data: any) => {
       const { text, is_final } = data;
@@ -214,43 +195,32 @@ export class ConciergeController extends CoreController {
       const data = await response.json();
 
       if (data.success && data.audio) {
-        // ★ チェーン1診断: バックエンドが expression データを返したか？
-        if (data.expression) {
-          console.log(`[A2E Chain1] ✅ expression受信: ${data.expression.frames?.length || 0}frames @ ${data.expression.frame_rate || '?'}fps, names=${data.expression.names?.length || 0}ch`);
-          this.applyExpressionFromTts(data.expression);
-        } else {
-          console.warn('[A2E Chain1] ⚠️ expression=null → バックエンドの AUDIO2EXP_SERVICE_URL 環境変数が未設定の可能性');
-        }
+        // ★ TTS応答に同梱されたExpressionを即バッファ投入（遅延ゼロ）
+        if (data.expression) this.applyExpressionFromTts(data.expression);
         this.ttsPlayer.src = `data:audio/mp3;base64,${data.audio}`;
         const playPromise = new Promise<void>((resolve) => {
-          let resolved = false;
-          const finish = (restartMic: boolean = false) => {
-            if (resolved) return;
-            resolved = true;
+          this.ttsPlayer.onended = async () => {
             this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
             this.els.voiceStatus.className = 'voice-status stopped';
             this.isAISpeaking = false;
             this.stopAvatarAnimation();
-            if (restartMic && autoRestartMic && !this.isRecording) {
-              this.toggleRecording().catch(() => this.showMicPrompt());
+            if (autoRestartMic) {
+              if (!this.isRecording) {
+                try { await this.toggleRecording(); } catch (_error) { this.showMicPrompt(); }
+              }
             }
             resolve();
           };
-          this.ttsPlayer.onended = () => finish(true);
-          this.ttsPlayer.onerror = () => finish(false);
-          // ★ autoplay ブロック対策: play直後にpauseされた場合のデッドロック防止
-          // (ack再生の onpause=done パターンと同じ)
-          this.ttsPlayer.onpause = () => {
-            if (this.ttsPlayer.currentTime < 0.1) {
-              console.warn('[TTS] ⚠️ 再生直後にpause検出(autoplayブロック) → deadlock防止のためresolve');
-              finish(false);
-            }
+          this.ttsPlayer.onerror = () => {
+            this.isAISpeaking = false;
+            this.stopAvatarAnimation();
+            resolve();
           };
         });
 
         if (this.isUserInteracted) {
           this.lastAISpeech = this.normalizeText(cleanText);
-          try { await this.ttsPlayer.play(); } catch (_e) { /* onpause/onerror in playPromise handles this */ }
+          await this.ttsPlayer.play();
           await playPromise;
         } else {
           this.showClickPrompt();
@@ -272,56 +242,41 @@ export class ConciergeController extends CoreController {
   }
 
   /**
-   * ★A2E チェーン3: TTS応答の expression データを LAMAvatar のバッファに投入
-   *
-   * データフロー:
-   *   backend response.expression = {names: string[52], frames: number[][], frame_rate: 30}
-   *   → number[][] を {blendshapeName: value}[] に変換
-   *   → lamAvatarController.queueExpressionFrames(frames, fps)
-   *   → LAMAvatar.getExpressionData() が ttsPlayer.currentTime でフレームを読む
+   * TTS応答に同梱されたExpressionデータをバッファに即投入（遅延ゼロ）
+   * 同期方式: バックエンドがTTS+audio2expを同期実行し、結果を同梱して返す
    */
   private applyExpressionFromTts(expression: any): void {
-    const lamController = (window as any).lamAvatarController;
-    if (!lamController) {
-      console.error('[A2E Chain3] ❌ lamAvatarController が存在しない → Chain2 のリンクが失敗している');
-      return;
+    try {
+      const lamController = (window as any).lamAvatarController;
+      if (!lamController) return;
+
+      // 新セグメント開始時は必ずバッファクリア（前セグメントのフレーム混入防止）
+      if (typeof lamController.clearFrameBuffer === 'function') {
+        lamController.clearFrameBuffer();
+      }
+
+      if (expression?.names && expression?.frames?.length > 0) {
+        // 両形式対応: number[][] (audio2exp-service) または {weights: number[]}[] (gourmet-sp test)
+        const frames = expression.frames.map((f: any) => {
+          const frame: { [key: string]: number } = {};
+          const values = Array.isArray(f) ? f : (f.weights || []);
+          expression.names.forEach((name: string, i: number) => { frame[name] = values[i] ?? 0; });
+          return frame;
+        });
+        lamController.queueExpressionFrames(frames, expression.frame_rate || 30);
+        console.log(`[Concierge] Expression sync: ${frames.length} frames queued`);
+      }
+    } catch (e) {
+      console.warn('[Concierge] Expression processing error (non-fatal):', e);
     }
-
-    if (!expression?.names || !expression?.frames?.length) {
-      console.warn('[A2E Chain3] ⚠️ expression データが不正:', JSON.stringify(expression).substring(0, 200));
-      return;
-    }
-
-    // 新セグメント開始: 前のバッファをクリア（ttsActive=false にリセットされる）
-    if (typeof lamController.clearFrameBuffer === 'function') {
-      lamController.clearFrameBuffer();
-    }
-
-    // frames を {name: value}[] に変換
-    // 形式A (audio2exp-service直接): frames = [[0.1, 0.2, ...], ...]  → number[][]
-    // 形式B (gourmet-sp test data): frames = [{weights: [0.1, ...]}, ...] → {weights: number[]}[]
-    const frames = expression.frames.map((f: any) => {
-      const frame: { [key: string]: number } = {};
-      const values = Array.isArray(f) ? f : (f.weights || []);
-      expression.names.forEach((name: string, i: number) => { frame[name] = values[i] ?? 0; });
-      return frame;
-    });
-
-    // LAMAvatar のバッファに投入
-    lamController.queueExpressionFrames(frames, expression.frame_rate || 30);
-
-    // 診断: 最初のフレームのjawOpenを表示（0なら A2E の出力自体が無音声）
-    const sampleJaw = frames[0]?.jawOpen ?? frames[0]?.['jawOpen'] ?? 'N/A';
-    console.log(`[A2E Chain3] ✅ ${frames.length}frames queued @ ${expression.frame_rate || 30}fps, jawOpen[0]=${typeof sampleJaw === 'number' ? sampleJaw.toFixed(3) : sampleJaw}`);
   }
 
   // アバターアニメーション停止
-  // ※ LAMAvatar の状態（fade-out等）は ttsPlayer の ended イベント経由で自動管理される
-  // ※ ここで clearFrameBuffer() を呼ぶと fadeOutStartTime がリセットされ fade-out が途切れる
   private stopAvatarAnimation() {
     if (this.els.avatarContainer) {
       this.els.avatarContainer.classList.remove('speaking');
     }
+    // ※ LAMAvatar の状態は ttsPlayer イベント（ended/pause）で管理
   }
 
 
@@ -465,14 +420,11 @@ export class ConciergeController extends CoreController {
             }).then(r => r.json())
           : null;
 
-        // ★ 最初のTTSが返ったら即再生
+        // ★ 最初のTTSが返ったら即再生（Expression同梱済み）
         const firstTtsResult = await firstTtsPromise;
         if (firstTtsResult.success && firstTtsResult.audio) {
-          if (firstTtsResult.expression) {
-            this.applyExpressionFromTts(firstTtsResult.expression);
-          } else {
-            console.warn('[A2E Chain1] ⚠️ chunks[0]: expression=null');
-          }
+          // ★ TTS応答に同梱されたExpressionを即バッファ投入（遅延ゼロ）
+          if (firstTtsResult.expression) this.applyExpressionFromTts(firstTtsResult.expression);
 
           this.lastAISpeech = this.normalizeText(cleanFirst);
           this.stopCurrentAudio();
@@ -486,38 +438,35 @@ export class ConciergeController extends CoreController {
 
           // 最初のセンテンス再生
           await new Promise<void>((resolve) => {
-            let resolved = false;
-            const done = () => { if (!resolved) { resolved = true; this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped'); this.els.voiceStatus.className = 'voice-status stopped'; resolve(); } };
-            this.ttsPlayer.onended = done;
-            this.ttsPlayer.onerror = done;
-            this.ttsPlayer.onpause = () => { if (this.ttsPlayer.currentTime < 0.1) done(); };
+            this.ttsPlayer.onended = () => {
+              this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
+              this.els.voiceStatus.className = 'voice-status stopped';
+              resolve();
+            };
             this.els.voiceStatus.innerHTML = this.t('voiceStatusSpeaking');
             this.els.voiceStatus.className = 'voice-status speaking';
-            this.ttsPlayer.play().catch(done);
+            this.ttsPlayer.play();
           });
 
           // ★ 残りのセンテンスを続けて再生（Expression同梱済み）
           if (remainingTtsResult?.success && remainingTtsResult?.audio) {
             this.lastAISpeech = this.normalizeText(cleanRemaining || '');
 
-            if (remainingTtsResult.expression) {
-              this.applyExpressionFromTts(remainingTtsResult.expression);
-            } else {
-              console.warn('[A2E Chain1] ⚠️ chunks[1]: expression=null');
-            }
+            // ★ TTS応答に同梱されたExpressionを即バッファ投入
+            if (remainingTtsResult.expression) this.applyExpressionFromTts(remainingTtsResult.expression);
 
             this.stopCurrentAudio();
             this.ttsPlayer.src = `data:audio/mp3;base64,${remainingTtsResult.audio}`;
 
             await new Promise<void>((resolve) => {
-              let resolved = false;
-              const done = () => { if (!resolved) { resolved = true; this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped'); this.els.voiceStatus.className = 'voice-status stopped'; resolve(); } };
-              this.ttsPlayer.onended = done;
-              this.ttsPlayer.onerror = done;
-              this.ttsPlayer.onpause = () => { if (this.ttsPlayer.currentTime < 0.1) done(); };
+              this.ttsPlayer.onended = () => {
+                this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
+                this.els.voiceStatus.className = 'voice-status stopped';
+                resolve();
+              };
               this.els.voiceStatus.innerHTML = this.t('voiceStatusSpeaking');
               this.els.voiceStatus.className = 'voice-status speaking';
-              this.ttsPlayer.play().catch(done);
+              this.ttsPlayer.play();
             });
           }
         }
@@ -537,40 +486,40 @@ export class ConciergeController extends CoreController {
   // ========================================
   protected async handleStreamingSTTComplete(transcript: string) {
     this.stopStreamingSTT();
-    
+
     if ('mediaSession' in navigator) {
       try { navigator.mediaSession.playbackState = 'playing'; } catch (e) {}
     }
-    
+
     this.els.voiceStatus.innerHTML = this.t('voiceStatusComplete');
     this.els.voiceStatus.className = 'voice-status';
 
     // オウム返し判定(エコーバック防止)
     const normTranscript = this.normalizeText(transcript);
     if (this.isSemanticEcho(normTranscript, this.lastAISpeech)) {
-        this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
-        this.els.voiceStatus.className = 'voice-status stopped';
-        this.lastAISpeech = '';
-        return;
+      this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
+      this.els.voiceStatus.className = 'voice-status stopped';
+      this.lastAISpeech = '';
+      return;
     }
 
     this.els.userInput.value = transcript;
     this.addMessage('user', transcript);
-    
+
     // 短すぎる入力チェック
     const textLength = transcript.trim().replace(/\s+/g, '').length;
     if (textLength < 2) {
-        const msg = this.t('shortMsgWarning');
-        this.addMessage('assistant', msg);
-        if (this.isTTSEnabled && this.isUserInteracted) {
-          await this.speakTextGCP(msg, true);
-        } else { 
-          await new Promise(r => setTimeout(r, 2000)); 
-        }
-        this.els.userInput.value = '';
-        this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
-        this.els.voiceStatus.className = 'voice-status stopped';
-        return;
+      const msg = this.t('shortMsgWarning');
+      this.addMessage('assistant', msg);
+      if (this.isTTSEnabled && this.isUserInteracted) {
+        await this.speakTextGCP(msg, true);
+      } else {
+        await new Promise(r => setTimeout(r, 2000));
+      }
+      this.els.userInput.value = '';
+      this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
+      this.els.voiceStatus.className = 'voice-status stopped';
+      return;
     }
 
     // ✅ 修正: 即答を「はい」だけに簡略化
@@ -595,7 +544,7 @@ export class ConciergeController extends CoreController {
     this.addMessage('assistant', ackText);
 
     // ★ 並行処理: ack再生完了を待たず、即LLMリクエスト開始（~700ms短縮）
-    //   pendingAckPromiseはsendMessage内でTTS再生前にawaitされる
+    // pendingAckPromiseはsendMessage内でTTS再生前にawaitされる
     if (this.els.userInput.value.trim()) {
       this.isFromVoiceInput = true;
       this.sendMessage();
@@ -616,13 +565,13 @@ export class ConciergeController extends CoreController {
     }
     const message = this.els.userInput.value.trim();
     if (!message || this.isProcessing) return;
-    
+
     const currentSessionId = this.sessionId;
     const isTextInput = !this.isFromVoiceInput;
-    
-    this.isProcessing = true; 
+
+    this.isProcessing = true;
     this.els.sendBtn.disabled = true;
-    this.els.micBtn.disabled = true; 
+    this.els.micBtn.disabled = true;
     this.els.userInput.disabled = true;
 
     // ✅ テキスト入力時も「はい」だけに簡略化
@@ -636,14 +585,14 @@ export class ConciergeController extends CoreController {
            this.resetInputState();
            return;
       }
-      
+
       this.els.userInput.value = '';
-      
+
       // ✅ 修正: 即答を「はい」だけに
       const ackText = this.t('ackYes');
       this.currentAISpeech = ackText;
       this.addMessage('assistant', ackText);
-      
+
       if (this.isTTSEnabled && !isTextInput) {
         try {
           const preGeneratedAudio = this.preGeneratedAcks.get(ackText);
@@ -654,49 +603,49 @@ export class ConciergeController extends CoreController {
               this.ttsPlayer.onended = () => resolve();
               this.ttsPlayer.play().catch(_e => resolve());
             });
-          } else { 
-            firstAckPromise = this.speakTextGCP(ackText, false); 
+          } else {
+            firstAckPromise = this.speakTextGCP(ackText, false);
           }
         } catch (_e) {}
-      }   
+      }
       if (firstAckPromise) await firstAckPromise;
-      
+
       // ✅ 修正: オウム返しパターンを削除
       // (generateFallbackResponse, additionalResponse の呼び出しを削除)
     }
 
     this.isFromVoiceInput = false;
-    
+
     // ✅ 待機アニメーションは6.5秒後に表示(LLM送信直前にタイマースタート)
     if (this.waitOverlayTimer) clearTimeout(this.waitOverlayTimer);
     let responseReceived = false;
-    
+
     // タイマーセットをtry直前に移動(即答処理の後)
-    this.waitOverlayTimer = window.setTimeout(() => { 
+    this.waitOverlayTimer = window.setTimeout(() => {
       if (!responseReceived) {
-        this.showWaitOverlay(); 
+        this.showWaitOverlay();
       }
     }, 6500);
 
     try {
-      const response = await fetch(`${this.apiBase}/api/chat`, { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ 
-          session_id: currentSessionId, 
-          message: message, 
-          stage: this.currentStage, 
+      const response = await fetch(`${this.apiBase}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: currentSessionId,
+          message: message,
+          stage: this.currentStage,
           language: this.currentLanguage,
           mode: this.currentMode
-        }) 
+        })
       });
       const data = await response.json();
-      
+
       // ✅ レスポンス到着フラグを立てる
       responseReceived = true;
-      
+
       if (this.sessionId !== currentSessionId) return;
-      
+
       // ✅ タイマーをクリアしてアニメーションを非表示
       if (this.waitOverlayTimer) {
         clearTimeout(this.waitOverlayTimer);
@@ -705,19 +654,19 @@ export class ConciergeController extends CoreController {
       this.hideWaitOverlay();
       this.currentAISpeech = data.response;
       this.addMessage('assistant', data.response, data.summary);
-      
+
       if (!isTextInput && this.isTTSEnabled) {
         this.stopCurrentAudio();
       }
-      
+
       if (data.shops && data.shops.length > 0) {
         this.currentShops = data.shops;
         this.els.reservationBtn.classList.add('visible');
         this.els.userInput.value = '';
-        document.dispatchEvent(new CustomEvent('displayShops', { 
-          detail: { shops: data.shops, language: this.currentLanguage } 
+        document.dispatchEvent(new CustomEvent('displayShops', {
+          detail: { shops: data.shops, language: this.currentLanguage }
         }));
-        
+
         const section = document.getElementById('shopListSection');
         if (section) section.classList.add('has-shops');
         if (window.innerWidth < 1024) {
@@ -726,7 +675,7 @@ export class ConciergeController extends CoreController {
             if (shopSection) shopSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
            }, 300);
         }
-        
+
         (async () => {
           try {
             // ★ ack再生中ならttsPlayer解放を待つ（並行処理の同期ポイント）
@@ -740,30 +689,27 @@ export class ConciergeController extends CoreController {
             if (this.isRecording) { this.stopStreamingSTT(); }
 
             await this.speakTextGCP(this.t('ttsIntro'), true, false, isTextInput);
-            
+
             const lines = data.response.split('\n\n');
-            let introText = ""; 
+            let introText = "";
             let shopLines = lines;
-            if (lines[0].includes('ご希望に合うお店') && lines[0].includes('ご紹介します')) { 
-              introText = lines[0]; 
-              shopLines = lines.slice(1); 
+            if (lines[0].includes('ご希望に合うお店') && lines[0].includes('ご紹介します')) {
+              introText = lines[0];
+              shopLines = lines.slice(1);
             }
-            
+
             let introPart2Promise: Promise<void> | null = null;
             if (introText && this.isTTSEnabled && this.isUserInteracted && !isTextInput) {
                 const preGeneratedIntro = this.preGeneratedAcks.get(introText);
               if (preGeneratedIntro) {
                 introPart2Promise = new Promise<void>((resolve) => {
-                  let resolved = false;
-                  const done = () => { if (!resolved) { resolved = true; resolve(); } };
                   this.lastAISpeech = this.normalizeText(introText);
                   this.ttsPlayer.src = `data:audio/mp3;base64,${preGeneratedIntro}`;
-                  this.ttsPlayer.onended = done;
-                  this.ttsPlayer.onpause = () => { if (this.ttsPlayer.currentTime < 0.1) done(); };
-                  this.ttsPlayer.play().catch(done);
+                  this.ttsPlayer.onended = () => resolve();
+                  this.ttsPlayer.play();
                 });
-              } else { 
-                introPart2Promise = this.speakTextGCP(introText, false, false, isTextInput); 
+              } else {
+                introPart2Promise = this.speakTextGCP(introText, false, false, isTextInput);
               }
             }
 
@@ -821,14 +767,14 @@ export class ConciergeController extends CoreController {
                 }
 
                 await new Promise<void>((resolve) => {
-                  let resolved = false;
-                  const done = () => { if (!resolved) { resolved = true; this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped'); this.els.voiceStatus.className = 'voice-status stopped'; resolve(); } };
-                  this.ttsPlayer.onended = done;
-                  this.ttsPlayer.onerror = done;
-                  this.ttsPlayer.onpause = () => { if (this.ttsPlayer.currentTime < 0.1) done(); };
+                  this.ttsPlayer.onended = () => {
+                    this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
+                    this.els.voiceStatus.className = 'voice-status stopped';
+                    resolve();
+                  };
                   this.els.voiceStatus.innerHTML = this.t('voiceStatusSpeaking');
                   this.els.voiceStatus.className = 'voice-status speaking';
-                  this.ttsPlayer.play().catch(done);
+                  this.ttsPlayer.play();
                 });
 
                 if (remainingResult?.success && remainingResult?.audio) {
@@ -844,14 +790,14 @@ export class ConciergeController extends CoreController {
 
                     this.ttsPlayer.src = `data:audio/mp3;base64,${remainingResult.audio}`;
                     await new Promise<void>((resolve) => {
-                      let resolved = false;
-                      const done = () => { if (!resolved) { resolved = true; this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped'); this.els.voiceStatus.className = 'voice-status stopped'; resolve(); } };
-                      this.ttsPlayer.onended = done;
-                      this.ttsPlayer.onerror = done;
-                      this.ttsPlayer.onpause = () => { if (this.ttsPlayer.currentTime < 0.1) done(); };
+                      this.ttsPlayer.onended = () => {
+                        this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
+                        this.els.voiceStatus.className = 'voice-status stopped';
+                        resolve();
+                      };
                       this.els.voiceStatus.innerHTML = this.t('voiceStatusSpeaking');
                       this.els.voiceStatus.className = 'voice-status speaking';
-                      this.ttsPlayer.play().catch(done);
+                      this.ttsPlayer.play();
                     });
                 }
               }
@@ -878,11 +824,11 @@ export class ConciergeController extends CoreController {
           }
         }
       }
-    } catch (error) { 
+    } catch (error) {
       console.error('送信エラー:', error);
-      this.hideWaitOverlay(); 
-      this.showError('メッセージの送信に失敗しました。'); 
-    } finally { 
+      this.hideWaitOverlay();
+      this.showError('メッセージの送信に失敗しました。');
+    } finally {
       this.resetInputState();
       this.els.userInput.blur();
     }
