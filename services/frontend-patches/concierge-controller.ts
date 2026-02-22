@@ -532,9 +532,9 @@ export class ConciergeController extends CoreController {
    * チャットモードのお店紹介フローを参考に実装
    */
   private async speakResponseInChunks(response: string, isTextInput: boolean = false) {
-    // テキスト入力またはTTS無効の場合は従来通り
-    if (isTextInput || !this.isTTSEnabled) {
-      return this.speakTextGCP(response, true, false, isTextInput);
+    // TTS無効の場合はスキップ（テキスト入力でもコンシェルジュモードではTTS再生する）
+    if (!this.isTTSEnabled) {
+      return;
     }
 
     try {
@@ -553,9 +553,9 @@ export class ConciergeController extends CoreController {
       // センテンス分割
       const sentences = this.splitIntoSentences(response, this.currentLanguage);
 
-      // 1センテンスしかない場合は従来通り
+      // 1センテンスしかない場合は従来通り（skipAudio=false: コンシェルジュでは常に再生）
       if (sentences.length <= 1) {
-        await this.speakTextGCP(response, true, false, isTextInput);
+        await this.speakTextGCP(response, true, false, false);
         this.isAISpeaking = false;
         return;
       }
@@ -618,9 +618,16 @@ export class ConciergeController extends CoreController {
               this.els.voiceStatus.className = 'voice-status stopped';
               resolve();
             };
+            this.ttsPlayer.onerror = () => {
+              console.error('[TTS] First sentence play error');
+              resolve();
+            };
             this.els.voiceStatus.innerHTML = this.t('voiceStatusSpeaking');
             this.els.voiceStatus.className = 'voice-status speaking';
-            this.ttsPlayer.play();
+            this.ttsPlayer.play().catch((e: any) => {
+              console.error('[TTS] First sentence play() rejected:', e);
+              resolve();
+            });
           });
 
           // ★ 残りのセンテンスを続けて再生（Expression同梱済み）
@@ -639,9 +646,16 @@ export class ConciergeController extends CoreController {
                 this.els.voiceStatus.className = 'voice-status stopped';
                 resolve();
               };
+              this.ttsPlayer.onerror = () => {
+                console.error('[TTS] Remaining sentence play error');
+                resolve();
+              };
               this.els.voiceStatus.innerHTML = this.t('voiceStatusSpeaking');
               this.els.voiceStatus.className = 'voice-status speaking';
-              this.ttsPlayer.play();
+              this.ttsPlayer.play().catch((e: any) => {
+                console.error('[TTS] Remaining sentence play() rejected:', e);
+                resolve();
+              });
             });
           }
         }
@@ -651,8 +665,8 @@ export class ConciergeController extends CoreController {
     } catch (error) {
       console.error('[TTS並行処理エラー]', error);
       this.isAISpeaking = false;
-      // エラー時はフォールバック
-      await this.speakTextGCP(response, true, false, isTextInput);
+      // エラー時はフォールバック（skipAudio=false: コンシェルジュでは常に再生）
+      await this.speakTextGCP(response, true, false, false);
     }
   }
 
@@ -830,10 +844,10 @@ export class ConciergeController extends CoreController {
       this.currentAISpeech = data.response;
       this.addMessage('assistant', data.response, data.summary);
       
-      if (!isTextInput && this.isTTSEnabled) {
+      if (this.isTTSEnabled) {
         this.stopCurrentAudio();
       }
-      
+
       if (data.shops && data.shops.length > 0) {
         this.currentShops = data.shops;
         this.els.reservationBtn.classList.add('visible');
@@ -863,7 +877,7 @@ export class ConciergeController extends CoreController {
             this.isAISpeaking = true;
             if (this.isRecording) { this.stopStreamingSTT(); }
 
-            await this.speakTextGCP(this.t('ttsIntro'), true, false, isTextInput);
+            await this.speakTextGCP(this.t('ttsIntro'), true, false, false);
             
             const lines = data.response.split('\n\n');
             let introText = ""; 
@@ -884,7 +898,7 @@ export class ConciergeController extends CoreController {
                   this.ttsPlayer.play();
                 });
               } else { 
-                introPart2Promise = this.speakTextGCP(introText, false, false, isTextInput); 
+                introPart2Promise = this.speakTextGCP(introText, false, false, false);
               }
             }
 
@@ -892,7 +906,7 @@ export class ConciergeController extends CoreController {
             let remainingShopTtsPromise: Promise<any> | null = null;
             const shopLangConfig = this.LANGUAGE_CODE_MAP[this.currentLanguage];
 
-            if (shopLines.length > 0 && this.isTTSEnabled && this.isUserInteracted && !isTextInput) {
+            if (shopLines.length > 0 && this.isTTSEnabled && this.isUserInteracted) {
               const firstShop = shopLines[0];
               const restShops = shopLines.slice(1).join('\n\n');
 
@@ -929,9 +943,7 @@ export class ConciergeController extends CoreController {
                 // ★ TTS応答に同梱されたExpressionを即バッファ投入
                 if (firstResult.expression) this.applyExpressionFromTts(firstResult.expression);
 
-                if (!isTextInput && this.isTTSEnabled) {
-                  this.stopCurrentAudio();
-                }
+                this.stopCurrentAudio();
 
                 this.ttsPlayer.src = `data:audio/mp3;base64,${firstResult.audio}`;
 
@@ -947,9 +959,10 @@ export class ConciergeController extends CoreController {
                     this.els.voiceStatus.className = 'voice-status stopped';
                     resolve();
                   };
+                  this.ttsPlayer.onerror = () => resolve();
                   this.els.voiceStatus.innerHTML = this.t('voiceStatusSpeaking');
                   this.els.voiceStatus.className = 'voice-status speaking';
-                  this.ttsPlayer.play();
+                  this.ttsPlayer.play().catch(() => resolve());
                 });
 
                 if (remainingResult?.success && remainingResult?.audio) {
@@ -959,9 +972,7 @@ export class ConciergeController extends CoreController {
                     // ★ TTS応答に同梱されたExpressionを即バッファ投入
                     if (remainingResult.expression) this.applyExpressionFromTts(remainingResult.expression);
 
-                    if (!isTextInput && this.isTTSEnabled) {
-                      this.stopCurrentAudio();
-                    }
+                    this.stopCurrentAudio();
 
                     this.ttsPlayer.src = `data:audio/mp3;base64,${remainingResult.audio}`;
                     await new Promise<void>((resolve) => {
@@ -970,9 +981,10 @@ export class ConciergeController extends CoreController {
                         this.els.voiceStatus.className = 'voice-status stopped';
                         resolve();
                       };
+                      this.ttsPlayer.onerror = () => resolve();
                       this.els.voiceStatus.innerHTML = this.t('voiceStatusSpeaking');
                       this.els.voiceStatus.className = 'voice-status speaking';
-                      this.ttsPlayer.play();
+                      this.ttsPlayer.play().catch(() => resolve());
                     });
                 }
               }
