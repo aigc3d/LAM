@@ -213,10 +213,13 @@ class Audio2ExpressionInfer(InferBase):
                 input_dict['input_audio_array'] = torch.FloatTensor(input_audio).to(self.device)[None, ...]
                 output_dict = self.model(input_dict)
                 out_exp = output_dict['pred_exp'].squeeze().cpu().numpy()[start_frame:, :]
-            except:
-                self.logger.error('Error: faided to predict expression.')
-                output_dict['pred_exp'] = torch.zeros((max_frame_length, 52)).float()
-                return
+            except Exception as e:
+                self.logger.error(f'Error: failed to predict expression: {e}')
+                import traceback
+                traceback.print_exc()
+                output_dict = {}
+                output_dict['pred_exp'] = torch.zeros((1, max_frame_length, 52)).float()
+                out_exp = output_dict['pred_exp'].squeeze().cpu().numpy()[start_frame:, :]
 
 
         # post-process

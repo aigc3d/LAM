@@ -38,7 +38,11 @@ class Audio2Expression(nn.Module):
         # Initialize audio feature encoder
         if pretrained_encoder_type == 'wav2vec':
             if os.path.exists(pretrained_encoder_path):
-                self.audio_encoder = Wav2Vec2Model.from_pretrained(pretrained_encoder_path)
+                self.audio_encoder = Wav2Vec2Model.from_pretrained(
+                    pretrained_encoder_path,
+                    ignore_mismatched_sizes=True,
+                    attn_implementation="eager",
+                )
             else:
                 config = Wav2Vec2Config.from_pretrained(wav2vec2_config_path)
                 self.audio_encoder = Wav2Vec2Model(config)

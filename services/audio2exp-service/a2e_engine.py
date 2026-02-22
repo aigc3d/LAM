@@ -140,25 +140,55 @@ class Audio2ExpressionEngine:
         return None
 
     def _find_checkpoint(self) -> str:
-        """A2E チェックポイントファイルを探索"""
+        """
+        A2E チェックポイントファイルを探索。
+
+        HuggingFace からダウンロードした LAM_audio2exp_streaming.tar は
+        gzip 圧縮の tar アーカイブで、中に pretrained_models/lam_audio2exp_streaming.tar
+        (これが実際の PyTorch チェックポイント) が入っている。
+        自動的に展開して内側のチェックポイントを返す。
+        """
+        import gzip
+        import tarfile
+
         model_dir = self.model_dir
+
+        # 実際の PyTorch チェックポイント (展開済み) を優先検索
         search_patterns = [
-            model_dir / "LAM_audio2exp_streaming.tar",
-            model_dir / "lam_audio2exp_streaming.tar",
-            model_dir / "LAM_audio2exp_streaming.pth",
+            model_dir / "pretrained_models" / "lam_audio2exp_streaming.tar",
+            model_dir / "pretrained_models" / "LAM_audio2exp_streaming.tar",
             model_dir / "lam_audio2exp_streaming.pth",
+            model_dir / "LAM_audio2exp_streaming.pth",
             model_dir / "LAM_audio2exp" / "pretrained_models" / "lam_audio2exp_streaming.tar",
             model_dir / "LAM_audio2exp" / "pretrained_models" / "LAM_audio2exp_streaming.tar",
-            model_dir / "LAM_audio2exp" / "LAM_audio2exp_streaming.tar",
-            model_dir / "LAM_audio2exp" / "lam_audio2exp_streaming.tar",
         ]
 
         for path in search_patterns:
             if path.exists():
                 return str(path)
 
+        # 外側の gzip tar を見つけたら自動展開
+        outer_candidates = [
+            model_dir / "LAM_audio2exp_streaming.tar",
+            model_dir / "lam_audio2exp_streaming.tar",
+        ]
+        for outer_path in outer_candidates:
+            if outer_path.exists():
+                try:
+                    with tarfile.open(str(outer_path), "r:gz") as tf:
+                        tf.extractall(path=str(model_dir))
+                        logger.info(f"[A2E Engine] Extracted {outer_path}")
+                    # 展開後に内側のチェックポイントを探索
+                    inner = model_dir / "pretrained_models" / "lam_audio2exp_streaming.tar"
+                    if inner.exists():
+                        return str(inner)
+                except Exception as e:
+                    logger.warning(f"[A2E Engine] Failed to extract {outer_path}: {e}")
+
         # ワイルドカード検索
         tar_files = list(model_dir.rglob("*audio2exp*.tar"))
+        # 外側の gzip tar は除外
+        tar_files = [f for f in tar_files if f.stat().st_size < 400_000_000]
         if tar_files:
             return str(tar_files[0])
         pth_files = list(model_dir.rglob("*audio2exp*.pth"))
@@ -279,12 +309,16 @@ class Audio2ExpressionEngine:
             self._infer.model.to(device)
             self._infer.model.eval()
 
-            # Warmup 推論
+            # Warmup 推論 (失敗しても致命的ではない)
             logger.info("[A2E Engine] Running warmup inference...")
-            dummy_audio = np.zeros(INFER_INPUT_SAMPLE_RATE, dtype=np.float32)
-            self._infer.infer_streaming_audio(
-                audio=dummy_audio, ssr=INFER_INPUT_SAMPLE_RATE, context=None
-            )
+            try:
+                dummy_audio = np.zeros(INFER_INPUT_SAMPLE_RATE, dtype=np.float32)
+                self._infer.infer_streaming_audio(
+                    audio=dummy_audio, ssr=INFER_INPUT_SAMPLE_RATE, context=None
+                )
+                logger.info("[A2E Engine] Warmup succeeded")
+            except Exception as e:
+                logger.warning(f"[A2E Engine] Warmup failed (non-fatal): {e}")
 
             logger.info("[A2E Engine] INFER pipeline loaded successfully!")
             return True
