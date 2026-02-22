@@ -223,28 +223,34 @@ export class ConciergeController extends CoreController {
         }
         this.ttsPlayer.src = `data:audio/mp3;base64,${data.audio}`;
         const playPromise = new Promise<void>((resolve) => {
-          this.ttsPlayer.onended = async () => {
+          let resolved = false;
+          const finish = (restartMic: boolean = false) => {
+            if (resolved) return;
+            resolved = true;
             this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
             this.els.voiceStatus.className = 'voice-status stopped';
             this.isAISpeaking = false;
             this.stopAvatarAnimation();
-            if (autoRestartMic) {
-              if (!this.isRecording) {
-                try { await this.toggleRecording(); } catch (_error) { this.showMicPrompt(); }
-              }
+            if (restartMic && autoRestartMic && !this.isRecording) {
+              this.toggleRecording().catch(() => this.showMicPrompt());
             }
             resolve();
           };
-          this.ttsPlayer.onerror = () => {
-            this.isAISpeaking = false;
-            this.stopAvatarAnimation();
-            resolve();
+          this.ttsPlayer.onended = () => finish(true);
+          this.ttsPlayer.onerror = () => finish(false);
+          // ★ autoplay ブロック対策: play直後にpauseされた場合のデッドロック防止
+          // (ack再生の onpause=done パターンと同じ)
+          this.ttsPlayer.onpause = () => {
+            if (this.ttsPlayer.currentTime < 0.1) {
+              console.warn('[TTS] ⚠️ 再生直後にpause検出(autoplayブロック) → deadlock防止のためresolve');
+              finish(false);
+            }
           };
         });
 
         if (this.isUserInteracted) {
           this.lastAISpeech = this.normalizeText(cleanText);
-          await this.ttsPlayer.play();
+          try { await this.ttsPlayer.play(); } catch (_e) { /* onpause/onerror in playPromise handles this */ }
           await playPromise;
         } else {
           this.showClickPrompt();
@@ -480,14 +486,14 @@ export class ConciergeController extends CoreController {
 
           // 最初のセンテンス再生
           await new Promise<void>((resolve) => {
-            this.ttsPlayer.onended = () => {
-              this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
-              this.els.voiceStatus.className = 'voice-status stopped';
-              resolve();
-            };
+            let resolved = false;
+            const done = () => { if (!resolved) { resolved = true; this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped'); this.els.voiceStatus.className = 'voice-status stopped'; resolve(); } };
+            this.ttsPlayer.onended = done;
+            this.ttsPlayer.onerror = done;
+            this.ttsPlayer.onpause = () => { if (this.ttsPlayer.currentTime < 0.1) done(); };
             this.els.voiceStatus.innerHTML = this.t('voiceStatusSpeaking');
             this.els.voiceStatus.className = 'voice-status speaking';
-            this.ttsPlayer.play();
+            this.ttsPlayer.play().catch(done);
           });
 
           // ★ 残りのセンテンスを続けて再生（Expression同梱済み）
@@ -504,14 +510,14 @@ export class ConciergeController extends CoreController {
             this.ttsPlayer.src = `data:audio/mp3;base64,${remainingTtsResult.audio}`;
 
             await new Promise<void>((resolve) => {
-              this.ttsPlayer.onended = () => {
-                this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
-                this.els.voiceStatus.className = 'voice-status stopped';
-                resolve();
-              };
+              let resolved = false;
+              const done = () => { if (!resolved) { resolved = true; this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped'); this.els.voiceStatus.className = 'voice-status stopped'; resolve(); } };
+              this.ttsPlayer.onended = done;
+              this.ttsPlayer.onerror = done;
+              this.ttsPlayer.onpause = () => { if (this.ttsPlayer.currentTime < 0.1) done(); };
               this.els.voiceStatus.innerHTML = this.t('voiceStatusSpeaking');
               this.els.voiceStatus.className = 'voice-status speaking';
-              this.ttsPlayer.play();
+              this.ttsPlayer.play().catch(done);
             });
           }
         }
@@ -748,10 +754,13 @@ export class ConciergeController extends CoreController {
                 const preGeneratedIntro = this.preGeneratedAcks.get(introText);
               if (preGeneratedIntro) {
                 introPart2Promise = new Promise<void>((resolve) => {
+                  let resolved = false;
+                  const done = () => { if (!resolved) { resolved = true; resolve(); } };
                   this.lastAISpeech = this.normalizeText(introText);
                   this.ttsPlayer.src = `data:audio/mp3;base64,${preGeneratedIntro}`;
-                  this.ttsPlayer.onended = () => resolve();
-                  this.ttsPlayer.play();
+                  this.ttsPlayer.onended = done;
+                  this.ttsPlayer.onpause = () => { if (this.ttsPlayer.currentTime < 0.1) done(); };
+                  this.ttsPlayer.play().catch(done);
                 });
               } else { 
                 introPart2Promise = this.speakTextGCP(introText, false, false, isTextInput); 
@@ -812,14 +821,14 @@ export class ConciergeController extends CoreController {
                 }
 
                 await new Promise<void>((resolve) => {
-                  this.ttsPlayer.onended = () => {
-                    this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
-                    this.els.voiceStatus.className = 'voice-status stopped';
-                    resolve();
-                  };
+                  let resolved = false;
+                  const done = () => { if (!resolved) { resolved = true; this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped'); this.els.voiceStatus.className = 'voice-status stopped'; resolve(); } };
+                  this.ttsPlayer.onended = done;
+                  this.ttsPlayer.onerror = done;
+                  this.ttsPlayer.onpause = () => { if (this.ttsPlayer.currentTime < 0.1) done(); };
                   this.els.voiceStatus.innerHTML = this.t('voiceStatusSpeaking');
                   this.els.voiceStatus.className = 'voice-status speaking';
-                  this.ttsPlayer.play();
+                  this.ttsPlayer.play().catch(done);
                 });
 
                 if (remainingResult?.success && remainingResult?.audio) {
@@ -835,14 +844,14 @@ export class ConciergeController extends CoreController {
 
                     this.ttsPlayer.src = `data:audio/mp3;base64,${remainingResult.audio}`;
                     await new Promise<void>((resolve) => {
-                      this.ttsPlayer.onended = () => {
-                        this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
-                        this.els.voiceStatus.className = 'voice-status stopped';
-                        resolve();
-                      };
+                      let resolved = false;
+                      const done = () => { if (!resolved) { resolved = true; this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped'); this.els.voiceStatus.className = 'voice-status stopped'; resolve(); } };
+                      this.ttsPlayer.onended = done;
+                      this.ttsPlayer.onerror = done;
+                      this.ttsPlayer.onpause = () => { if (this.ttsPlayer.currentTime < 0.1) done(); };
                       this.els.voiceStatus.innerHTML = this.t('voiceStatusSpeaking');
                       this.els.voiceStatus.className = 'voice-status speaking';
-                      this.ttsPlayer.play();
+                      this.ttsPlayer.play().catch(done);
                     });
                 }
               }
