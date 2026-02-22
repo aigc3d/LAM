@@ -40,18 +40,28 @@ export class ConciergeController extends CoreController {
     }
 
     // ★ LAMAvatar との統合: 外部TTSプレーヤーをリンク
-    // LAMAvatar が後から初期化される可能性があるため、即時 + 遅延でリンク
+    // LAMAvatar が後から初期化される可能性があるため、即時 + 遅延リトライでリンク
+    let linked = false;
+    let linkAttempts = 0;
     const linkTtsPlayer = () => {
+      if (linked) return true;
+      linkAttempts++;
       const lam = (window as any).lamAvatarController;
       if (lam && typeof lam.setExternalTtsPlayer === 'function') {
         lam.setExternalTtsPlayer(this.ttsPlayer);
-        console.log('[Concierge] Linked external TTS player with LAMAvatar');
+        linked = true;
+        console.log(`[Concierge] TTS player linked with LAMAvatar (attempt #${linkAttempts})`);
         return true;
       }
+      console.log(`[Concierge] LAMAvatar not ready yet (attempt #${linkAttempts})`);
       return false;
     };
     if (!linkTtsPlayer()) {
-      setTimeout(() => linkTtsPlayer(), 2000);
+      // 遅延リトライ: 500ms, 1000ms, 2000ms, 4000ms
+      const retryDelays = [500, 1000, 2000, 4000];
+      retryDelays.forEach((delay) => {
+        setTimeout(() => linkTtsPlayer(), delay);
+      });
     }
   }
 
@@ -196,7 +206,11 @@ export class ConciergeController extends CoreController {
 
       if (data.success && data.audio) {
         // ★ TTS応答に同梱されたExpressionを即バッファ投入（遅延ゼロ）
-        if (data.expression) this.applyExpressionFromTts(data.expression);
+        if (data.expression) {
+          this.applyExpressionFromTts(data.expression);
+        } else {
+          console.warn(`[Concierge] TTS response has NO expression data (session=${this.sessionId})`);
+        }
         this.ttsPlayer.src = `data:audio/mp3;base64,${data.audio}`;
         const playPromise = new Promise<void>((resolve) => {
           this.ttsPlayer.onended = async () => {
@@ -241,13 +255,44 @@ export class ConciergeController extends CoreController {
     }
   }
 
+  // ★ 口周りblendshapeの増幅係数（日本語母音の可視性向上）
+  // あ(jawOpen大), い(smile), う(pucker/funnel), え(stretch), お(funnel+jawOpen中)
+  private static readonly MOUTH_AMPLIFY: { [key: string]: number } = {
+    'jawOpen': 1.4,
+    'mouthClose': 1.3,
+    'mouthFunnel': 1.5,       // う・お で重要
+    'mouthPucker': 1.5,       // う で重要
+    'mouthSmileLeft': 1.3,    // い で重要
+    'mouthSmileRight': 1.3,   // い で重要
+    'mouthStretchLeft': 1.2,  // え で重要
+    'mouthStretchRight': 1.2, // え で重要
+    'mouthLowerDownLeft': 1.3,
+    'mouthLowerDownRight': 1.3,
+    'mouthUpperUpLeft': 1.2,
+    'mouthUpperUpRight': 1.2,
+    'mouthDimpleLeft': 1.1,
+    'mouthDimpleRight': 1.1,
+    'mouthRollLower': 1.2,
+    'mouthRollUpper': 1.2,
+    'mouthShrugLower': 1.2,
+    'mouthShrugUpper': 1.2,
+  };
+
   /**
    * TTS応答に同梱されたExpressionデータをバッファに即投入（遅延ゼロ）
    * 同期方式: バックエンドがTTS+audio2expを同期実行し、結果を同梱して返す
+   *
+   * ★品質改善:
+   * 1. 口周りblendshapeの増幅 → 日本語母音の可視性向上
+   * 2. フレーム補間 (30fps→60fps) → レンダラーの60fps描画に滑らかに追従
+   * 3. 診断ログ → jawOpen/mouthFunnel等の統計値で品質を確認可能
    */
   private applyExpressionFromTts(expression: any): void {
     const lamController = (window as any).lamAvatarController;
-    if (!lamController) return;
+    if (!lamController) {
+      console.warn('[Concierge] lamAvatarController not found - expression data dropped');
+      return;
+    }
 
     // 新セグメント開始時は必ずバッファクリア（前セグメントのフレーム混入防止）
     if (typeof lamController.clearFrameBuffer === 'function') {
@@ -255,13 +300,53 @@ export class ConciergeController extends CoreController {
     }
 
     if (expression?.names && expression?.frames?.length > 0) {
-      const frames = expression.frames.map((f: { weights: number[] }) => {
+      const srcFrameRate = expression.frame_rate || 30;
+
+      // Step 1: バックエンド形式 → LAMAvatar形式に変換 + blendshape増幅
+      const rawFrames = expression.frames.map((f: { weights: number[] }) => {
         const frame: { [key: string]: number } = {};
-        expression.names.forEach((name: string, i: number) => { frame[name] = f.weights[i]; });
+        expression.names.forEach((name: string, i: number) => {
+          let val = f.weights[i];
+          // 口周りblendshapeを増幅（日本語母音の可視性向上）
+          const amp = ConciergeController.MOUTH_AMPLIFY[name];
+          if (amp) {
+            val = Math.min(1.0, val * amp);
+          }
+          frame[name] = val;
+        });
         return frame;
       });
-      lamController.queueExpressionFrames(frames, expression.frame_rate || 30);
-      console.log(`[Concierge] Expression sync: ${frames.length} frames queued`);
+
+      // Step 2: フレーム補間 (30fps → 60fps) — 線形補間で滑らかに
+      const interpolatedFrames: { [key: string]: number }[] = [];
+      for (let i = 0; i < rawFrames.length; i++) {
+        interpolatedFrames.push(rawFrames[i]);
+        if (i < rawFrames.length - 1) {
+          const curr = rawFrames[i];
+          const next = rawFrames[i + 1];
+          const mid: { [key: string]: number } = {};
+          for (const key of Object.keys(curr)) {
+            mid[key] = (curr[key] + next[key]) * 0.5;
+          }
+          interpolatedFrames.push(mid);
+        }
+      }
+      const outputFrameRate = srcFrameRate * 2; // 30→60fps
+
+      // Step 3: LAMAvatarにキュー投入
+      lamController.queueExpressionFrames(interpolatedFrames, outputFrameRate);
+
+      // Step 4: 診断ログ（blendshape統計値）
+      const jawValues = rawFrames.map((f: { [k: string]: number }) => f['jawOpen'] || 0);
+      const funnelValues = rawFrames.map((f: { [k: string]: number }) => f['mouthFunnel'] || 0);
+      const smileValues = rawFrames.map((f: { [k: string]: number }) => f['mouthSmileLeft'] || 0);
+      const jawMax = Math.max(...jawValues);
+      const jawAvg = jawValues.reduce((a: number, b: number) => a + b, 0) / jawValues.length;
+      const funnelMax = Math.max(...funnelValues);
+      const smileMax = Math.max(...smileValues);
+      console.log(`[Concierge] Expression: ${rawFrames.length}→${interpolatedFrames.length} frames (${srcFrameRate}→${outputFrameRate}fps) | jaw: max=${jawMax.toFixed(3)} avg=${jawAvg.toFixed(3)} | funnel: max=${funnelMax.toFixed(3)} | smile: max=${smileMax.toFixed(3)}`);
+    } else {
+      console.warn(`[Concierge] No expression frames in TTS response (names=${!!expression?.names}, frames=${expression?.frames?.length || 0})`);
     }
   }
 
