@@ -63,6 +63,97 @@ export class ConciergeController extends CoreController {
         setTimeout(() => linkTtsPlayer(), delay);
       });
     }
+
+    // ★ 診断用: ブラウザコンソールから __testLipSync() で呼び出し可能
+    (window as any).__testLipSync = () => this.runLipSyncDiagnostic();
+  }
+
+  /**
+   * レンダラー診断テスト
+   * ブラウザコンソールから __testLipSync() で実行
+   *
+   * 日本語5母音（あいうえお）の既知blendshapeパターンを
+   * 無音音声と同期再生し、レンダラーが52次元データを正しく描画できるか判定する
+   *
+   * 判定基準:
+   *   - あ: 口が大きく開く (jawOpen高)
+   *   - い: 口角が横に広がる (mouthSmile高)
+   *   - う: 口がすぼまる (mouthFunnel/Pucker高)
+   *   - え: 口が横に広がり中程度に開く (mouthStretch高)
+   *   - お: 口が丸くなる (mouthFunnel高 + jawOpen中)
+   *
+   * 結果:
+   *   ✓ 5母音で明らかに異なる口形状 → レンダラーは52次元対応
+   *   ✗ jawの開閉しか見えない → レンダラーはjawOpen単次元のみ
+   */
+  private runLipSyncDiagnostic(): void {
+    const lam = (window as any).lamAvatarController;
+    if (!lam) {
+      console.error('[DIAG] lamAvatarController not found');
+      return;
+    }
+
+    // 日本語5母音のARKitブレンドシェイプパターン
+    const base: { [k: string]: number } = {};  // 全て0で初期化
+    const vowelPatterns: { [vowel: string]: { [k: string]: number } } = {
+      'あ(a)': { jawOpen: 0.7, mouthLowerDownLeft: 0.5, mouthLowerDownRight: 0.5, mouthUpperUpLeft: 0.2, mouthUpperUpRight: 0.2 },
+      'い(i)': { jawOpen: 0.2, mouthSmileLeft: 0.6, mouthSmileRight: 0.6, mouthStretchLeft: 0.4, mouthStretchRight: 0.4 },
+      'う(u)': { jawOpen: 0.15, mouthFunnel: 0.6, mouthPucker: 0.5 },
+      'え(e)': { jawOpen: 0.4, mouthStretchLeft: 0.5, mouthStretchRight: 0.5, mouthSmileLeft: 0.3, mouthSmileRight: 0.3, mouthLowerDownLeft: 0.3, mouthLowerDownRight: 0.3 },
+      'お(o)': { jawOpen: 0.5, mouthFunnel: 0.5, mouthPucker: 0.3, mouthLowerDownLeft: 0.2, mouthLowerDownRight: 0.2 },
+    };
+
+    // フレーム生成: neutral(15) → 各母音(20frames=0.67s) → neutral(15)
+    const frameRate = 30;
+    const frames: { [k: string]: number }[] = [];
+    const addFrames = (pattern: { [k: string]: number }, count: number, label?: string) => {
+      for (let i = 0; i < count; i++) {
+        frames.push({ ...base, ...pattern });
+      }
+      if (label) console.log(`[DIAG] ${label}: frames ${frames.length - count}-${frames.length - 1}`);
+    };
+
+    addFrames(base, 15, 'neutral (start)');
+    for (const [vowel, pattern] of Object.entries(vowelPatterns)) {
+      addFrames(pattern, 20, vowel);
+    }
+    addFrames(base, 15, 'neutral (end)');
+
+    const totalFrames = frames.length;
+    const durationSec = totalFrames / frameRate + 0.5;
+
+    // 無音WAVを生成（ttsPlayer経由で再生して同期トリガー）
+    const sampleRate = 8000;
+    const numSamples = Math.floor(durationSec * sampleRate);
+    const wavBuf = new ArrayBuffer(44 + numSamples * 2);
+    const dv = new DataView(wavBuf);
+    const ws = (off: number, s: string) => { for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i)); };
+    ws(0, 'RIFF');
+    dv.setUint32(4, 36 + numSamples * 2, true);
+    ws(8, 'WAVE'); ws(12, 'fmt ');
+    dv.setUint32(16, 16, true);
+    dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+    dv.setUint32(24, sampleRate, true); dv.setUint32(28, sampleRate * 2, true);
+    dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+    ws(36, 'data');
+    dv.setUint32(40, numSamples * 2, true);
+
+    const wavUrl = URL.createObjectURL(new Blob([wavBuf], { type: 'audio/wav' }));
+
+    // LAMAvatarにフレーム投入 + 再生
+    lam.clearFrameBuffer();
+    lam.queueExpressionFrames(frames, frameRate);
+
+    this.ttsPlayer.src = wavUrl;
+    this.ttsPlayer.play().then(() => {
+      console.log(`[DIAG] ▶ Playing: ${totalFrames} frames, ${durationSec.toFixed(1)}s`);
+      console.log('[DIAG] 0.5s neutral → 0.67s あ → 0.67s い → 0.67s う → 0.67s え → 0.67s お → 0.5s neutral');
+      console.log('[DIAG] ✓ 5母音で口形状が変われば → レンダラーは52次元blendshape対応');
+      console.log('[DIAG] ✗ jawの開閉のみ → レンダラーはjawOpen単次元');
+    }).catch((e: any) => {
+      console.error('[DIAG] Play failed:', e);
+      console.log('[DIAG] ユーザー操作後に再試行してください（autoplay制限）');
+    });
   }
 
   // ========================================

@@ -1,11 +1,18 @@
 """
 A2E (Audio2Expression) 推論エンジン
 
-Wav2Vec2 + A2Eデコーダーを使って、音声から52次元ARKitブレンドシェイプを生成。
+LAM Audio2Expression INFER パイプラインを使って、
+音声から52次元ARKitブレンドシェイプを生成。
 
 モデル構成:
     - facebook/wav2vec2-base-960h: 音響特徴量抽出 (768次元)
     - 3DAIGC/LAM_audio2exp: 表情デコーダー (768→52次元)
+
+優先順位:
+    1. INFER パイプライン (LAM_Audio2Expression モジュール使用)
+       → 完全な A2E 推論 + ポストプロセッシング
+    2. Wav2Vec2 エネルギーベースフォールバック
+       → モジュール未インストール時の近似生成
 
 入出力:
     Input:  base64エンコードされた音声 (MP3/WAV/PCM)
@@ -17,14 +24,35 @@ import io
 import logging
 import os
 import sys
+import traceback
 from pathlib import Path
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# ARKit 52 ブレンドシェイプ名 (Apple公式仕様)
-ARKIT_BLENDSHAPE_NAMES = [
+# INFER パイプラインが使用する ARKit 52 ブレンドシェイプ名
+# (LAM_Audio2Expression/models/utils.py の ARKitBlendShape と同じ順序)
+ARKIT_BLENDSHAPE_NAMES_INFER = [
+    "browDownLeft", "browDownRight", "browInnerUp", "browOuterUpLeft", "browOuterUpRight",
+    "cheekPuff", "cheekSquintLeft", "cheekSquintRight",
+    "eyeBlinkLeft", "eyeBlinkRight", "eyeLookDownLeft", "eyeLookDownRight",
+    "eyeLookInLeft", "eyeLookInRight", "eyeLookOutLeft", "eyeLookOutRight",
+    "eyeLookUpLeft", "eyeLookUpRight", "eyeSquintLeft", "eyeSquintRight",
+    "eyeWideLeft", "eyeWideRight",
+    "jawForward", "jawLeft", "jawOpen", "jawRight",
+    "mouthClose", "mouthDimpleLeft", "mouthDimpleRight", "mouthFrownLeft", "mouthFrownRight",
+    "mouthFunnel", "mouthLeft", "mouthLowerDownLeft", "mouthLowerDownRight",
+    "mouthPressLeft", "mouthPressRight", "mouthPucker", "mouthRight",
+    "mouthRollLower", "mouthRollUpper", "mouthShrugLower", "mouthShrugUpper",
+    "mouthSmileLeft", "mouthSmileRight", "mouthStretchLeft", "mouthStretchRight",
+    "mouthUpperUpLeft", "mouthUpperUpRight",
+    "noseSneerLeft", "noseSneerRight",
+    "tongueOut",
+]
+
+# フォールバック用の ARKit 名 (a2e_engine.py 独自の順序)
+ARKIT_BLENDSHAPE_NAMES_FALLBACK = [
     "eyeBlinkLeft", "eyeLookDownLeft", "eyeLookInLeft", "eyeLookOutLeft",
     "eyeLookUpLeft", "eyeSquintLeft", "eyeWideLeft",
     "eyeBlinkRight", "eyeLookDownRight", "eyeLookInRight", "eyeLookOutRight",
@@ -42,16 +70,22 @@ ARKIT_BLENDSHAPE_NAMES = [
     "tongueOut",
 ]
 
-# A2E出力のFPS (OpenAvatarChatのデフォルト)
+# A2E出力のFPS
 A2E_OUTPUT_FPS = 30
+
+# INFER パイプライン用の入力サンプルレート
+INFER_INPUT_SAMPLE_RATE = 16000
 
 
 class Audio2ExpressionEngine:
-    """A2E推論エンジン - Wav2Vec2 + LAM A2Eデコーダー"""
+    """A2E推論エンジン - INFER パイプライン優先、Wav2Vec2 フォールバック"""
 
     def __init__(self, model_dir: str = "./models", device: str = "auto"):
         self.model_dir = Path(model_dir)
         self._ready = False
+        self._use_infer = False  # INFER パイプライン使用フラグ
+        self._infer = None       # INFER パイプラインインスタンス
+        self._infer_context = None  # ストリーミング推論のコンテキスト
 
         # デバイス決定
         import torch
@@ -63,19 +97,215 @@ class Audio2ExpressionEngine:
 
         logger.info(f"[A2E Engine] Device: {self.device}")
 
-        self._load_models()
+        self._initialize()
 
-    def _load_models(self):
-        """Wav2Vec2 + A2Eデコーダーをロード"""
+    def _initialize(self):
+        """エンジン初期化 - INFER パイプラインを優先的にロード"""
+        # 1. INFER パイプラインを試行
+        if self._try_load_infer_pipeline():
+            self._use_infer = True
+            self._ready = True
+            logger.info("[A2E Engine] Ready (INFER pipeline mode)")
+            return
+
+        # 2. フォールバック: Wav2Vec2 のみ
+        logger.warning("[A2E Engine] INFER pipeline unavailable, loading Wav2Vec2 fallback")
+        self._load_wav2vec_fallback()
+        self._ready = True
+        logger.info("[A2E Engine] Ready (Wav2Vec2 fallback mode)")
+
+    def _find_lam_module(self) -> str:
+        """LAM_Audio2Expression モジュールを探索して sys.path に追加"""
+        script_dir = Path(os.path.dirname(os.path.abspath(__file__)))
+        candidates = [
+            # 環境変数で指定
+            os.environ.get("LAM_A2E_PATH"),
+            # サービスディレクトリ直下 (Docker COPY)
+            str(script_dir / "LAM_Audio2Expression"),
+            # models ディレクトリ内
+            str(self.model_dir / "LAM_Audio2Expression"),
+            str(self.model_dir / "LAM_audio2exp" / "LAM_Audio2Expression"),
+            # 親ディレクトリ
+            str(self.model_dir.parent / "LAM_Audio2Expression"),
+        ]
+
+        for candidate in candidates:
+            if candidate and os.path.exists(candidate):
+                abs_path = os.path.abspath(candidate)
+                if abs_path not in sys.path:
+                    sys.path.insert(0, abs_path)
+                logger.info(f"[A2E Engine] Found LAM_Audio2Expression: {abs_path}")
+                return abs_path
+
+        return None
+
+    def _find_checkpoint(self) -> str:
+        """A2E チェックポイントファイルを探索"""
+        model_dir = self.model_dir
+        search_patterns = [
+            model_dir / "LAM_audio2exp_streaming.tar",
+            model_dir / "lam_audio2exp_streaming.tar",
+            model_dir / "LAM_audio2exp_streaming.pth",
+            model_dir / "lam_audio2exp_streaming.pth",
+            model_dir / "LAM_audio2exp" / "pretrained_models" / "lam_audio2exp_streaming.tar",
+            model_dir / "LAM_audio2exp" / "pretrained_models" / "LAM_audio2exp_streaming.tar",
+            model_dir / "LAM_audio2exp" / "LAM_audio2exp_streaming.tar",
+            model_dir / "LAM_audio2exp" / "lam_audio2exp_streaming.tar",
+        ]
+
+        for path in search_patterns:
+            if path.exists():
+                return str(path)
+
+        # ワイルドカード検索
+        tar_files = list(model_dir.rglob("*audio2exp*.tar"))
+        if tar_files:
+            return str(tar_files[0])
+        pth_files = list(model_dir.rglob("*audio2exp*.pth"))
+        if pth_files:
+            return str(pth_files[0])
+
+        return None
+
+    def _find_wav2vec_dir(self) -> str:
+        """wav2vec2-base-960h モデルディレクトリを探索"""
+        candidates = [
+            self.model_dir / "wav2vec2-base-960h",
+        ]
+        # GCS FUSE mount
+        mount_path = os.environ.get("MODEL_MOUNT_PATH", "/mnt/models")
+        model_subdir = os.environ.get("MODEL_SUBDIR", "audio2exp")
+        candidates.append(Path(mount_path) / model_subdir / "wav2vec2-base-960h")
+
+        for path in candidates:
+            if path.exists() and (path / "config.json").exists():
+                return str(path)
+        return None
+
+    def _try_load_infer_pipeline(self) -> bool:
+        """
+        INFER パイプラインのロードを試行。
+
+        old FastAPI app.py の実装をベースに:
+        1. LAM_Audio2Expression モジュールを見つけて sys.path に追加
+        2. default_config_parser で streaming config をパース
+        3. INFER.build() でモデルをビルド
+        4. warmup 推論を実行
+        """
+        import torch
+
+        # 1. LAM_Audio2Expression モジュールを探索
+        lam_path = self._find_lam_module()
+        if not lam_path:
+            logger.warning("[A2E Engine] LAM_Audio2Expression module not found")
+            return False
+
+        # 2. チェックポイントを探索
+        checkpoint_path = self._find_checkpoint()
+        if not checkpoint_path:
+            logger.warning("[A2E Engine] No A2E checkpoint found")
+            return False
+
+        # 3. wav2vec2 ディレクトリを探索
+        wav2vec_dir = self._find_wav2vec_dir()
+        if not wav2vec_dir:
+            logger.warning("[A2E Engine] wav2vec2-base-960h not found locally")
+            # HuggingFace からダウンロードさせるためにデフォルト値を使用
+            wav2vec_dir = "facebook/wav2vec2-base-960h"
+
+        logger.info(f"[A2E Engine] Checkpoint: {checkpoint_path}")
+        logger.info(f"[A2E Engine] Wav2Vec2: {wav2vec_dir}")
+
+        try:
+            from engines.defaults import default_config_parser
+            from engines.infer import INFER
+
+            # DDP 環境変数 (single-process 用)
+            os.environ.setdefault("WORLD_SIZE", "1")
+            os.environ.setdefault("RANK", "0")
+            os.environ.setdefault("MASTER_ADDR", "localhost")
+            os.environ.setdefault("MASTER_PORT", "12345")
+
+            # config ファイルのパス
+            config_file = os.path.join(lam_path, "configs",
+                                       "lam_audio2exp_config_streaming.py")
+            if not os.path.exists(config_file):
+                logger.warning(f"[A2E Engine] Config not found: {config_file}")
+                return False
+
+            # save_path (ログ出力先 - /tmp に設定)
+            save_path = "/tmp/audio2exp_logs"
+            os.makedirs(save_path, exist_ok=True)
+            os.makedirs(os.path.join(save_path, "model"), exist_ok=True)
+
+            # wav2vec2 config.json パスの解決
+            if os.path.isdir(wav2vec_dir):
+                wav2vec_config = os.path.join(wav2vec_dir, "config.json")
+            else:
+                # HuggingFace ID の場合、LAM モジュール内蔵の config を使用
+                wav2vec_config = os.path.join(lam_path, "configs", "wav2vec2_config.json")
+
+            # cfg_options: config のオーバーライド
+            cfg_options = {
+                "weight": checkpoint_path,
+                "save_path": save_path,
+                "model": {
+                    "backbone": {
+                        "wav2vec2_config_path": wav2vec_config,
+                        "pretrained_encoder_path": wav2vec_dir,
+                    }
+                },
+                "num_worker": 0,
+                "batch_size": 1,
+            }
+
+            logger.info(f"[A2E Engine] Loading config: {config_file}")
+            cfg = default_config_parser(config_file, cfg_options)
+
+            # default_setup() をスキップ (DDP 関連の処理は不要)
+            # 必要な設定を手動で設定
+            cfg.device = torch.device(self.device)
+            cfg.num_worker = 0
+            cfg.num_worker_per_gpu = 0
+            cfg.batch_size_per_gpu = 1
+            cfg.batch_size_val_per_gpu = 1
+            cfg.batch_size_test_per_gpu = 1
+
+            logger.info("[A2E Engine] Building INFER model...")
+            self._infer = INFER.build(dict(type=cfg.infer.type, cfg=cfg))
+
+            # CPU + eval mode
+            device = torch.device(self.device)
+            self._infer.model.to(device)
+            self._infer.model.eval()
+
+            # Warmup 推論
+            logger.info("[A2E Engine] Running warmup inference...")
+            dummy_audio = np.zeros(INFER_INPUT_SAMPLE_RATE, dtype=np.float32)
+            self._infer.infer_streaming_audio(
+                audio=dummy_audio, ssr=INFER_INPUT_SAMPLE_RATE, context=None
+            )
+
+            logger.info("[A2E Engine] INFER pipeline loaded successfully!")
+            return True
+
+        except ImportError as e:
+            logger.warning(f"[A2E Engine] INFER import failed: {e}")
+            traceback.print_exc()
+            return False
+        except Exception as e:
+            logger.warning(f"[A2E Engine] INFER initialization failed: {e}")
+            traceback.print_exc()
+            return False
+
+    def _load_wav2vec_fallback(self):
+        """Wav2Vec2 フォールバックモードのロード"""
         import torch
         from transformers import Wav2Vec2Model, Wav2Vec2Processor
 
-        # ========================================
-        # Wav2Vec2 ロード
-        # ========================================
-        wav2vec_dir = self.model_dir / "wav2vec2-base-960h"
-        if wav2vec_dir.exists() and (wav2vec_dir / "config.json").exists():
-            wav2vec_path = str(wav2vec_dir)
+        wav2vec_dir = self._find_wav2vec_dir()
+        if wav2vec_dir:
+            wav2vec_path = wav2vec_dir
             logger.info(f"[A2E Engine] Loading Wav2Vec2 from local: {wav2vec_path}")
         else:
             wav2vec_path = "facebook/wav2vec2-base-960h"
@@ -91,89 +321,14 @@ class Audio2ExpressionEngine:
         self.wav2vec_model = Wav2Vec2Model.from_pretrained(wav2vec_path)
         self.wav2vec_model.to(self.device)
         self.wav2vec_model.eval()
-        logger.info("[A2E Engine] Wav2Vec2 loaded")
-
-        # ========================================
-        # A2Eデコーダー ロード
-        # ========================================
-        self.a2e_decoder = None
-        self._load_a2e_decoder(self.model_dir)
-
-        self._ready = True
-        logger.info("[A2E Engine] Ready")
-
-    def _load_a2e_decoder(self, model_dir: Path):
-        """
-        LAM A2Eデコーダーのロード
-
-        対応するディレクトリ構造:
-          パターン1 (フラット): models/LAM_audio2exp_streaming.tar
-          パターン2 (サブディレクトリ): models/LAM_audio2exp/pretrained_models/lam_audio2exp_streaming.tar
-          パターン3 (サブディレクトリ直下): models/LAM_audio2exp/LAM_audio2exp_streaming.tar
-        """
-        import torch
-
-        # チェックポイントを探索
-        checkpoint_path = None
-        search_patterns = [
-            # パターン1: models/ 直下にtar (フラット配置)
-            model_dir / "LAM_audio2exp_streaming.tar",
-            model_dir / "lam_audio2exp_streaming.tar",
-            # パターン2: models/LAM_audio2exp/pretrained_models/
-            model_dir / "LAM_audio2exp" / "pretrained_models" / "lam_audio2exp_streaming.tar",
-            model_dir / "LAM_audio2exp" / "pretrained_models" / "LAM_audio2exp_streaming.tar",
-            # パターン3: models/LAM_audio2exp/ 直下
-            model_dir / "LAM_audio2exp" / "LAM_audio2exp_streaming.tar",
-            model_dir / "LAM_audio2exp" / "lam_audio2exp_streaming.tar",
-        ]
-
-        for path in search_patterns:
-            if path.exists():
-                checkpoint_path = path
-                break
-
-        # パターンに一致しなければ、model_dir以下の全tarを検索
-        if checkpoint_path is None:
-            tar_files = list(model_dir.rglob("*audio2exp*.tar"))
-            if tar_files:
-                checkpoint_path = tar_files[0]
-
-        if checkpoint_path is None:
-            logger.warning(f"[A2E Engine] No A2E checkpoint found in {model_dir}")
-            logger.warning("[A2E Engine] Searched patterns: models/*.tar, models/LAM_audio2exp/**/*.tar")
-            logger.warning("[A2E Engine] Will use Wav2Vec2-based fallback")
-            return
-
-        logger.info(f"[A2E Engine] Found A2E checkpoint: {checkpoint_path}")
-
-        # LAM_Audio2Expression のPythonモジュールパスを追加
-        for lam_path in [
-            model_dir / "LAM_Audio2Expression",
-            model_dir / "LAM_audio2exp" / "LAM_Audio2Expression",
-            model_dir.parent / "LAM_Audio2Expression",
-        ]:
-            if lam_path.exists() and str(lam_path) not in sys.path:
-                sys.path.insert(0, str(lam_path))
-
-        try:
-            from engines.infer import Audio2ExpressionInfer
-
-            self.a2e_decoder = Audio2ExpressionInfer()
-            checkpoint = torch.load(str(checkpoint_path), map_location=self.device)
-            self.a2e_decoder.load_state_dict(checkpoint)
-            self.a2e_decoder.to(self.device)
-            self.a2e_decoder.eval()
-            logger.info("[A2E Engine] A2E decoder loaded successfully")
-
-        except ImportError:
-            logger.warning("[A2E Engine] LAM_Audio2Expression module not importable")
-            logger.warning("[A2E Engine] Using Wav2Vec2-based fallback")
-        except Exception as e:
-            logger.warning(f"[A2E Engine] Failed to load A2E decoder: {e}")
-            logger.warning("[A2E Engine] Using Wav2Vec2-based fallback")
+        logger.info("[A2E Engine] Wav2Vec2 loaded (fallback mode)")
 
     def is_ready(self) -> bool:
         return self._ready
+
+    def get_mode(self) -> str:
+        """現在の推論モードを返す"""
+        return "infer" if self._use_infer else "fallback"
 
     def process(self, audio_base64: str, audio_format: str = "mp3") -> dict:
         """
@@ -186,14 +341,86 @@ class Audio2ExpressionEngine:
         Returns:
             {names: [52 strings], frames: [[52 floats], ...], frame_rate: int}
         """
-        import torch
-
         # 1. 音声デコード → PCM 16kHz
         audio_pcm = self._decode_audio(audio_base64, audio_format)
-        duration = len(audio_pcm) / 16000
+        duration = len(audio_pcm) / INFER_INPUT_SAMPLE_RATE
         logger.info(f"[A2E Engine] Audio decoded: {duration:.2f}s at 16kHz")
 
-        # 2. Wav2Vec2 特徴量抽出
+        # 2. 推論実行
+        if self._use_infer:
+            return self._process_with_infer(audio_pcm, duration)
+        else:
+            return self._process_with_fallback(audio_pcm, duration)
+
+    def _process_with_infer(self, audio_pcm: np.ndarray, duration: float) -> dict:
+        """
+        INFER パイプラインで推論。
+
+        infer_streaming_audio() を使用:
+        - 音声をチャンクに分割
+        - チャンクごとに推論 (コンテキスト引き継ぎ)
+        - ポストプロセッシング込み (smooth_mouth, frame_blending,
+          savitzky_golay, symmetrize, eye_blinks)
+        """
+        chunk_samples = INFER_INPUT_SAMPLE_RATE  # 1秒チャンク
+        all_expressions = []
+        context = None
+
+        try:
+            for start in range(0, len(audio_pcm), chunk_samples):
+                end = min(start + chunk_samples, len(audio_pcm))
+                chunk = audio_pcm[start:end]
+
+                # 極端に短いチャンクはスキップ
+                if len(chunk) < INFER_INPUT_SAMPLE_RATE // 10:
+                    continue
+
+                result, context = self._infer.infer_streaming_audio(
+                    audio=chunk, ssr=INFER_INPUT_SAMPLE_RATE, context=context
+                )
+                expr = result.get("expression")
+                if expr is not None:
+                    all_expressions.append(expr.astype(np.float32))
+
+            if not all_expressions:
+                logger.warning("[A2E Engine] INFER produced no expression data")
+                num_frames = max(1, int(duration * A2E_OUTPUT_FPS))
+                expression = np.zeros((num_frames, 52), dtype=np.float32)
+            else:
+                expression = np.concatenate(all_expressions, axis=0)
+
+            logger.info(f"[A2E Engine] INFER: {expression.shape[0]} frames, "
+                        f"jawOpen range=[{expression[:, 24].min():.3f}, "
+                        f"{expression[:, 24].max():.3f}]")  # jawOpen = index 24 in INFER order
+
+            # フレームリストに変換
+            frames = [frame.tolist() for frame in expression]
+
+            return {
+                "names": ARKIT_BLENDSHAPE_NAMES_INFER,
+                "frames": frames,
+                "frame_rate": A2E_OUTPUT_FPS,
+            }
+
+        except Exception as e:
+            logger.error(f"[A2E Engine] INFER inference error: {e}")
+            traceback.print_exc()
+            # エラー時はフォールバック
+            logger.warning("[A2E Engine] Falling back to Wav2Vec2 for this request")
+            if hasattr(self, 'wav2vec_model'):
+                return self._process_with_fallback(audio_pcm, duration)
+            # Wav2Vec2 もない場合は空フレームを返す
+            num_frames = max(1, int(duration * A2E_OUTPUT_FPS))
+            return {
+                "names": ARKIT_BLENDSHAPE_NAMES_INFER,
+                "frames": [np.zeros(52).tolist()] * num_frames,
+                "frame_rate": A2E_OUTPUT_FPS,
+            }
+
+    def _process_with_fallback(self, audio_pcm: np.ndarray, duration: float) -> dict:
+        """Wav2Vec2 フォールバックで推論"""
+        import torch
+
         inputs = self.wav2vec_processor(
             audio_pcm, sampling_rate=16000, return_tensors="pt", padding=True
         )
@@ -205,20 +432,13 @@ class Audio2ExpressionEngine:
 
         logger.info(f"[A2E Engine] Wav2Vec2 features: {tuple(features.shape)}")
 
-        # 3. A2E デコーダーで52次元ブレンドシェイプに変換
-        if self.a2e_decoder is not None:
-            blendshapes = self._run_a2e_decoder(features)
-        else:
-            blendshapes = self._wav2vec_to_blendshapes_fallback(features, duration)
-
-        # 4. フレームレート調整 (A2E出力→30fps)
+        blendshapes = self._wav2vec_to_blendshapes_fallback(features, duration)
         frames = self._resample_to_fps(blendshapes, duration, A2E_OUTPUT_FPS)
 
-        # 5. レスポンス構築
         return {
-            "names": ARKIT_BLENDSHAPE_NAMES,
+            "names": ARKIT_BLENDSHAPE_NAMES_FALLBACK,
             "frames": frames,
-            "frame_rate": A2E_OUTPUT_FPS
+            "frame_rate": A2E_OUTPUT_FPS,
         }
 
     def _decode_audio(self, audio_base64: str, audio_format: str) -> np.ndarray:
@@ -226,14 +446,12 @@ class Audio2ExpressionEngine:
         audio_bytes = base64.b64decode(audio_base64)
 
         if audio_format in ("mp3", "wav", "ogg", "flac"):
-            # pydub で変換
             from pydub import AudioSegment
             audio = AudioSegment.from_file(io.BytesIO(audio_bytes), format=audio_format)
             audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
             samples = np.array(audio.get_array_of_samples(), dtype=np.float32)
             samples = samples / 32768.0
         elif audio_format == "pcm":
-            # 生PCM (int16, 16kHz, mono)
             samples = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
             samples = samples / 32768.0
         else:
@@ -241,57 +459,22 @@ class Audio2ExpressionEngine:
 
         return samples
 
-    def _run_a2e_decoder(self, features) -> np.ndarray:
-        """A2Eデコーダーで推論"""
-        import torch
-
-        with torch.no_grad():
-            # A2Eデコーダーの入力形式に合わせる
-            # 具体的なインターフェースはLAM_Audio2Expressionの実装に依存
-            output = self.a2e_decoder(features)
-
-            if isinstance(output, torch.Tensor):
-                blendshapes = output.squeeze(0).cpu().numpy()
-            elif isinstance(output, (list, tuple)):
-                blendshapes = np.array(output, dtype=np.float32)
-            else:
-                blendshapes = output
-
-        # (T, 52)であることを確認
-        if blendshapes.ndim == 1:
-            blendshapes = blendshapes.reshape(1, -1)
-        if blendshapes.shape[-1] != 52:
-            logger.warning(f"[A2E Engine] Unexpected output dim: {blendshapes.shape}")
-
-        return blendshapes
-
     def _wav2vec_to_blendshapes_fallback(
         self, features, duration: float
     ) -> np.ndarray:
         """
         A2Eデコーダーがない場合のフォールバック:
         Wav2Vec2の特徴量からリップシンク関連のブレンドシェイプを近似生成。
-
-        Wav2Vec2の768次元特徴量のエネルギーパターンを使って、
-        jawOpen等のリップ関連ブレンドシェイプを駆動する。
-        完全なA2Eデコーダーに比べて精度は劣るが、
-        FFT音量ベースよりも正確なタイミングを提供する。
         """
         features_np = features.squeeze(0).cpu().numpy()  # (T, 768)
         n_frames = features_np.shape[0]
 
-        # 全52次元を0で初期化
         blendshapes = np.zeros((n_frames, 52), dtype=np.float32)
 
-        # Wav2Vec2特徴量からエネルギーを計算
-        # 低周波帯(0-256): 母音に関連する音響特徴
-        # 中周波帯(256-512): 子音に関連
-        # 高周波帯(512-768): 摩擦音・破裂音
         low_energy = np.abs(features_np[:, :256]).mean(axis=1)
         mid_energy = np.abs(features_np[:, 256:512]).mean(axis=1)
         high_energy = np.abs(features_np[:, 512:]).mean(axis=1)
 
-        # エネルギーを正規化 (0.0〜1.0)
         def normalize(x):
             x_min = x.min()
             x_max = x.max()
@@ -302,76 +485,49 @@ class Audio2ExpressionEngine:
         low_norm = normalize(low_energy)
         mid_norm = normalize(mid_energy)
         high_norm = normalize(high_energy)
-
-        # 全体のスピーチ活性度
         speech_activity = normalize(low_energy + mid_energy + high_energy)
 
-        # ブレンドシェイプ名→インデックスのマップ
-        idx = {name: i for i, name in enumerate(ARKIT_BLENDSHAPE_NAMES)}
+        idx = {name: i for i, name in enumerate(ARKIT_BLENDSHAPE_NAMES_FALLBACK)}
 
-        # ========================================
-        # リップシンク関連のブレンドシェイプを駆動
-        # ========================================
-
-        # jawOpen: 口の開き (低周波エネルギーに強く相関)
+        # リップシンク
         blendshapes[:, idx["jawOpen"]] = np.clip(low_norm * 0.8, 0, 1)
-
-        # mouthClose: jawOpenの逆
         blendshapes[:, idx["mouthClose"]] = np.clip(1.0 - low_norm * 0.8, 0, 1) * speech_activity
-
-        # mouthFunnel: 「う」「お」の口の丸め (中周波で推定)
         funnel = np.clip(mid_norm * 0.5 - low_norm * 0.2, 0, 1)
         blendshapes[:, idx["mouthFunnel"]] = funnel
-
-        # mouthPucker: 「う」のすぼめ
         blendshapes[:, idx["mouthPucker"]] = np.clip(funnel * 0.7, 0, 1)
-
-        # mouthSmile: 「い」「え」の横開き (高周波が多い時)
         smile = np.clip(high_norm * 0.4 - mid_norm * 0.1, 0, 1)
         blendshapes[:, idx["mouthSmileLeft"]] = smile
         blendshapes[:, idx["mouthSmileRight"]] = smile
-
-        # mouthLowerDown / mouthUpperUp: 母音の開き
         lower_down = np.clip(low_norm * 0.5, 0, 1)
         blendshapes[:, idx["mouthLowerDownLeft"]] = lower_down
         blendshapes[:, idx["mouthLowerDownRight"]] = lower_down
         upper_up = np.clip(low_norm * 0.3, 0, 1)
         blendshapes[:, idx["mouthUpperUpLeft"]] = upper_up
         blendshapes[:, idx["mouthUpperUpRight"]] = upper_up
-
-        # mouthStretch: 口の横幅 (中〜高周波)
         stretch = np.clip((mid_norm + high_norm) * 0.25, 0, 1)
         blendshapes[:, idx["mouthStretchLeft"]] = stretch
         blendshapes[:, idx["mouthStretchRight"]] = stretch
 
-        # ========================================
-        # 非リップ関連（微細な表情）
-        # ========================================
-
-        # browInnerUp: 話す時の眉の動き
+        # 非リップ関連
         blendshapes[:, idx["browInnerUp"]] = np.clip(speech_activity * 0.15, 0, 1)
-
-        # cheekSquint: 笑顔時
         blendshapes[:, idx["cheekSquintLeft"]] = smile * 0.3
         blendshapes[:, idx["cheekSquintRight"]] = smile * 0.3
-
-        # noseSneer: 発話の力み
         nose = np.clip(speech_activity * 0.1, 0, 1)
         blendshapes[:, idx["noseSneerLeft"]] = nose
         blendshapes[:, idx["noseSneerRight"]] = nose
 
-        # 無音フレームではすべてをゼロに近づける
+        # 無音フレームは抑制
         silence_mask = speech_activity < 0.1
         blendshapes[silence_mask] *= 0.1
 
-        # スムージング (3フレームの移動平均)
+        # スムージング
         if n_frames > 3:
             kernel = np.ones(3) / 3
             for i in range(52):
                 blendshapes[:, i] = np.convolve(blendshapes[:, i], kernel, mode='same')
 
-        logger.info(f"[A2E Engine] Fallback: {n_frames} frames generated, "
-                    f"jawOpen range=[{blendshapes[:, idx['jawOpen']].min():.3f}, "
+        logger.info(f"[A2E Engine] Fallback: {n_frames} frames, "
+                    f"jawOpen=[{blendshapes[:, idx['jawOpen']].min():.3f}, "
                     f"{blendshapes[:, idx['jawOpen']].max():.3f}]")
 
         return blendshapes
@@ -386,7 +542,6 @@ class Audio2ExpressionEngine:
         if n_source == n_target:
             frames = blendshapes
         else:
-            # 線形補間でリサンプリング
             source_indices = np.linspace(0, n_source - 1, n_target)
             frames = np.zeros((n_target, 52), dtype=np.float32)
             for i in range(52):
@@ -394,5 +549,4 @@ class Audio2ExpressionEngine:
                     source_indices, np.arange(n_source), blendshapes[:, i]
                 )
 
-        # Python list に変換 (JSON serializable)
         return [frame.tolist() for frame in frames]

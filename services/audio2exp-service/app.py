@@ -97,6 +97,7 @@ def health():
     return jsonify({
         'status': 'healthy',
         'engine_ready': engine.is_ready(),
+        'mode': engine.get_mode(),
         'device': engine.device_name,
         'model_dir': MODEL_DIR
     })
