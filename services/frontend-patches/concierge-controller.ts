@@ -303,10 +303,15 @@ export class ConciergeController extends CoreController {
       const srcFrameRate = expression.frame_rate || 30;
 
       // Step 1: バックエンド形式 → LAMAvatar形式に変換 + blendshape増幅
-      const rawFrames = expression.frames.map((f: { weights: number[] }) => {
+      // ★ 新旧両フォーマット対応:
+      //   旧 (FastAPI): frames = [{"weights": [0.1, ...]}, ...]
+      //   新 (Flask):   frames = [[0.1, ...], ...]
+      const rawFrames = expression.frames.map((f: any) => {
         const frame: { [key: string]: number } = {};
+        // フレームがArrayなら直接使用、objectなら.weightsから取得
+        const values: number[] = Array.isArray(f) ? f : (f.weights || []);
         expression.names.forEach((name: string, i: number) => {
-          let val = f.weights[i];
+          let val = values[i] || 0;
           // 口周りblendshapeを増幅（日本語母音の可視性向上）
           const amp = ConciergeController.MOUTH_AMPLIFY[name];
           if (amp) {
