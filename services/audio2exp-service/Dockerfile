@@ -8,21 +8,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# CPU-only PyTorch + torchaudio (CUDA不要、イメージ ~700MB 軽量化、import 高速化)
+RUN pip install --no-cache-dir \
+    torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
-
-# モデルディレクトリ
-RUN mkdir -p /app/models
-
-# Wav2Vec2 モデルをビルド時にダウンロード (ランタイムDL回避)
-RUN python -c "\
-from transformers import Wav2Vec2Model, Wav2Vec2Processor; \
-p = Wav2Vec2Processor.from_pretrained('facebook/wav2vec2-base-960h'); \
-p.save_pretrained('/app/models/wav2vec2-base-960h'); \
-m = Wav2Vec2Model.from_pretrained('facebook/wav2vec2-base-960h'); \
-m.save_pretrained('/app/models/wav2vec2-base-960h')"
 
 # INFER ログ出力先
 RUN mkdir -p /tmp/audio2exp_logs/model
