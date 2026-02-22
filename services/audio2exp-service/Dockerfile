@@ -13,11 +13,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# モデルディレクトリ (ボリュームマウントまたはビルド時にコピー)
-# models/ に以下を配置:
-#   - LAM_audio2exp_streaming.tar (A2Eチェックポイント)
-#   - wav2vec2-base-960h/ (Wav2Vec2モデル)
+# モデルディレクトリ
 RUN mkdir -p /app/models
+
+# Wav2Vec2 モデルをビルド時にダウンロード (ランタイムDL回避)
+RUN python -c "\
+from transformers import Wav2Vec2Model, Wav2Vec2Processor; \
+p = Wav2Vec2Processor.from_pretrained('facebook/wav2vec2-base-960h'); \
+p.save_pretrained('/app/models/wav2vec2-base-960h'); \
+m = Wav2Vec2Model.from_pretrained('facebook/wav2vec2-base-960h'); \
+m.save_pretrained('/app/models/wav2vec2-base-960h')"
 
 # INFER ログ出力先
 RUN mkdir -p /tmp/audio2exp_logs/model
