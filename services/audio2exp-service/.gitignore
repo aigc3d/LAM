@@ -1,0 +1,4 @@
+# Model files (downloaded at runtime, not committed)
+models/
+__pycache__/
+*.pyc
