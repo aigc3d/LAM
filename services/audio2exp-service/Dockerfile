@@ -22,10 +22,11 @@ RUN mkdir -p /app/models
 # INFER ログ出力先
 RUN mkdir -p /tmp/audio2exp_logs/model
 
-ENV PORT=8081
+ENV PORT=8080
 ENV MODEL_DIR=/app/models
 ENV DEVICE=cpu
 
-EXPOSE 8081
+EXPOSE 8080
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8081", "--timeout", "120", "--workers", "1", "--threads", "4", "app:app"]
+# Shell form so $PORT is expanded at runtime (Cloud Run injects PORT=8080)
+CMD gunicorn --bind "0.0.0.0:${PORT}" --timeout 120 --workers 1 --threads 4 app:app

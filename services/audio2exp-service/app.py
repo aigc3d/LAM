@@ -104,6 +104,6 @@ def health():
 
 
 if __name__ == '__main__':
-    port = int(os.getenv('PORT', 8081))
+    port = int(os.getenv('PORT', 8080))
     logger.info(f"[Audio2Exp] Starting on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False, load_dotenv=False)
