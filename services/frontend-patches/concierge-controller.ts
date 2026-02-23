@@ -346,27 +346,29 @@ export class ConciergeController extends CoreController {
     }
   }
 
-  // ★ 口周りblendshapeの増幅係数（日本語母音の可視性向上）
-  // あ(jawOpen大), い(smile), う(pucker/funnel), え(stretch), お(funnel+jawOpen中)
+  // ★ 口周りblendshapeのスケール係数
+  // 女性キャラ向け: 全体的に控えめ。母音の区別(あいうえお)は保ちつつ、
+  // 顎の開きと下唇の引き下げを強く抑制して自然な口元を実現。
+  // <1.0 = 抑制（元のA2E出力より控えめ）, >1.0 = 強調
   private static readonly MOUTH_AMPLIFY: { [key: string]: number } = {
-    'jawOpen': 1.4,
-    'mouthClose': 1.3,
-    'mouthFunnel': 1.5,       // う・お で重要
-    'mouthPucker': 1.5,       // う で重要
-    'mouthSmileLeft': 1.3,    // い で重要
-    'mouthSmileRight': 1.3,   // い で重要
-    'mouthStretchLeft': 1.2,  // え で重要
-    'mouthStretchRight': 1.2, // え で重要
-    'mouthLowerDownLeft': 1.3,
-    'mouthLowerDownRight': 1.3,
-    'mouthUpperUpLeft': 1.2,
-    'mouthUpperUpRight': 1.2,
-    'mouthDimpleLeft': 1.1,
-    'mouthDimpleRight': 1.1,
-    'mouthRollLower': 1.2,
-    'mouthRollUpper': 1.2,
-    'mouthShrugLower': 1.2,
-    'mouthShrugUpper': 1.2,
+    'jawOpen': 0.55,               // 強く抑制: 顎が不自然に下がるのを防止（元1.4）
+    'mouthClose': 0.9,             // やや抑制（元1.3）
+    'mouthFunnel': 1.1,            // う・お の区別を保持（元1.5）
+    'mouthPucker': 1.1,            // う の区別を保持（元1.5）
+    'mouthSmileLeft': 1.05,        // い の区別を保持（元1.3）
+    'mouthSmileRight': 1.05,       // い の区別を保持（元1.3）
+    'mouthStretchLeft': 1.0,       // え の区別を保持（元1.2）
+    'mouthStretchRight': 1.0,      // え の区別を保持（元1.2）
+    'mouthLowerDownLeft': 0.5,     // 強く抑制: 下唇の引き下げ過ぎ防止（元1.3）
+    'mouthLowerDownRight': 0.5,    // 強く抑制: 下唇の引き下げ過ぎ防止（元1.3）
+    'mouthUpperUpLeft': 0.7,       // 抑制: 上唇（元1.2）
+    'mouthUpperUpRight': 0.7,      // 抑制: 上唇（元1.2）
+    'mouthDimpleLeft': 0.9,        // やや抑制（元1.1）
+    'mouthDimpleRight': 0.9,       // やや抑制（元1.1）
+    'mouthRollLower': 0.85,        // 抑制（元1.2）
+    'mouthRollUpper': 0.85,        // 抑制（元1.2）
+    'mouthShrugLower': 0.85,       // 抑制（元1.2）
+    'mouthShrugUpper': 0.85,       // 抑制（元1.2）
   };
 
   /**
@@ -428,6 +430,20 @@ export class ConciergeController extends CoreController {
         }
       }
       const outputFrameRate = srcFrameRate * 2; // 30→60fps
+
+      // Step 2.5: 時間軸スムージング（口周りの急激な変化を緩和）
+      // EMA (指数移動平均) α=0.6 → 前フレームの影響40%を残して滑らかに遷移
+      const smoothAlpha = 0.6;
+      const mouthKeys = Object.keys(ConciergeController.MOUTH_AMPLIFY);
+      for (let i = 1; i < interpolatedFrames.length; i++) {
+        const prev = interpolatedFrames[i - 1];
+        const curr = interpolatedFrames[i];
+        for (const key of mouthKeys) {
+          if (curr[key] !== undefined && prev[key] !== undefined) {
+            curr[key] = prev[key] * (1 - smoothAlpha) + curr[key] * smoothAlpha;
+          }
+        }
+      }
 
       // Step 3: LAMAvatarにキュー投入
       lamController.queueExpressionFrames(interpolatedFrames, outputFrameRate);
