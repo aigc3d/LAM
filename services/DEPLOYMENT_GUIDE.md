@@ -84,7 +84,7 @@ gcloud run deploy audio2exp-service \
   --image gcr.io/PROJECT_ID/audio2exp-service \
   --platform managed \
   --region us-central1 \
-  --memory 2Gi \
+  --memory 4Gi \
   --cpu 2 \
   --timeout 120 \
   --min-instances 1 \
