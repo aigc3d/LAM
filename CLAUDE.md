@@ -1,17 +1,17 @@
-# Project Notes
+# Project Notes - 引継ぎ文書
 
-## audio2exp-service デプロイ
+## 現在の状況: audio2exp-service デプロイ（進行中）
 
-### Cloud Run デプロイコマンド (PowerShell)
-```powershell
-gcloud run deploy audio2exp-service --source . --region us-central1 --memory 4Gi --cpu 2 --timeout 120 --min-instances 1 --max-instances 3 --set-env-vars "MODEL_DIR=/app/models,DEVICE=cpu"
-```
+### やったこと
+1. audio2exp-service を修正し、再ビルド・再デプロイを実施
+2. `--memory 2Gi` ではメモリ不足で3回失敗 → `4Gi` に増やして完走
+3. デプロイ完走後のヘルスチェックで **NG** → 原因調査・対処が必要
 
-### 重要な決定事項
-- **メモリは4Gi必須**: 2Giでは3回メモリ不足で失敗。4Giで成功。2Giに戻さないこと。
-- `--source .` でソースからビルド（Artifact Registry使用）
-- `min-instances=1` でコールドスタート排除（Wav2Vec2ロードに時間がかかるため）
+### 現在のステータス
+- **デプロイ**: 完走済み（メモリ4Gi）
+- **ヘルスチェック**: NG（未解決）
+- **次のアクション**: ヘルスチェックNG原因の調査・修正・再デプロイ
 
 ### ルール
-- 重要な決定・変更は発生時点で即座にこのファイルに記録すること
-- 推測で回答せず、必ずファイルや記録を確認してから回答すること
+- 推測で回答せず、必ず会話ログ・ファイル・記録を確認してから回答すること
+- 確定していない中途半端な情報を書き出さないこと
