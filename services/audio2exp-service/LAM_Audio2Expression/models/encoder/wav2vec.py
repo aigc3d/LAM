@@ -92,6 +92,10 @@ class Wav2Vec2Model(Wav2Vec2Model):
             return_dict=None,
             frame_num=None
     ):
+        import time as _t
+        import logging as _lg
+        _log = _lg.getLogger(__name__)
+
         self.config.output_attentions = True
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -99,10 +103,14 @@ class Wav2Vec2Model(Wav2Vec2Model):
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
+        _s = _t.monotonic()
         hidden_states = self.feature_extractor(input_values)
         hidden_states = hidden_states.transpose(1, 2)
+        _log.info(f"[Wav2Vec2] feature_extractor: {_t.monotonic()-_s:.2f}s, shape={list(hidden_states.shape)}")
 
+        _s = _t.monotonic()
         hidden_states = linear_interpolation(hidden_states, 50, 30, output_len=frame_num)
+        _log.info(f"[Wav2Vec2] interpolation: {_t.monotonic()-_s:.2f}s, shape={list(hidden_states.shape)}")
 
         if attention_mask is not None:
             output_lengths = self._get_feat_extract_output_lengths(attention_mask.sum(-1))
@@ -114,8 +122,11 @@ class Wav2Vec2Model(Wav2Vec2Model):
             ] = 1
             attention_mask = attention_mask.flip([-1]).cumsum(-1).flip([-1]).bool()
 
+        _s = _t.monotonic()
         hidden_states = self.feature_projection(hidden_states)[0]
+        _log.info(f"[Wav2Vec2] feature_projection: {_t.monotonic()-_s:.2f}s")
 
+        _s = _t.monotonic()
         encoder_outputs = self.encoder(
             hidden_states,
             attention_mask=attention_mask,
@@ -123,6 +134,8 @@ class Wav2Vec2Model(Wav2Vec2Model):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
+        _log.info(f"[Wav2Vec2] encoder (12 layers): {_t.monotonic()-_s:.2f}s")
+
         hidden_states = encoder_outputs[0]
         if not return_dict:
             return (hidden_states,) + encoder_outputs[1:]

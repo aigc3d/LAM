@@ -309,16 +309,30 @@ class Audio2ExpressionEngine:
             self._infer.model.to(device)
             self._infer.model.eval()
 
-            # Warmup 推論 (失敗しても致命的ではない)
-            logger.info("[A2E Engine] Running warmup inference...")
-            try:
-                dummy_audio = np.zeros(INFER_INPUT_SAMPLE_RATE, dtype=np.float32)
-                self._infer.infer_streaming_audio(
-                    audio=dummy_audio, ssr=INFER_INPUT_SAMPLE_RATE, context=None
-                )
+            # Warmup 推論 (タイムアウト付き、失敗しても致命的ではない)
+            logger.info("[A2E Engine] Running warmup inference (timeout=120s)...")
+            import threading as _thr
+            warmup_result = [None]  # [None]=running, [True]=ok, [Exception]=fail
+
+            def _warmup():
+                try:
+                    dummy_audio = np.zeros(INFER_INPUT_SAMPLE_RATE, dtype=np.float32)
+                    self._infer.infer_streaming_audio(
+                        audio=dummy_audio, ssr=INFER_INPUT_SAMPLE_RATE, context=None
+                    )
+                    warmup_result[0] = True
+                except Exception as exc:
+                    warmup_result[0] = exc
+
+            t = _thr.Thread(target=_warmup, daemon=True)
+            t.start()
+            t.join(timeout=120)
+            if t.is_alive():
+                logger.warning("[A2E Engine] Warmup timed out after 120s (non-fatal, inference may be slow on CPU)")
+            elif isinstance(warmup_result[0], Exception):
+                logger.warning(f"[A2E Engine] Warmup failed (non-fatal): {warmup_result[0]}")
+            else:
                 logger.info("[A2E Engine] Warmup succeeded")
-            except Exception as e:
-                logger.warning(f"[A2E Engine] Warmup failed (non-fatal): {e}")
 
             logger.info("[A2E Engine] INFER pipeline loaded successfully!")
             return True

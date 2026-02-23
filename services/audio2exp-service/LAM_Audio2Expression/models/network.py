@@ -83,6 +83,9 @@ class Audio2Expression(nn.Module):
                 param.requires_grad = (not do_freeze)
 
     def forward(self, input_dict):
+        import time as _t
+        import logging as _lg
+        _log = _lg.getLogger(__name__)
 
         if 'time_steps' not in input_dict:
             audio_length = input_dict['input_audio_array'].shape[1]
@@ -92,16 +95,26 @@ class Audio2Expression(nn.Module):
 
         # Process audio through encoder
         audio_input = input_dict['input_audio_array'].flatten(start_dim=1)
+        _log.info(f"[A2E forward] audio_input={list(audio_input.shape)}, time_steps={time_steps}")
+
+        _s = _t.monotonic()
         hidden_states = self.audio_encoder(audio_input, frame_num=time_steps).last_hidden_state
+        _log.info(f"[A2E forward] audio_encoder: {_t.monotonic()-_s:.2f}s, out={list(hidden_states.shape)}")
 
         # Project features to hidden dimension
+        _s = _t.monotonic()
         audio_features = self.feature_projection(hidden_states).transpose(1, 2)
+        _log.info(f"[A2E forward] feature_proj: {_t.monotonic()-_s:.2f}s")
 
         # Process identity-conditioned features
+        _s = _t.monotonic()
         audio_features = self.identity_encoder(audio_features, identity=input_dict['id_idx'])
+        _log.info(f"[A2E forward] identity_enc: {_t.monotonic()-_s:.2f}s")
 
         # Refine features through decoder
+        _s = _t.monotonic()
         audio_features = self.decoder[0](audio_features)
+        _log.info(f"[A2E forward] decoder: {_t.monotonic()-_s:.2f}s")
 
         # Generate output parameters
         audio_features = audio_features.permute(0, 2, 1)
