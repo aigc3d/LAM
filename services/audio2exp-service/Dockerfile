@@ -39,9 +39,12 @@ ENV DEVICE=cpu
 # ランタイムで HuggingFace へのアクセスを無効化 (ハング防止)
 ENV HF_HUB_OFFLINE=1
 ENV TRANSFORMERS_OFFLINE=1
+# CPU ではウォームアップ推論をスキップ (起動高速化)
+ENV WARMUP_TIMEOUT=0
 
 EXPOSE 8080
 
-# --timeout 300: モデルロードに十分な時間を確保
-# --threads 1: signal 関連の thread-safety 問題を回避
-CMD gunicorn --bind "0.0.0.0:${PORT}" --timeout 300 --workers 1 --threads 1 app:app
+# gthread ワーカー: daemon スレッドが GIL を握ってもハートビートが止まらない
+# --timeout 600: モデルロードに十分な時間 (import torch だけで数分)
+# --threads 2: ヘルスチェック応答用に最低2スレッド
+CMD gunicorn --bind "0.0.0.0:${PORT}" --timeout 600 --worker-class gthread --workers 1 --threads 2 app:app

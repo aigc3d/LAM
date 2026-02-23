@@ -311,36 +311,38 @@ class Audio2ExpressionEngine:
             self._infer.model.eval()
 
             # Warmup 推論 (失敗しても致命的ではない)
-            # threading.Timer でタイムアウト (signal.SIGALRM はメインスレッド専用のため使用不可)
             WARMUP_TIMEOUT = int(os.environ.get("WARMUP_TIMEOUT", "120"))
-            logger.info(f"[A2E Engine] Running warmup inference (timeout={WARMUP_TIMEOUT}s)...")
-            try:
-                warmup_done = threading.Event()
-                warmup_error = [None]
+            if WARMUP_TIMEOUT <= 0:
+                logger.info("[A2E Engine] Warmup skipped (WARMUP_TIMEOUT=0)")
+            else:
+                logger.info(f"[A2E Engine] Running warmup inference (timeout={WARMUP_TIMEOUT}s)...")
+                try:
+                    warmup_done = threading.Event()
+                    warmup_error = [None]
 
-                def _warmup_worker():
-                    try:
-                        dummy_audio = np.zeros(INFER_INPUT_SAMPLE_RATE, dtype=np.float32)
-                        self._infer.infer_streaming_audio(
-                            audio=dummy_audio, ssr=INFER_INPUT_SAMPLE_RATE, context=None
-                        )
-                    except Exception as e:
-                        warmup_error[0] = e
-                    finally:
-                        warmup_done.set()
+                    def _warmup_worker():
+                        try:
+                            dummy_audio = np.zeros(INFER_INPUT_SAMPLE_RATE, dtype=np.float32)
+                            self._infer.infer_streaming_audio(
+                                audio=dummy_audio, ssr=INFER_INPUT_SAMPLE_RATE, context=None
+                            )
+                        except Exception as e:
+                            warmup_error[0] = e
+                        finally:
+                            warmup_done.set()
 
-                warmup_thread = threading.Thread(target=_warmup_worker, daemon=True)
-                warmup_thread.start()
+                    warmup_thread = threading.Thread(target=_warmup_worker, daemon=True)
+                    warmup_thread.start()
 
-                if warmup_done.wait(timeout=WARMUP_TIMEOUT):
-                    if warmup_error[0]:
-                        logger.warning(f"[A2E Engine] Warmup failed (non-fatal): {warmup_error[0]}")
+                    if warmup_done.wait(timeout=WARMUP_TIMEOUT):
+                        if warmup_error[0]:
+                            logger.warning(f"[A2E Engine] Warmup failed (non-fatal): {warmup_error[0]}")
+                        else:
+                            logger.info("[A2E Engine] Warmup succeeded")
                     else:
-                        logger.info("[A2E Engine] Warmup succeeded")
-                else:
-                    logger.warning(f"[A2E Engine] Warmup timed out after {WARMUP_TIMEOUT}s (non-fatal, skipping)")
-            except Exception as e:
-                logger.warning(f"[A2E Engine] Warmup failed (non-fatal): {e}")
+                        logger.warning(f"[A2E Engine] Warmup timed out after {WARMUP_TIMEOUT}s (non-fatal, skipping)")
+                except Exception as e:
+                    logger.warning(f"[A2E Engine] Warmup failed (non-fatal): {e}")
 
             logger.info("[A2E Engine] INFER pipeline loaded successfully!")
             return True
