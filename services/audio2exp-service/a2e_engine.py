@@ -237,12 +237,12 @@ class Audio2ExpressionEngine:
             logger.warning("[A2E Engine] No A2E checkpoint found")
             return False
 
-        # 3. wav2vec2 ディレクトリを探索
+        # 3. wav2vec2 ディレクトリを探索 (ローカルのみ、HuggingFace DL禁止)
         wav2vec_dir = self._find_wav2vec_dir()
         if not wav2vec_dir:
-            logger.warning("[A2E Engine] wav2vec2-base-960h not found locally")
-            # HuggingFace からダウンロードさせるためにデフォルト値を使用
-            wav2vec_dir = "facebook/wav2vec2-base-960h"
+            logger.warning("[A2E Engine] wav2vec2-base-960h not found locally, "
+                           "INFER pipeline cannot load without it")
+            return False
 
         logger.info(f"[A2E Engine] Checkpoint: {checkpoint_path}")
         logger.info(f"[A2E Engine] Wav2Vec2: {wav2vec_dir}")
@@ -355,29 +355,20 @@ class Audio2ExpressionEngine:
             return False
 
     def _load_wav2vec_fallback(self):
-        """Wav2Vec2 フォールバックモードのロード"""
+        """Wav2Vec2 フォールバックモードのロード (ローカルのみ、HuggingFace DL禁止)"""
         import torch
         from transformers import Wav2Vec2Model, Wav2Vec2Processor
 
         wav2vec_dir = self._find_wav2vec_dir()
-        # Docker ビルド時にダウンロードしたキャッシュも検索
-        cache_dir = self.model_dir / "wav2vec2-base-960h-cache"
+        if not wav2vec_dir:
+            raise RuntimeError(
+                "[A2E Engine] wav2vec2-base-960h not found locally. "
+                f"Expected at: {self.model_dir / 'wav2vec2-base-960h'}"
+            )
 
-        if wav2vec_dir:
-            wav2vec_path = wav2vec_dir
-            cache_kwarg = {}
-            logger.info(f"[A2E Engine] Loading Wav2Vec2 from local: {wav2vec_path}")
-        elif cache_dir.exists():
-            wav2vec_path = "facebook/wav2vec2-base-960h"
-            cache_kwarg = {"cache_dir": str(cache_dir)}
-            logger.info(f"[A2E Engine] Loading Wav2Vec2 from cache: {cache_dir}")
-        else:
-            wav2vec_path = "facebook/wav2vec2-base-960h"
-            cache_kwarg = {}
-            logger.info(f"[A2E Engine] Loading Wav2Vec2 from HuggingFace: {wav2vec_path}")
-
-        self.wav2vec_processor = Wav2Vec2Processor.from_pretrained(wav2vec_path, **cache_kwarg)
-        self.wav2vec_model = Wav2Vec2Model.from_pretrained(wav2vec_path, **cache_kwarg)
+        logger.info(f"[A2E Engine] Loading Wav2Vec2 from local: {wav2vec_dir}")
+        self.wav2vec_processor = Wav2Vec2Processor.from_pretrained(wav2vec_dir)
+        self.wav2vec_model = Wav2Vec2Model.from_pretrained(wav2vec_dir)
         self.wav2vec_model.to(self.device)
         self.wav2vec_model.eval()
         logger.info("[A2E Engine] Wav2Vec2 loaded (fallback mode)")

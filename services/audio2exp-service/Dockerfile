@@ -20,12 +20,15 @@ COPY . .
 # モデルディレクトリ
 RUN mkdir -p /app/models
 
-# wav2vec2-base-960h をビルド時にダウンロード (ランタイムでのハングを防止)
+# wav2vec2-base-960h をビルド時にダウンロードし、標準形式で保存
+# cache_dir ではなく save_pretrained を使用 (config.json が直下に必要)
 RUN python -c "\
 from transformers import Wav2Vec2Model, Wav2Vec2Processor; \
-Wav2Vec2Processor.from_pretrained('facebook/wav2vec2-base-960h', cache_dir='/app/models/wav2vec2-base-960h-cache'); \
-Wav2Vec2Model.from_pretrained('facebook/wav2vec2-base-960h', cache_dir='/app/models/wav2vec2-base-960h-cache'); \
-print('wav2vec2-base-960h downloaded successfully')"
+p = Wav2Vec2Processor.from_pretrained('facebook/wav2vec2-base-960h'); \
+m = Wav2Vec2Model.from_pretrained('facebook/wav2vec2-base-960h'); \
+p.save_pretrained('/app/models/wav2vec2-base-960h'); \
+m.save_pretrained('/app/models/wav2vec2-base-960h'); \
+print('wav2vec2-base-960h saved to /app/models/wav2vec2-base-960h')"
 
 # INFER ログ出力先
 RUN mkdir -p /tmp/audio2exp_logs/model
@@ -39,4 +42,6 @@ ENV TRANSFORMERS_OFFLINE=1
 
 EXPOSE 8080
 
-CMD gunicorn --bind "0.0.0.0:${PORT}" --timeout 120 --workers 1 --threads 4 app:app
+# --timeout 300: モデルロードに十分な時間を確保
+# --threads 1: signal 関連の thread-safety 問題を回避
+CMD gunicorn --bind "0.0.0.0:${PORT}" --timeout 300 --workers 1 --threads 1 app:app
