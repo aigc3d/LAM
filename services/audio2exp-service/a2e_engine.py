@@ -248,8 +248,17 @@ class Audio2ExpressionEngine:
         logger.info(f"[A2E Engine] Wav2Vec2: {wav2vec_dir}")
 
         try:
+            import time as _time
+
+            logger.info("[A2E Engine] Step 1/7: Importing engines.defaults...")
+            _t0 = _time.time()
             from engines.defaults import default_config_parser
+            logger.info(f"[A2E Engine] Step 1/7: Done ({_time.time()-_t0:.1f}s)")
+
+            logger.info("[A2E Engine] Step 2/7: Importing engines.infer...")
+            _t0 = _time.time()
             from engines.infer import INFER
+            logger.info(f"[A2E Engine] Step 2/7: Done ({_time.time()-_t0:.1f}s)")
 
             # DDP 環境変数 (single-process 用)
             os.environ.setdefault("WORLD_SIZE", "1")
@@ -290,8 +299,10 @@ class Audio2ExpressionEngine:
                 "batch_size": 1,
             }
 
-            logger.info(f"[A2E Engine] Loading config: {config_file}")
+            logger.info(f"[A2E Engine] Step 3/7: Parsing config: {config_file}")
+            _t0 = _time.time()
             cfg = default_config_parser(config_file, cfg_options)
+            logger.info(f"[A2E Engine] Step 3/7: Done ({_time.time()-_t0:.1f}s)")
 
             # default_setup() をスキップ (DDP 関連の処理は不要)
             # 必要な設定を手動で設定
@@ -302,13 +313,18 @@ class Audio2ExpressionEngine:
             cfg.batch_size_val_per_gpu = 1
             cfg.batch_size_test_per_gpu = 1
 
-            logger.info("[A2E Engine] Building INFER model...")
+            logger.info("[A2E Engine] Step 4/7: Building INFER model...")
+            _t0 = _time.time()
             self._infer = INFER.build(dict(type=cfg.infer.type, cfg=cfg))
+            logger.info(f"[A2E Engine] Step 4/7: Done ({_time.time()-_t0:.1f}s)")
 
             # CPU + eval mode
+            logger.info("[A2E Engine] Step 5/7: Moving model to device...")
+            _t0 = _time.time()
             device = torch.device(self.device)
             self._infer.model.to(device)
             self._infer.model.eval()
+            logger.info(f"[A2E Engine] Step 5/7: Done ({_time.time()-_t0:.1f}s)")
 
             # Warmup 推論 (失敗しても致命的ではない)
             WARMUP_TIMEOUT = int(os.environ.get("WARMUP_TIMEOUT", "120"))
