@@ -23,8 +23,8 @@ import base64
 import io
 import logging
 import os
-import signal
 import sys
+import threading
 import traceback
 from pathlib import Path
 
@@ -311,26 +311,34 @@ class Audio2ExpressionEngine:
             self._infer.model.eval()
 
             # Warmup 推論 (失敗しても致命的ではない)
-            # タイムアウト付き: CPU上では非常に時間がかかる場合がある
+            # threading.Timer でタイムアウト (signal.SIGALRM はメインスレッド専用のため使用不可)
             WARMUP_TIMEOUT = int(os.environ.get("WARMUP_TIMEOUT", "120"))
             logger.info(f"[A2E Engine] Running warmup inference (timeout={WARMUP_TIMEOUT}s)...")
             try:
-                def _warmup_timeout_handler(signum, frame):
-                    raise TimeoutError("Warmup inference timed out")
+                warmup_done = threading.Event()
+                warmup_error = [None]
 
-                old_handler = signal.signal(signal.SIGALRM, _warmup_timeout_handler)
-                signal.alarm(WARMUP_TIMEOUT)
-                try:
-                    dummy_audio = np.zeros(INFER_INPUT_SAMPLE_RATE, dtype=np.float32)
-                    self._infer.infer_streaming_audio(
-                        audio=dummy_audio, ssr=INFER_INPUT_SAMPLE_RATE, context=None
-                    )
-                    logger.info("[A2E Engine] Warmup succeeded")
-                finally:
-                    signal.alarm(0)
-                    signal.signal(signal.SIGALRM, old_handler)
-            except TimeoutError:
-                logger.warning(f"[A2E Engine] Warmup timed out after {WARMUP_TIMEOUT}s (non-fatal, skipping)")
+                def _warmup_worker():
+                    try:
+                        dummy_audio = np.zeros(INFER_INPUT_SAMPLE_RATE, dtype=np.float32)
+                        self._infer.infer_streaming_audio(
+                            audio=dummy_audio, ssr=INFER_INPUT_SAMPLE_RATE, context=None
+                        )
+                    except Exception as e:
+                        warmup_error[0] = e
+                    finally:
+                        warmup_done.set()
+
+                warmup_thread = threading.Thread(target=_warmup_worker, daemon=True)
+                warmup_thread.start()
+
+                if warmup_done.wait(timeout=WARMUP_TIMEOUT):
+                    if warmup_error[0]:
+                        logger.warning(f"[A2E Engine] Warmup failed (non-fatal): {warmup_error[0]}")
+                    else:
+                        logger.info("[A2E Engine] Warmup succeeded")
+                else:
+                    logger.warning(f"[A2E Engine] Warmup timed out after {WARMUP_TIMEOUT}s (non-fatal, skipping)")
             except Exception as e:
                 logger.warning(f"[A2E Engine] Warmup failed (non-fatal): {e}")
 
@@ -352,21 +360,24 @@ class Audio2ExpressionEngine:
         from transformers import Wav2Vec2Model, Wav2Vec2Processor
 
         wav2vec_dir = self._find_wav2vec_dir()
+        # Docker ビルド時にダウンロードしたキャッシュも検索
+        cache_dir = self.model_dir / "wav2vec2-base-960h-cache"
+
         if wav2vec_dir:
             wav2vec_path = wav2vec_dir
+            cache_kwarg = {}
             logger.info(f"[A2E Engine] Loading Wav2Vec2 from local: {wav2vec_path}")
+        elif cache_dir.exists():
+            wav2vec_path = "facebook/wav2vec2-base-960h"
+            cache_kwarg = {"cache_dir": str(cache_dir)}
+            logger.info(f"[A2E Engine] Loading Wav2Vec2 from cache: {cache_dir}")
         else:
             wav2vec_path = "facebook/wav2vec2-base-960h"
+            cache_kwarg = {}
             logger.info(f"[A2E Engine] Loading Wav2Vec2 from HuggingFace: {wav2vec_path}")
 
-        try:
-            self.wav2vec_processor = Wav2Vec2Processor.from_pretrained(wav2vec_path)
-        except Exception:
-            self.wav2vec_processor = Wav2Vec2Processor.from_pretrained(
-                "facebook/wav2vec2-base-960h"
-            )
-
-        self.wav2vec_model = Wav2Vec2Model.from_pretrained(wav2vec_path)
+        self.wav2vec_processor = Wav2Vec2Processor.from_pretrained(wav2vec_path, **cache_kwarg)
+        self.wav2vec_model = Wav2Vec2Model.from_pretrained(wav2vec_path, **cache_kwarg)
         self.wav2vec_model.to(self.device)
         self.wav2vec_model.eval()
         logger.info("[A2E Engine] Wav2Vec2 loaded (fallback mode)")

@@ -41,6 +41,10 @@ DEVICE = os.getenv("DEVICE", "auto")
 engine = None
 engine_error = None
 engine_loading = True
+engine_load_start = time.time()
+
+# エンジンロードの最大待機時間 (秒)
+ENGINE_LOAD_TIMEOUT = int(os.getenv("ENGINE_LOAD_TIMEOUT", "300"))
 
 
 def _load_engine():
@@ -122,12 +126,23 @@ def audio2expression():
 @app.route('/health', methods=['GET'])
 def health():
     """ヘルスチェック - エンジンロード中でも 200 を返す"""
+    global engine_loading, engine_error
+
     if engine_loading:
-        return jsonify({
-            'status': 'loading',
-            'engine_ready': False,
-            'model_dir': MODEL_DIR
-        })
+        elapsed = time.time() - engine_load_start
+        # タイムアウト検出: ロードが長すぎる場合はエラーに切り替え
+        if elapsed > ENGINE_LOAD_TIMEOUT:
+            engine_loading = False
+            engine_error = f"Engine loading timed out after {int(elapsed)}s"
+            logger.error(f"[Audio2Exp] {engine_error}")
+        else:
+            return jsonify({
+                'status': 'loading',
+                'engine_ready': False,
+                'model_dir': MODEL_DIR,
+                'elapsed_seconds': int(elapsed),
+                'timeout_seconds': ENGINE_LOAD_TIMEOUT,
+            })
 
     if engine is None:
         return jsonify({
@@ -135,7 +150,7 @@ def health():
             'engine_ready': False,
             'error': engine_error,
             'model_dir': MODEL_DIR
-        })
+        }), 503
 
     return jsonify({
         'status': 'healthy',
