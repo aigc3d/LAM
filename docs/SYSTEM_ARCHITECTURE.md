@@ -718,8 +718,8 @@ A2Eデコーダーも音響特徴量→表情の変換であり、
 
 | サービス | デプロイ先 | 環境 |
 |----------|-----------|------|
-| gourmet-support | Cloud Run (asia-northeast1) | Python 3.11, 2vCPU, 2GB RAM |
-| audio2exp-service | Cloud Run (asia-northeast1) | Python 3.10, 2vCPU, 2GB RAM, min-instances=1 |
+| gourmet-support | Cloud Run (us-central1) | Python 3.11, 2vCPU, 2GB RAM |
+| audio2exp-service | Cloud Run (us-central1) | Python 3.10, 2vCPU, 2GB RAM, min-instances=1 |
 | gourmet-sp | Vercel | Astro SSG |
 
 ### 8.2 パフォーマンス目標

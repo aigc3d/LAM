@@ -83,7 +83,7 @@ docker push gcr.io/PROJECT_ID/audio2exp-service
 gcloud run deploy audio2exp-service \
   --image gcr.io/PROJECT_ID/audio2exp-service \
   --platform managed \
-  --region asia-northeast1 \
+  --region us-central1 \
   --memory 2Gi \
   --cpu 2 \
   --timeout 120 \
