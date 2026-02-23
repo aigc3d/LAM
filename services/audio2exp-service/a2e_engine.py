@@ -23,6 +23,7 @@ import base64
 import io
 import logging
 import os
+import signal
 import sys
 import traceback
 from pathlib import Path
@@ -310,13 +311,26 @@ class Audio2ExpressionEngine:
             self._infer.model.eval()
 
             # Warmup 推論 (失敗しても致命的ではない)
-            logger.info("[A2E Engine] Running warmup inference...")
+            # タイムアウト付き: CPU上では非常に時間がかかる場合がある
+            WARMUP_TIMEOUT = int(os.environ.get("WARMUP_TIMEOUT", "120"))
+            logger.info(f"[A2E Engine] Running warmup inference (timeout={WARMUP_TIMEOUT}s)...")
             try:
-                dummy_audio = np.zeros(INFER_INPUT_SAMPLE_RATE, dtype=np.float32)
-                self._infer.infer_streaming_audio(
-                    audio=dummy_audio, ssr=INFER_INPUT_SAMPLE_RATE, context=None
-                )
-                logger.info("[A2E Engine] Warmup succeeded")
+                def _warmup_timeout_handler(signum, frame):
+                    raise TimeoutError("Warmup inference timed out")
+
+                old_handler = signal.signal(signal.SIGALRM, _warmup_timeout_handler)
+                signal.alarm(WARMUP_TIMEOUT)
+                try:
+                    dummy_audio = np.zeros(INFER_INPUT_SAMPLE_RATE, dtype=np.float32)
+                    self._infer.infer_streaming_audio(
+                        audio=dummy_audio, ssr=INFER_INPUT_SAMPLE_RATE, context=None
+                    )
+                    logger.info("[A2E Engine] Warmup succeeded")
+                finally:
+                    signal.alarm(0)
+                    signal.signal(signal.SIGALRM, old_handler)
+            except TimeoutError:
+                logger.warning(f"[A2E Engine] Warmup timed out after {WARMUP_TIMEOUT}s (non-fatal, skipping)")
             except Exception as e:
                 logger.warning(f"[A2E Engine] Warmup failed (non-fatal): {e}")
 

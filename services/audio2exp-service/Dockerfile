@@ -11,6 +11,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# CPU-only PyTorch + torchaudio (INFER パイプラインの依存)
+RUN pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+
 COPY . .
 
 # モデルディレクトリ (ボリュームマウントまたはビルド時にコピー)
@@ -22,10 +25,10 @@ RUN mkdir -p /app/models
 # INFER ログ出力先
 RUN mkdir -p /tmp/audio2exp_logs/model
 
-ENV PORT=8081
+ENV PORT=8080
 ENV MODEL_DIR=/app/models
 ENV DEVICE=cpu
 
-EXPOSE 8081
+EXPOSE 8080
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8081", "--timeout", "120", "--workers", "1", "--threads", "4", "app:app"]
+CMD gunicorn --bind "0.0.0.0:${PORT}" --timeout 120 --workers 1 --threads 4 app:app
