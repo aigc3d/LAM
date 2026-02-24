@@ -127,6 +127,364 @@ import {
   ARKIT_CHANNEL_NAMES
 } from '../scripts/lam/lam-websocket-manager';
 
+// ============================================================
+// Phase 0-3: WebGL Shader Intercept
+// SDK の内部シェーダーを実行時にキャプチャし、
+// 2チャンネル制限の原因となるコードを特定する
+// ============================================================
+
+interface CapturedShader {
+  id: number;
+  type: 'VERTEX_SHADER' | 'FRAGMENT_SHADER';
+  source: string;
+  hasExpression: boolean;     // expression/blendshape 関連キーワードを含む
+  hasTransformFeedback: boolean;  // TF program に属するか
+  expressionKeywords: string[];   // マッチしたキーワード
+  timestamp: number;
+}
+
+interface CapturedProgram {
+  id: number;
+  vertexShaderId: number | null;
+  fragmentShaderId: number | null;
+  transformFeedbackVaryings: string[] | null;
+  isTransformFeedback: boolean;
+  timestamp: number;
+}
+
+interface ShaderInterceptState {
+  shaders: CapturedShader[];
+  programs: CapturedProgram[];
+  textureUploads: { width: number; height: number; format: number; type: number; timestamp: number }[];
+  installed: boolean;
+}
+
+const SHADER_INTERCEPT: ShaderInterceptState = {
+  shaders: [],
+  programs: [],
+  textureUploads: [],
+  installed: false,
+};
+
+// グローバルに公開（DevTools コンソールから参照可能）
+(window as any).__LAM_SHADER_INTERCEPT = SHADER_INTERCEPT;
+
+const EXPRESSION_KEYWORDS = [
+  // シェーダー変数名候補
+  'expression', 'blendshape', 'blendShape', 'blend_shape',
+  'jawOpen', 'jaw_open', 'mouthLowerDown', 'mouth_lower',
+  'morph', 'morphTarget', 'morph_target',
+  // FLAME 関連
+  'flame', 'FLAME', 'lbs', 'LBS', 'skinning',
+  'pose_blend', 'poseBlend', 'exp_blend', 'expBlend',
+  'B_E', 'B_P',
+  // テクスチャ参照（expression係数をテクスチャに格納している場合）
+  'expressionTex', 'blendshapeTex', 'coeffTex', 'paramTex',
+  // ARKit 52 channels
+  'arkit', 'ARKit',
+];
+
+function classifyShader(source: string): { hasExpression: boolean; keywords: string[] } {
+  const found: string[] = [];
+  for (const kw of EXPRESSION_KEYWORDS) {
+    if (source.includes(kw)) {
+      found.push(kw);
+    }
+  }
+  return { hasExpression: found.length > 0, keywords: found };
+}
+
+let shaderIdCounter = 0;
+let programIdCounter = 0;
+const shaderToId = new WeakMap<WebGLShader, number>();
+const programToId = new WeakMap<WebGLProgram, number>();
+const shaderTypeMap = new WeakMap<WebGLShader, number>();
+
+function installShaderIntercept(): void {
+  if (SHADER_INTERCEPT.installed) return;
+  SHADER_INTERCEPT.installed = true;
+
+  const proto = WebGL2RenderingContext.prototype;
+
+  // --- 1. shaderSource: シェーダーソースコードをキャプチャ ---
+  const origShaderSource = proto.shaderSource;
+  proto.shaderSource = function(shader: WebGLShader, source: string) {
+    const id = shaderIdCounter++;
+    shaderToId.set(shader, id);
+
+    const glType = shaderTypeMap.get(shader);
+    const type: CapturedShader['type'] =
+      glType === this.VERTEX_SHADER ? 'VERTEX_SHADER' : 'FRAGMENT_SHADER';
+    const { hasExpression, keywords } = classifyShader(source);
+
+    const entry: CapturedShader = {
+      id,
+      type,
+      source,
+      hasExpression,
+      hasTransformFeedback: false, // programLink時に更新
+      expressionKeywords: keywords,
+      timestamp: performance.now(),
+    };
+    SHADER_INTERCEPT.shaders.push(entry);
+
+    // コンソール出力
+    const prefix = hasExpression ? '🔴 EXPRESSION' : '⚪';
+    console.log(
+      `[Shader Intercept] ${prefix} ${type} #${id} (${source.length} chars)` +
+      (keywords.length > 0 ? ` keywords=[${keywords.join(',')}]` : '')
+    );
+    if (hasExpression) {
+      console.log(`[Shader Intercept] === FULL SOURCE (${type} #${id}) ===`);
+      console.log(source);
+      console.log(`[Shader Intercept] === END SOURCE ===`);
+    }
+
+    return origShaderSource.call(this, shader, source);
+  };
+
+  // --- 2. createShader: シェーダータイプを記録 ---
+  const origCreateShader = proto.createShader;
+  proto.createShader = function(type: number): WebGLShader | null {
+    const shader = origCreateShader.call(this, type);
+    if (shader) {
+      shaderTypeMap.set(shader, type);
+    }
+    return shader;
+  };
+
+  // --- 3. transformFeedbackVaryings: TFプログラムの出力変数をキャプチャ ---
+  const origTFVaryings = proto.transformFeedbackVaryings;
+  proto.transformFeedbackVaryings = function(
+    program: WebGLProgram,
+    varyings: string[],
+    bufferMode: number
+  ) {
+    let pId = programToId.get(program);
+    if (pId === undefined) {
+      pId = programIdCounter++;
+      programToId.set(program, pId);
+    }
+    console.log(
+      `[Shader Intercept] 🟡 TRANSFORM FEEDBACK Program #${pId}: ` +
+      `varyings=[${varyings.join(', ')}], mode=${bufferMode === this.INTERLEAVED_ATTRIBS ? 'INTERLEAVED' : 'SEPARATE'}`
+    );
+
+    // TF programを記録
+    let existing = SHADER_INTERCEPT.programs.find(p => p.id === pId);
+    if (!existing) {
+      existing = {
+        id: pId!,
+        vertexShaderId: null,
+        fragmentShaderId: null,
+        transformFeedbackVaryings: varyings.slice(),
+        isTransformFeedback: true,
+        timestamp: performance.now(),
+      };
+      SHADER_INTERCEPT.programs.push(existing);
+    } else {
+      existing.transformFeedbackVaryings = varyings.slice();
+      existing.isTransformFeedback = true;
+    }
+
+    return origTFVaryings.call(this, program, varyings, bufferMode);
+  };
+
+  // --- 4. linkProgram: シェーダーとプログラムの関連付けをキャプチャ ---
+  const origLinkProgram = proto.linkProgram;
+  proto.linkProgram = function(program: WebGLProgram) {
+    let pId = programToId.get(program);
+    if (pId === undefined) {
+      pId = programIdCounter++;
+      programToId.set(program, pId);
+    }
+
+    // attachShader で紐付けられたシェーダーを取得
+    const attachedShaders = this.getAttachedShaders(program);
+    let vsId: number | null = null;
+    let fsId: number | null = null;
+    if (attachedShaders) {
+      for (const s of attachedShaders) {
+        const sId = shaderToId.get(s);
+        const sType = this.getShaderParameter(s, this.SHADER_TYPE);
+        if (sType === this.VERTEX_SHADER) vsId = sId ?? null;
+        if (sType === this.FRAGMENT_SHADER) fsId = sId ?? null;
+      }
+    }
+
+    let existing = SHADER_INTERCEPT.programs.find(p => p.id === pId);
+    if (!existing) {
+      existing = {
+        id: pId!,
+        vertexShaderId: vsId,
+        fragmentShaderId: fsId,
+        transformFeedbackVaryings: null,
+        isTransformFeedback: false,
+        timestamp: performance.now(),
+      };
+      SHADER_INTERCEPT.programs.push(existing);
+    } else {
+      existing.vertexShaderId = vsId;
+      existing.fragmentShaderId = fsId;
+    }
+
+    const result = origLinkProgram.call(this, program);
+
+    // TFプログラムの場合、関連するシェーダーにフラグ付け
+    if (existing.isTransformFeedback) {
+      if (vsId !== null) {
+        const vs = SHADER_INTERCEPT.shaders.find(s => s.id === vsId);
+        if (vs) vs.hasTransformFeedback = true;
+      }
+      console.log(
+        `[Shader Intercept] 🟡 LINKED TF Program #${pId}: VS=#${vsId}, FS=#${fsId}, ` +
+        `varyings=[${existing.transformFeedbackVaryings?.join(', ') || 'N/A'}]`
+      );
+    }
+
+    return result;
+  };
+
+  // --- 5. texImage2D: 大きなテクスチャアップロードを監視（expression テクスチャ特定用）---
+  const origTexImage2D = proto.texImage2D;
+  proto.texImage2D = function(...args: any[]) {
+    // texImage2D has multiple overloads; capture width/height if available
+    if (args.length >= 9) {
+      const width = args[3];
+      const height = args[4];
+      const format = args[6];
+      const type = args[7];
+      if (typeof width === 'number' && typeof height === 'number') {
+        // 小さなテクスチャ（アイコン等）は無視、意味のあるサイズだけ記録
+        if (width * height >= 16) {
+          SHADER_INTERCEPT.textureUploads.push({
+            width, height, format, type, timestamp: performance.now()
+          });
+          // 52 channels に関係しそうなサイズ（52, 104, etc.）をハイライト
+          if (width === 52 || height === 52 || width === 104 || height === 104 ||
+              width === 1 && height >= 52 || height === 1 && width >= 52) {
+            console.log(
+              `[Shader Intercept] 🔵 EXPRESSION TEXTURE? texImage2D ${width}x${height} ` +
+              `format=0x${format.toString(16)} type=0x${type.toString(16)}`
+            );
+          }
+        }
+      }
+    }
+    return (origTexImage2D as any).apply(this, args);
+  };
+
+  // --- 6. getUniformLocation: uniform 名をキャプチャ（expression 関連を特定）---
+  const origGetUniformLocation = proto.getUniformLocation;
+  const capturedUniforms = new Set<string>();
+  proto.getUniformLocation = function(program: WebGLProgram, name: string) {
+    if (!capturedUniforms.has(name)) {
+      capturedUniforms.add(name);
+      const { hasExpression, keywords } = classifyShader(name);
+      if (hasExpression) {
+        const pId = programToId.get(program) ?? '?';
+        console.log(
+          `[Shader Intercept] 🔴 EXPRESSION UNIFORM: "${name}" in Program #${pId} ` +
+          `keywords=[${keywords.join(',')}]`
+        );
+      }
+    }
+    return origGetUniformLocation.call(this, program, name);
+  };
+
+  // --- 7. getAttribLocation: attribute 名をキャプチャ ---
+  const origGetAttribLocation = proto.getAttribLocation;
+  const capturedAttribs = new Set<string>();
+  proto.getAttribLocation = function(program: WebGLProgram, name: string) {
+    if (!capturedAttribs.has(name)) {
+      capturedAttribs.add(name);
+      const { hasExpression, keywords } = classifyShader(name);
+      if (hasExpression) {
+        const pId = programToId.get(program) ?? '?';
+        console.log(
+          `[Shader Intercept] 🔴 EXPRESSION ATTRIBUTE: "${name}" in Program #${pId} ` +
+          `keywords=[${keywords.join(',')}]`
+        );
+      }
+    }
+    return origGetAttribLocation.call(this, program, name);
+  };
+
+  console.log('[Shader Intercept] ✅ Installed. All WebGL2 shaders will be captured.');
+  console.log('[Shader Intercept] Access captured data: window.__LAM_SHADER_INTERCEPT');
+  console.log('[Shader Intercept] Dump analysis: window.__LAM_SHADER_INTERCEPT.analyze()');
+}
+
+// 分析ヘルパー関数をグローバルに公開
+(window as any).__LAM_SHADER_INTERCEPT.analyze = function() {
+  const state = SHADER_INTERCEPT;
+  console.log('=== SHADER INTERCEPT ANALYSIS ===');
+  console.log(`Total shaders captured: ${state.shaders.length}`);
+  console.log(`Total programs captured: ${state.programs.length}`);
+  console.log(`Texture uploads: ${state.textureUploads.length}`);
+
+  // Expression 関連シェーダー
+  const exprShaders = state.shaders.filter(s => s.hasExpression);
+  console.log(`\n--- Expression-related shaders: ${exprShaders.length} ---`);
+  for (const s of exprShaders) {
+    console.log(`  #${s.id} ${s.type} [${s.expressionKeywords.join(',')}] TF=${s.hasTransformFeedback}`);
+    console.log(`  Source (first 300 chars): ${s.source.substring(0, 300)}`);
+  }
+
+  // Transform Feedback プログラム
+  const tfPrograms = state.programs.filter(p => p.isTransformFeedback);
+  console.log(`\n--- Transform Feedback programs: ${tfPrograms.length} ---`);
+  for (const p of tfPrograms) {
+    console.log(`  Program #${p.id}: VS=#${p.vertexShaderId}, FS=#${p.fragmentShaderId}`);
+    console.log(`  Varyings: [${p.transformFeedbackVaryings?.join(', ') || 'N/A'}]`);
+    // 対応する頂点シェーダーのフルソースを表示
+    if (p.vertexShaderId !== null) {
+      const vs = state.shaders.find(s => s.id === p.vertexShaderId);
+      if (vs) {
+        console.log(`  --- TF Vertex Shader #${vs.id} FULL SOURCE ---`);
+        console.log(vs.source);
+        console.log('  --- END ---');
+      }
+    }
+  }
+
+  // Expression テクスチャ候補
+  const exprTex = state.textureUploads.filter(t =>
+    t.width === 52 || t.height === 52 || t.width === 104 || t.height === 104 ||
+    (t.width === 1 && t.height >= 52) || (t.height === 1 && t.width >= 52)
+  );
+  if (exprTex.length > 0) {
+    console.log(`\n--- Possible expression textures: ${exprTex.length} ---`);
+    for (const t of exprTex) {
+      console.log(`  ${t.width}x${t.height} format=0x${t.format.toString(16)} type=0x${t.type.toString(16)}`);
+    }
+  }
+
+  // 全シェーダーのサマリー
+  console.log('\n--- All shaders summary ---');
+  for (const s of state.shaders) {
+    const lines = s.source.split('\n').length;
+    const firstLine = s.source.split('\n')[0];
+    console.log(
+      `  #${s.id} ${s.type} ${lines}lines TF=${s.hasTransformFeedback} ` +
+      `expr=${s.hasExpression} "${firstLine.substring(0, 60)}"`
+    );
+  }
+
+  console.log('\n=== END ANALYSIS ===');
+  return {
+    totalShaders: state.shaders.length,
+    expressionShaders: exprShaders.length,
+    tfPrograms: tfPrograms.length,
+    exprTextures: exprTex.length,
+  };
+};
+
+// SDK ロード前にインターセプトを設置
+installShaderIntercept();
+
+// ============================================================
+
 type ChatState = 'Idle' | 'Listening' | 'Thinking' | 'Responding';
 
 function createDefaultExpressionData(): ExpressionData {
