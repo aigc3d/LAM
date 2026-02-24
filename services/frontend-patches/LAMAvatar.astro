@@ -453,21 +453,21 @@ class LAMAvatarController {
     const smile = ((data['mouthSmileLeft'] || 0) + (data['mouthSmileRight'] || 0)) * 0.5;
     const stretch = ((data['mouthStretchLeft'] || 0) + (data['mouthStretchRight'] || 0)) * 0.5;
 
-    // jawOpen 合成: 控えめな重みで母音チャンネルの寄与を加算
+    // jawOpen 合成: 母音チャンネルの寄与を加算（jawを主軸にするためやや積極的）
     const compositeJaw = Math.min(LAMAvatarController.SAFE_MAX,
       jaw
-      + smile * 0.3
-      + funnel * 0.2
+      + smile * 0.35
+      + funnel * 0.25
       + pucker * 0.12
-      + stretch * 0.2
+      + stretch * 0.25
     );
 
-    // mouthLowerDown 合成: 母音特性を下唇の動きに変換（控えめ）
+    // mouthLowerDown 合成: 母音特性を下唇の動きに変換（jaw<mouthにならないよう控えめ）
     const compositeLowerDown = Math.min(LAMAvatarController.SAFE_MAX,
       Math.max(0,
         lowerDown
-        + smile * 0.35
-        + stretch * 0.25
+        + smile * 0.2
+        + stretch * 0.15
         - pucker * 0.1
       )
     );
