@@ -467,22 +467,19 @@ function installShaderIntercept(): void {
   };
 
   // --- 8. uniform1f: headBoneIndex 等の float uniform をキャプチャ ---
-  const WATCHED_FLOAT_UNIFORMS = ['headBoneIndex', 'splatScale', 'visibleRegionRadius',
-    'visibleRegionFadeStartRadius', 'inverseFocalAdjustment'];
-  const lastFloatValues = new Map<string, number>();
+  // 初回設定時のみログ（毎フレーム微小変化する uniform はスパム防止で1回だけ）
+  const WATCHED_FLOAT_UNIFORMS = ['headBoneIndex', 'splatScale'];
+  const loggedFloatUniforms = new Set<string>();
   const origUniform1f = proto.uniform1f;
   proto.uniform1f = function(location: WebGLUniformLocation | null, value: number) {
     if (location) {
       const name = uniformLocationToName.get(location);
-      if (name && WATCHED_FLOAT_UNIFORMS.includes(name)) {
-        const prev = lastFloatValues.get(name);
-        if (prev !== value) {
-          lastFloatValues.set(name, value);
-          const pId = uniformLocationToProgram.get(location) ?? '?';
-          console.log(
-            `[Shader Intercept] 🟢 UNIFORM1F: ${name} = ${value} (Program #${pId})`
-          );
-        }
+      if (name && WATCHED_FLOAT_UNIFORMS.includes(name) && !loggedFloatUniforms.has(name)) {
+        loggedFloatUniforms.add(name);
+        const pId = uniformLocationToProgram.get(location) ?? '?';
+        console.log(
+          `[Shader Intercept] 🟢 UNIFORM1F: ${name} = ${value} (Program #${pId})`
+        );
       }
     }
     return origUniform1f.call(this, location, value);
