@@ -164,6 +164,7 @@ class LAMAvatarController {
   private ttsEndedHandler: (() => void) | null = null;
   private ttsActive: boolean = false;
   private ttsLastCurrentTime: number = 0;
+  private ttsTransitioning: boolean = false; // TTS切替中フラグ（早期fade-out防止）
 
   // Frame buffer for expression
   private frameBuffer: ExpressionData[] = [];
@@ -232,6 +233,7 @@ class LAMAvatarController {
     this.ttsPlayHandler = () => {
       console.log(`[LAM External] TTS play - frameBuffer has ${this.frameBuffer.length} frames`);
       this.ttsActive = true;
+      this.ttsTransitioning = false; // TTS切替完了
       this.ttsLastCurrentTime = player.currentTime;
     };
 
@@ -410,6 +412,9 @@ class LAMAvatarController {
 
   // FLAME LBS 安全上限。これを超えるとメッシュ数値爆発
   private static readonly SAFE_MAX = 0.7;
+  // 口の動き上限（自然な範囲に制限）
+  private static readonly JAW_MAX = 0.30;   // 顎の最大開き
+  private static readonly MOUTH_MAX = 0.20; // 下唇の最大移動
 
   /**
    * SDK汚染対策: SDKが返却オブジェクトにFLAME LBS計算結果を書き戻す場合、
@@ -453,8 +458,8 @@ class LAMAvatarController {
     const smile = ((data['mouthSmileLeft'] || 0) + (data['mouthSmileRight'] || 0)) * 0.5;
     const stretch = ((data['mouthStretchLeft'] || 0) + (data['mouthStretchRight'] || 0)) * 0.5;
 
-    // jawOpen 合成: 母音チャンネルの寄与を控えめに加算
-    const compositeJaw = Math.min(LAMAvatarController.SAFE_MAX,
+    // jawOpen 合成: 母音チャンネルの寄与を加算し、JAW_MAXでキャップ
+    const compositeJaw = Math.min(LAMAvatarController.JAW_MAX,
       jaw
       + smile * 0.3
       + funnel * 0.2
@@ -462,8 +467,8 @@ class LAMAvatarController {
       + stretch * 0.2
     );
 
-    // mouthLowerDown 合成: 母音特性を下唇の動きに変換（jaw<mouthにならないよう控えめ）
-    const compositeLowerDown = Math.min(LAMAvatarController.SAFE_MAX,
+    // mouthLowerDown 合成: 母音特性を下唇の動きに変換、MOUTH_MAXでキャップ
+    const compositeLowerDown = Math.min(LAMAvatarController.MOUTH_MAX,
       Math.max(0,
         lowerDown
         + smile * 0.2
@@ -569,7 +574,8 @@ class LAMAvatarController {
       }
 
       // TTS ended - fade out over FADE_IN_FRAMES then reset to idle
-      if (this.externalTtsPlayer.ended && !this.ttsActive) {
+      // ttsTransitioning中はskip（新TTS待ちで旧audioのended=trueが残っている）
+      if (this.externalTtsPlayer.ended && !this.ttsActive && !this.ttsTransitioning) {
         if (this.currentState === 'Responding') {
           // Gradually fade expression to neutral over ~200ms
           if (!this.fadeOutStartTime) {
@@ -643,9 +649,10 @@ class LAMAvatarController {
     this.frameBuffer = [];
     this.lastLoggedFrameIndex = -1;
     this.ttsActive = false;
+    this.ttsTransitioning = true; // 新TTS開始まで早期fade-outを抑制
     this.ttsLastCurrentTime = 0;
     this.fadeOutStartTime = null;
-    console.log('[LAM Avatar] Frame buffer cleared');
+    console.log('[LAM Avatar] Frame buffer cleared (transitioning)');
   }
 
   /**

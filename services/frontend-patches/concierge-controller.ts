@@ -361,7 +361,7 @@ export class ConciergeController extends CoreController {
   // ※全値は BLENDSHAPE_SAFE_MAX(0.7) でクランプ（FLAME LBS 数値安定のため）
   private static readonly MOUTH_AMPLIFY: { [key: string]: number } = {
     // --- 現在レンダラーに到達する値 ---
-    'jawOpen': 1.5,                // 適度ブースト: A2E出力弱(avg~0.055)、2.5は過剰(0.7clamp多発)
+    'jawOpen': 1.0,                // 等倍: リマップ側のJAW_MAXキャップで最大口開きを制限
     'mouthLowerDownLeft': 0.25,    // 強抑制: A2E過剰出力(raw~0.84)→ jaw>mouth比を実現
     'mouthLowerDownRight': 0.25,   // 強抑制: 同上
     // --- 母音チャンネル（remapForSdkLimitation で jaw/lowerDown に合成される） ---
