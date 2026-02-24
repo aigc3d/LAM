@@ -361,20 +361,23 @@ export class ConciergeController extends CoreController {
   // → 増幅は最小限にし、A2E の自然な出力を活かす
   // ※全値は BLENDSHAPE_SAFE_MAX(0.7) でクランプ（FLAME LBS 数値安定のため）
   //
-  // lowerDown抑制理由: A2E raw max ~0.84 → クランプ後0.7でも口が極端に開く。
-  //   jawOpen effective max ~0.42 (0.28*1.5) とバランスさせるため0.5倍。
+  // 母音分化チューニング:
+  //   lowerDown が全音素で支配的 → 全てが「あ」に見える問題の対策:
+  //   1) lowerDown を 0.3x に強く抑制（raw ~0.84 → effective ~0.25）
+  //   2) 母音固有チャンネルを大きくブースト（smile, funnel, stretch）
+  //   → 相対的に母音形状が目立つようにする
   private static readonly MOUTH_AMPLIFY: { [key: string]: number } = {
-    // --- 主要チャンネル: SDKが直接適用 ---
-    'jawOpen': 1.0,                // 等倍: raw max~0.40。mouthLowerDownと加算→1.5xだと合計0.6超で顎極大
-    'mouthLowerDownLeft': 0.5,     // 抑制: raw~0.84が強すぎ → 0.42程度に (jawOpenとバランス)
-    'mouthLowerDownRight': 0.5,    // 抑制: 同上
-    // --- 母音チャンネル: SDKが直接適用（remapForSdkLimitation不要） ---
-    'mouthFunnel': 1.5,            // 軽ブースト: う・お の唇突き出し（raw max~0.37）
-    'mouthPucker': 1.0,            // 等倍: う のすぼめ（raw max~0.49、十分な値）
-    'mouthSmileLeft': 2.0,         // ブースト: い の口角引き（raw max~0.04、弱い）
-    'mouthSmileRight': 2.0,        // ブースト: い の口角引き
-    'mouthStretchLeft': 1.5,       // 軽ブースト: え の口横伸ばし
-    'mouthStretchRight': 1.5,      // 軽ブースト: え の口横伸ばし
+    // --- 主要チャンネル ---
+    'jawOpen': 1.0,                // 等倍: raw max~0.40（あ の主要ドライバ）
+    'mouthLowerDownLeft': 0.3,     // 強抑制: raw~0.84→eff~0.25。他母音ch対比を改善
+    'mouthLowerDownRight': 0.3,    // 強抑制: 同上
+    // --- 母音チャンネル: 日本語5母音の形状分化 ---
+    'mouthFunnel': 2.5,            // 強ブースト: う・お の唇突き出し（raw max~0.18→eff~0.45）
+    'mouthPucker': 1.5,            // 軽ブースト: う のすぼめ（raw max~0.43→eff~0.65）
+    'mouthSmileLeft': 3.5,         // 強ブースト: い の口角引き（raw max~0.12→eff~0.42）
+    'mouthSmileRight': 3.5,        // 強ブースト: い の口角引き
+    'mouthStretchLeft': 2.0,       // ブースト: え の口横伸ばし（raw max~0.23→eff~0.46）
+    'mouthStretchRight': 2.0,      // ブースト: え の口横伸ばし
     // --- 補助チャンネル ---
     'mouthClose': 1.0,
     'mouthUpperUpLeft': 1.0,
