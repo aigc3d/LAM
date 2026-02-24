@@ -487,10 +487,10 @@ export class ConciergeController extends CoreController {
       }
 
       // Step 2.5: 非対称EMAスムージング
-      // 口の開き（attack）は素早く応答、閉じ（decay）はゆっくり減衰。
-      // → 短い"死区間"（A2Eが0に落ちる瞬間）で口が急に閉じるのを防ぐ
-      const attackAlpha = 0.78; // 開方向: 速めに追従（もごもご防止）
-      const decayAlpha = 0.35;  // 閉方向: 遅い減衰（死区間で口形状を維持→もごもご撲滅）
+      // 口の開き（attack）は素早く応答、閉じ（decay）は適度に減衰。
+      // decayを遅くし過ぎると母音遷移がズレるので、適度な速度を維持。
+      const attackAlpha = 0.80; // 開方向: 速い追従（母音切替に即応）
+      const decayAlpha = 0.50;  // 閉方向: 適度な減衰（母音同期を維持）
       for (let i = 1; i < interpolatedFrames.length; i++) {
         const prev = interpolatedFrames[i - 1];
         const curr = interpolatedFrames[i];
@@ -498,6 +498,28 @@ export class ConciergeController extends CoreController {
           if (curr[key] !== undefined && prev[key] !== undefined) {
             const alpha = curr[key] >= prev[key] ? attackAlpha : decayAlpha;
             curr[key] = prev[key] * (1 - alpha) + curr[key] * alpha;
+          }
+        }
+      }
+
+      // Step 2.7: ポストEMAエネルギーフロア
+      // EMAスムージング後に死区間の口が閉じ切るのを防止。
+      // decayで母音同期は保ちつつ、ここで最低エネルギーを保証。
+      // チャンネル比率は維持 → 母音の形状（あ/い/う区別）が崩れない。
+      const postEmaFloor = 0.18; // EMA後の最低口エネルギー
+      const postEmaSkip = 0.02;  // これ以下は真の無音（フロア適用しない）
+      for (const frame of interpolatedFrames) {
+        let energy = 0;
+        for (const key of mouthKeys) {
+          energy += frame[key] || 0;
+        }
+        if (energy <= postEmaSkip) continue; // 真の無音はスキップ
+        if (energy < postEmaFloor) {
+          const scale = postEmaFloor / energy;
+          for (const key of mouthKeys) {
+            if (frame[key] !== undefined) {
+              frame[key] = Math.min(ConciergeController.BLENDSHAPE_SAFE_MAX, frame[key] * scale);
+            }
           }
         }
       }
