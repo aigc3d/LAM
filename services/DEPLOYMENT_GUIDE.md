@@ -79,21 +79,28 @@ docker build -t audio2exp-service .
 docker tag audio2exp-service gcr.io/PROJECT_ID/audio2exp-service
 docker push gcr.io/PROJECT_ID/audio2exp-service
 
-# Cloud Run デプロイ
+# Cloud Run デプロイ（--source 方式、推奨）
 gcloud run deploy audio2exp-service \
-  --image gcr.io/PROJECT_ID/audio2exp-service \
-  --platform managed \
+  --source . \
+  --project PROJECT_ID \
   --region us-central1 \
-  --memory 4Gi \
-  --cpu 2 \
-  --timeout 120 \
+  --memory 8Gi \
+  --cpu 4 \
+  --timeout 300 \
   --min-instances 1 \
   --max-instances 3 \
-  --set-env-vars "MODEL_DIR=/app/models,DEVICE=cpu"
+  --cpu-boost \
+  --set-env-vars "MODEL_DIR=/app/models,DEVICE=cpu,WARMUP_TIMEOUT=0,ENGINE_LOAD_TIMEOUT=1500"
 ```
 
-**注意**: `min-instances=1` でコールドスタートを排除。
-Wav2Vec2のモデルロードに数秒かかるため、初回リクエストの遅延を防ぐ。
+**注意**:
+- `--memory 8Gi`: torch + transformers + LAMモデル(408MB) の同時ロードに必要（4Giではメモリ不足）
+- `--cpu 4`: モデルロード高速化のため
+- `--cpu-boost`: 起動時のCPUブースト有効化
+- `ENGINE_LOAD_TIMEOUT=1500`: CPUでのモデルロードに約19分かかるため25分の猶予が必要
+- `WARMUP_TIMEOUT=0`: warmup（ダミー推論）をスキップ
+- `min-instances=1`: コールドスタートを排除（ロードに19分かかるため必須）
+- デプロイ後、約20分待ってから `/health` で `engine_ready: true` を確認すること
 
 ### 2. gourmet-support の設定
 
@@ -176,9 +183,10 @@ gcloud run services update gourmet-support \
 
 | 指標 | 目標値 | 備考 |
 |------|--------|------|
-| 推論レイテンシ | < 2秒 (1文あたり) | CPU, 2vCPU |
+| 推論レイテンシ | < 2秒 (1文あたり) | CPU, 4vCPU |
 | TTS + A2E合計 | < 3秒 | 並列化不可 (TTS→A2E) |
-| メモリ使用量 | < 1.5GB | モデルロード込み |
+| メモリ使用量 | < 8GB | torch + transformers + LAMモデル |
+| 起動時間 | 約19分 | CPUでのモデルロード（min-instances=1で回避） |
 | 同時リクエスト | 3 | max-instances=3 |
 
 ## フォールバック動作
