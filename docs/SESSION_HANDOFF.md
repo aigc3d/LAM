@@ -58,9 +58,16 @@
 - FLAME準拠のpose blendshapes + expression blendshapes + LBS
 
 **WebGLレンダリング (クライアント側)**:
+- **WebGL 2.0** を使用（WebGPUではない）
+- **デバイス内蔵GPUを使用** — 完全なCPU処理ではない。WebGLは本質的にGPU API
+- 「サーバーGPU不要」が正しい表現。「GPU不要」ではない
 - **Pass 1**: Transform Feedback — ブレンドシェイプ係数+LBSウェイトをGPUテクスチャに格納、頂点シェーダーで全Gaussianを変形
 - **Pass 2**: Gaussian Splatting — 変形済みGaussianをスクリーンに投影、α合成
-- npmパッケージ `gaussian-splat-renderer-for-lam` (クローズドソース)
+- npmパッケージ `gaussian-splat-renderer-for-lam` v0.0.9-alpha.1 (クローズドソース, MIT license)
+
+**公式の謳い文句**:
+- "Super-fast Cross-platform Animating and Rendering on Any Devices"
+- "Low-latency SDK for Realtime Interactive Chatting Avatar"
 
 **公式ベンチマーク**:
 
@@ -77,8 +84,30 @@
 - ❌ 「LAMはサーバーGPU前提」→ ⭕ **アバター生成だけがGPU。アニメーション+レンダリングはWebGL SDKでスマホ完結**
 - ❌ 「Gaussian SplattingはiPhoneで動かない」→ ⭕ **iPhone 16で35FPS実証済み** (iPhone SEは未検証)
 - ❌ 「A2EはWav2Vec2(95M)がサーバー前提」→ ⭕ A2E推論はサーバー側だが、**結果の52次元係数(~10KB/sec)をクライアントに送るだけ**。レンダリング自体はオンデバイス
+- ❌ 「SDKはGPU無しでCPUで動く」→ ⭕ **WebGL 2.0はデバイスの内蔵GPU（モバイルGPU含む）を使用する。CPU処理ではない**。正確には「サーバー/ディスクリートGPU不要、デバイス内蔵GPUで動く」
+- ❌ 「WebGPUを使用」→ ⭕ **WebGL 2.0を使用**。WebGPUではない
 
 **未解決の技術的問題**: iPhone SE (A13/A15, 3-4GB RAM) で81,424 Gaussianのソートと描画が30FPSで回るか。iPhone 16 (A18)で35FPSなので、SE世代ではさらに厳しい可能性がある。
+
+### 1.4 SDK 2チャンネル制限（2026-02-24 発見・検証済み）
+
+**リップシンクの根本的ボトルネック**:
+
+getExpressionData() で52次元全てを返しているが、SDK内部の Transform Feedback 頂点シェーダーが **jawOpen と mouthLowerDown の2チャンネルしか** FLAME expression blendshapes に適用していない。
+
+```
+A2E出力 (52次元) → getExpressionData() (52キー返却) → SDK内部で2つだけ使用
+                                                          ↑ ボトルネック
+```
+
+**検証経緯**:
+1. A2Eデータ品質を確認 → 52次元出力は日本語母音を正しく弁別（あ/い/う/え/お が異なるチャンネルに分布）
+2. compositeリマップで52→2に集約するチューニングを4ラウンド実施
+3. jawOpen増幅 (1.0→2.5→1.5→1.0) と JAW_MAX/MOUTH_MAX キャップを試行
+4. MOUTH_MAX=0.20 でフレームの33%がクリップ → ダイナミックレンジ喪失 → ロボット的な口の動き
+5. **結論: A2Eは十分。SDKの2チャンネル制限が品質の天井**
+
+**次のアクション** → Phase 0: SDKシェーダーインターセプトで内部動作を解析し、52チャンネル対応パッチの可否を判断。詳細は `tests/a2e_japanese/REVISED_PLAN.md` を参照。
 
 ---
 
@@ -189,7 +218,24 @@ LAM_gpro/
 - nvdiffrast JITプリコンパイル
 - xformersバージョン整合
 
-### 4.5 バグ修正履歴 (主要なもの)
+### 4.5 リップシンクチューニング経緯 (2026-02-23〜24)
+
+SDK 2チャンネル制限下での最適化試行:
+
+| ラウンド | jawOpen倍率 | 結果 | コミット |
+|---------|------------|------|---------|
+| 1 | 1.0x | 口の動き小さすぎ | — |
+| 2 | 2.5x | SAFE_MAX=0.7にクリップ頻発、不自然に大きい | `aab7f4d` |
+| 3 | 1.5x | まだ大きい、TTS切替時にリップシンク停止バグ | `9a2dbcd` |
+| 4 | 1.0x + JAW_MAX=0.30/MOUTH_MAX=0.20 | 33%フレームでMOUTH_MAX クリップ → ロボット的 | `97a1e26` |
+
+**TTS切替バグの修正** (commit `97a1e26`):
+- 原因: `clearFrameBuffer()` が `ttsActive=false` にするが、旧 audio の `ended=true` が残り、早期 fade-out が誤発動
+- 修正: `ttsTransitioning` フラグ追加。clearFrameBuffer()で`true`、play ハンドラーで`false`、fade-out チェックで参照
+
+**結論**: 2チャンネルcompositeリマッピングによるチューニングは天井に到達。SDK内部のシェーダー修正が必要。
+
+### 4.6 バグ修正履歴 (主要なもの)
 
 | コミット | 問題 | 修正 |
 |---------|------|------|
@@ -207,6 +253,7 @@ LAM_gpro/
 
 | 項目 | 状態 | 詳細 |
 |------|------|------|
+| **SDK 2チャンネル制限の突破** | **調査中** | 52→2の制限がリップシンク品質の天井。シェーダーインターセプトで内部解析 → 52ch対応パッチの可否判断。詳細: `tests/a2e_japanese/REVISED_PLAN.md` |
 | **iPhone SEでのWebGLレンダリング検証** | 未着手 | 81,424 Gaussianが30FPSで回るか。`gaussian-splat-renderer-for-lam` npmパッケージで検証 |
 | **A2Eのオンデバイス化** | 未着手 | 現在はサーバー側Wav2Vec2(95M)。MFCC + 軽量モデル or ONNX量子化 |
 | **表情・頭の動きの自然さ向上** | 未着手 | 現在A2Eは口元のみ。頭の動き、瞬き、眉の動きはプロシージャル生成が必要 |
@@ -314,7 +361,34 @@ GaussianSplatRenderer.getInstance(container, assetPath, {
 });
 ```
 
-### 7.2 A2E → レンダラーのデータフロー
+### 7.2 SDK内部構造の調査結果 (2026-02-24)
+
+**LAM_WebRender リポジトリの構造**:
+- `src/` には `gaussianAvatar.ts` と `main.ts` の2ファイルのみ — **ただの薄いラッパー**
+- `gaussianAvatar.ts` は52チャンネル全てをSDKに渡している → SDK内部でフィルタリング
+- 実際のレンダリングコードは npm パッケージ `gaussian-splat-renderer-for-lam` 内部（クローズドソース、minified）
+
+**SDK調査方法** (Phase 0で実施予定):
+
+| 方法 | 詳細 |
+|------|------|
+| ブラウザ DevTools | Network → Sources → minified JSを読む |
+| node_modules 直接確認 | gourmet-sp の `node_modules/gaussian-splat-renderer-for-lam/` |
+| npm pack | `npm pack gaussian-splat-renderer-for-lam` でtgz取得 → beautify |
+| WebGLシェーダーインターセプト | `WebGL2RenderingContext.prototype.shaderSource` をモンキーパッチしてシェーダーソースをキャプチャ |
+
+**インターセプトコード例**:
+```javascript
+const origShaderSource = WebGL2RenderingContext.prototype.shaderSource;
+WebGL2RenderingContext.prototype.shaderSource = function(shader, source) {
+  if (source.includes('jawOpen') || source.includes('expression') || source.includes('blendshape')) {
+    console.log('=== CAPTURED SHADER ===', source.substring(0, 500));
+  }
+  return origShaderSource.call(this, shader, source);
+};
+```
+
+### 7.3 A2E → レンダラーのデータフロー
 
 ```
 A2Eサーバー応答:
@@ -344,7 +418,20 @@ GPUテクスチャにパック → 頂点シェーダーでLBS計算 → Transfo
 
 ## 8. 次のセッションでやるべきこと
 
-### 最優先: iPhone SEでの実機検証
+### 最優先: SDK 2チャンネル制限の突破 (Phase 0)
+
+リップシンク品質の天井はSDKの2チャンネル制限。チューニングでは解決不可。
+
+1. **シェーダーインターセプト** — gourmet-sp のブラウザで WebGL シェーダーをキャプチャ
+2. **npm パッケージ逆解析** — `gaussian-splat-renderer-for-lam` の minified JS を beautify して構造把握
+3. **Transform Feedback 頂点シェーダー解析** — 52次元のどのインデックスが読まれているか特定
+4. **パッチ可否判断** — シェーダーを差し替えて52チャンネル対応できるか評価
+5. → パッチ可能なら Phase 1B (WebGL シェーダーパッチ)
+6. → 不可能なら Phase 2 (Three.js + カスタム FLAME レンダラー)
+
+詳細計画: `tests/a2e_japanese/REVISED_PLAN.md`
+
+### 並行: iPhone SE 実機検証
 
 1. `gaussian-splat-renderer-for-lam` をnpm installしてミニマルHTML作成
 2. ModelScope SpaceでアバターZIP生成
@@ -375,3 +462,5 @@ python tests/a2e_japanese/run_all_tests.py
 | OpenAvatarChat日本語化 | `3003c1b`〜`a58395b` | パッチ群、テストスイート、ASR性能修正 |
 | A2Eサービス構築 | `0875af7`〜`8f99c70` | マイクロサービス、INFER パイプライン、Docker |
 | フロントエンド統合 | `cde7c54`〜`2e16f78` | A2Eリップシンク統合、TTS修正、データ形式修正 |
+| リップシンクチューニング | `aab7f4d`〜`97a1e26` | jawOpen倍率調整(4ラウンド)、JAW_MAX/MOUTH_MAX導入、TTS切替バグ修正 |
+| SDK調査・計画見直し | `951f016` | REVISED_PLAN.md作成、2チャンネル制限の構造的限界を確認 |
