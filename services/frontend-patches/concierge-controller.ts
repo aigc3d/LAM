@@ -347,23 +347,24 @@ export class ConciergeController extends CoreController {
   }
 
   // ★ 口周りblendshapeのスケール係数
-  // 女性キャラ向け: 顎の開きは控えめ、母音の形状差(あいうえお)は強調。
-  // A2Eモデルの日本語出力は母音区別が弱い（smile raw~0.04, funnel raw~0.12）ため、
-  // 母音形状チャンネルは大幅にブーストして補償する。
-  // ※pucker は raw が大きい(~0.35)のでブースト不要。過大値は FLAME LBS の数値爆発を招く。
+  // A2Eモデルの出力特性: jawOpenが弱く(avg~0.05)、mouthLowerDownが過剰(raw~0.84)。
+  // そのまま使うと「顎は動かず下唇だけ引っ張られる」不自然な見え方になる。
+  // → lowerDown を強く抑制し、jawOpen は等倍で通して「顎開き主導」の自然な口の動きに。
+  // 母音の形状差は funnel/smile/stretch のブーストで補償。
+  // ※全値は BLENDSHAPE_SAFE_MAX(0.7) でクランプ（FLAME LBS 数値安定のため）
   private static readonly MOUTH_AMPLIFY: { [key: string]: number } = {
-    'jawOpen': 0.85,               // やや抑制: 自然な顎の開き
+    'jawOpen': 1.0,                // 等倍: 顎の開き主導に（raw avg~0.05, max~0.35）
     'mouthClose': 1.0,             // 中立
     'mouthFunnel': 2.0,            // ブースト: う・お の唇突き出し（raw~0.12→0.24）
-    'mouthPucker': 1.0,            // 中立: raw が十分大きい(~0.35)。ブーストで飽和→メッシュ破綻
+    'mouthPucker': 1.0,            // 中立: raw が十分大きい(~0.35)
     'mouthSmileLeft': 3.0,         // 大幅ブースト: い の口角引き（raw~0.04→0.12）
     'mouthSmileRight': 3.0,        // 大幅ブースト: い の口角引き
     'mouthStretchLeft': 2.0,       // ブースト: え の口横伸ばし
     'mouthStretchRight': 2.0,      // ブースト: え の口横伸ばし
-    'mouthLowerDownLeft': 0.75,    // 抑制: 下唇の引き下げ
-    'mouthLowerDownRight': 0.75,   // 抑制: 下唇の引き下げ
-    'mouthUpperUpLeft': 0.85,      // やや抑制: 上唇
-    'mouthUpperUpRight': 0.85,     // やや抑制: 上唇
+    'mouthLowerDownLeft': 0.35,    // 強く抑制: A2Eが過剰出力(raw~0.84)→下唇支配を防止
+    'mouthLowerDownRight': 0.35,   // 強く抑制: 同上
+    'mouthUpperUpLeft': 0.5,       // 抑制: 上唇も過剰傾向
+    'mouthUpperUpRight': 0.5,      // 抑制: 同上
     'mouthDimpleLeft': 1.0,        // 中立
     'mouthDimpleRight': 1.0,       // 中立
     'mouthRollLower': 0.9,         // やや抑制
