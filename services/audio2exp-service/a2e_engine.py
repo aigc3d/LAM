@@ -85,7 +85,6 @@ class Audio2ExpressionEngine:
         self._ready = False
         self._use_infer = False  # INFER パイプライン使用フラグ
         self._infer = None       # INFER パイプラインインスタンス
-        self._infer_context = None  # ストリーミング推論のコンテキスト
 
         # デバイス決定
         import torch
@@ -309,16 +308,16 @@ class Audio2ExpressionEngine:
             self._infer.model.to(device)
             self._infer.model.eval()
 
-            # Warmup 推論 (タイムアウト付き、失敗しても致命的ではない)
-            logger.info("[A2E Engine] Running warmup inference (timeout=120s)...")
+            # Warmup 推論 (バッチモード、タイムアウト付き)
+            logger.info("[A2E Engine] Running warmup inference (batch mode, timeout=120s)...")
             import threading as _thr
             warmup_result = [None]  # [None]=running, [True]=ok, [Exception]=fail
 
             def _warmup():
                 try:
                     dummy_audio = np.zeros(INFER_INPUT_SAMPLE_RATE, dtype=np.float32)
-                    self._infer.infer_streaming_audio(
-                        audio=dummy_audio, ssr=INFER_INPUT_SAMPLE_RATE, context=None
+                    self._infer.infer_batch_audio(
+                        audio=dummy_audio, ssr=INFER_INPUT_SAMPLE_RATE
                     )
                     warmup_result[0] = True
                 except Exception as exc:
@@ -402,46 +401,28 @@ class Audio2ExpressionEngine:
 
     def _process_with_infer(self, audio_pcm: np.ndarray, duration: float) -> dict:
         """
-        INFER パイプラインで推論。
+        INFER パイプラインで推論 (バッチモード)。
 
-        infer_streaming_audio() を使用:
-        - 音声をチャンクに分割
-        - チャンクごとに推論 (コンテキスト引き継ぎ)
-        - ポストプロセッシング込み (smooth_mouth, frame_blending,
-          savitzky_golay, symmetrize, eye_blinks)
+        infer_batch_audio() を使用:
+        - 音声全体を一括でモデルに入力 (チャンク分割なし)
+        - 完全版ポストプロセッシング (smooth_mouth_movements,
+          apply_random_brow_movement, savitzky_golay, symmetrize, eye_blinks)
         """
-        chunk_samples = INFER_INPUT_SAMPLE_RATE  # 1秒チャンク
-        all_expressions = []
-        context = None
-
         try:
-            for start in range(0, len(audio_pcm), chunk_samples):
-                end = min(start + chunk_samples, len(audio_pcm))
-                chunk = audio_pcm[start:end]
+            result = self._infer.infer_batch_audio(
+                audio=audio_pcm, ssr=INFER_INPUT_SAMPLE_RATE
+            )
+            expression = result.get("expression")
 
-                # 極端に短いチャンクはスキップ
-                if len(chunk) < INFER_INPUT_SAMPLE_RATE // 10:
-                    continue
-
-                result, context = self._infer.infer_streaming_audio(
-                    audio=chunk, ssr=INFER_INPUT_SAMPLE_RATE, context=context
-                )
-                expr = result.get("expression")
-                if expr is not None:
-                    all_expressions.append(expr.astype(np.float32))
-
-            if not all_expressions:
+            if expression is None or len(expression) == 0:
                 logger.warning("[A2E Engine] INFER produced no expression data")
                 num_frames = max(1, int(duration * A2E_OUTPUT_FPS))
                 expression = np.zeros((num_frames, 52), dtype=np.float32)
-            else:
-                expression = np.concatenate(all_expressions, axis=0)
 
-            logger.info(f"[A2E Engine] INFER: {expression.shape[0]} frames, "
+            logger.info(f"[A2E Engine] INFER batch: {expression.shape[0]} frames, "
                         f"jawOpen range=[{expression[:, 24].min():.3f}, "
-                        f"{expression[:, 24].max():.3f}]")  # jawOpen = index 24 in INFER order
+                        f"{expression[:, 24].max():.3f}]")
 
-            # フレームリストに変換
             frames = [frame.tolist() for frame in expression]
 
             return {
@@ -451,13 +432,11 @@ class Audio2ExpressionEngine:
             }
 
         except Exception as e:
-            logger.error(f"[A2E Engine] INFER inference error: {e}")
+            logger.error(f"[A2E Engine] INFER batch inference error: {e}")
             traceback.print_exc()
-            # エラー時はフォールバック
             logger.warning("[A2E Engine] Falling back to Wav2Vec2 for this request")
             if hasattr(self, 'wav2vec_model'):
                 return self._process_with_fallback(audio_pcm, duration)
-            # Wav2Vec2 もない場合は空フレームを返す
             num_frames = max(1, int(duration * A2E_OUTPUT_FPS))
             return {
                 "names": ARKIT_BLENDSHAPE_NAMES_INFER,
