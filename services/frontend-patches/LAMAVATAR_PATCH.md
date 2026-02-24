@@ -1,12 +1,14 @@
-# LAMAvatar.astro パッチ: 52次元ブレンドシェイプ対応
+# LAMAvatar.astro リップシンク改善: SDK 2チャンネル制約の回避
 
 > **作成日**: 2026-02-24
-> **問題**: LAMAvatar.astro が jawOpen と mouthLowerDown の2値しかレンダラーに渡しておらず、他の50個のARKitブレンドシェイプ（funnel, pucker, smile, stretch 等）が無視されている
-> **影響**: 母音の口形状区別（あいうえお）が全くできない。口がパクパクするだけ
+> **更新日**: 2026-02-24
+> **問題**: `gaussian-splat-renderer-for-lam` SDK が jawOpen と mouthLowerDown の2値しか FLAME メッシュ変形に使用しない
+> **影響**: 母音の口形状区別（あいうえお）ができない。口がパクパクするだけ
+> **対策**: `remapForSdkLimitation()` で母音チャンネルを jaw/lowerDown に合成
 
 ## 1. 問題の証拠
 
-`__testLipSync()` 診断結果:
+`__testLipSync()` 診断結果（パッチ前）:
 
 | 母音 | jawOpen | smile | funnel | pucker | stretch | lowerDown | **jaw結果** | **mouth結果** |
 |---|---|---|---|---|---|---|---|---|
@@ -16,79 +18,73 @@
 | え | 0.4 | 0.3 | - | - | 0.5 | 0.3 | 0.400 | 0.300 |
 | お | 0.5 | - | 0.5 | 0.3 | - | 0.2 | 0.500 | 0.200 |
 
-**結論**: `jaw = jawOpen`, `mouth = mouthLowerDown` のみ。他は全て無視。
+**結論**: SDK は `jawOpen` と `mouthLowerDown` のみ FLAME 変形に使用。他は全て無視。
 
-## 2. 修正箇所
+### 誤った初期仮説（訂正）
 
-### LAMAvatar.astro の `getExpressionData()` コールバック
+当初「LAMAvatar.astro が2値しか返していない」と推定していたが、実際のコード確認で
+`getExpressionData()` は **全52次元をそのまま返している** ことが判明。
+ボトルネックは LAMAvatar.astro ではなく、**クローズドソースの SDK 側** にある。
 
-**現状** (推定):
+## 2. 修正内容: `remapForSdkLimitation()`
+
+SDK が2チャンネルしか使わない制約を、LAMAvatar.astro 側で回避する。
+母音チャンネル（smile, funnel, pucker, stretch）の情報を jawOpen と mouthLowerDown に合成。
+
+### 合成ロジック
+
 ```typescript
-// GaussianSplatRenderer の getExpressionData コールバック
-getExpressionData: () => {
-  const frame = getCurrentFrame(); // frameBuffer から現在フレーム取得
-  return {
-    jawOpen: frame['jawOpen'] || 0,
-    // ← mouthLowerDown を何らかの形で mouth に変換
-  };
-}
+// jawOpen 合成: 母音チャンネルの寄与を加算
+compositeJaw = min(0.7,
+  jawOpen
+  + smile * 0.5      // い: 口角引きに伴う顎の動き
+  + funnel * 0.35    // う/お: 唇突き出し
+  + pucker * 0.2     // う: 唇すぼめ
+  + stretch * 0.3    // え: 口横伸ばし
+)
+
+// mouthLowerDown 合成: 母音特性を下唇の動きに変換
+compositeMouth = min(0.7, max(0,
+  lowerDown
+  + smile * 0.6      // い: 口角引き → 下唇の動き
+  + stretch * 0.4    // え: 口横伸ばし → 下唇の動き
+  - pucker * 0.15    // う: 唇すぼめ → 下唇を閉じる方向
+))
 ```
 
-**修正後**: フレームの全ブレンドシェイプをそのまま返す
-```typescript
-getExpressionData: () => {
-  const frame = getCurrentFrame();
-  if (!frame) return {};
-  // 52次元の全ブレンドシェイプをそのまま返す
-  // WebGL SDK の FLAME blendshape デコーダーが各値を処理
-  return { ...frame };
-}
-```
+### 合成後の期待値（A2Eブースト後）
 
-### 診断ログも拡張
+| 母音 | jawOpen (合成前→後) | mouthLowerDown (合成前→後) | 変化 |
+|---|---|---|---|
+| あ | 0.70 → 0.70 | 0.42 → 0.42 | 変化なし（既に十分） |
+| い | 0.05 → 0.11 | 0.00 → 0.07 | smile寄与で微動が見える |
+| う | 0.03 → 0.18 | 0.00 → 0.00 | funnel/pucker寄与で顎が動く |
+| え | 0.08 → 0.20 | ~0 → 0.15 | stretch/smile寄与で中程度 |
+| お | 0.10 → 0.21 | ~0 → ~0 | funnel寄与でうより大きく開口 |
 
-**現状のログ** (LAMAvatar.astro:454):
-```typescript
-console.log(`[LAM TTS-Sync] Frame ${idx}/${total}: jaw=${jawOpen}, mouth=${mouth}, time=${time}ms`);
-```
+### 適用箇所
 
-**修正後**: 主要母音チャンネルも表示
-```typescript
-const f = frame;
-console.log(
-  `[LAM TTS-Sync] Frame ${idx}/${total}: ` +
-  `jaw=${(f.jawOpen||0).toFixed(3)}, ` +
-  `funnel=${(f.mouthFunnel||0).toFixed(3)}, ` +
-  `smile=${(f.mouthSmileLeft||0).toFixed(3)}, ` +
-  `stretch=${(f.mouthStretchLeft||0).toFixed(3)}, ` +
-  `lowerDn=${(f.mouthLowerDownLeft||0).toFixed(3)}, ` +
-  `time=${time}ms`
-);
-```
+`getExpressionData()` の3つの return パス:
+1. TTS-Sync フレーム読み出し（通常パス）
+2. バッファ末尾超過（最終フレーム保持）
+3. ※フェードアウト時は既に縮小中のため適用不要
 
-## 3. WebGL SDK (`gaussian-splat-renderer-for-lam`) の対応確認
+## 3. その他の改善
 
-SDK のドキュメントに記載されている `getExpressionData` コールバック:
-```typescript
-GaussianSplatRenderer.getInstance(container, assetPath, {
-  getExpressionData: () => ({ jawOpen: 0.5, mouthFunnel: 0.2, ... }),
-});
-```
+### 診断ログの拡張
 
-`...` は複数のブレンドシェイプ名をキーとして返せることを示唆。
-SDK 内部で FLAME の expression blendshape (52次元) に対応する頂点変形を計算しているはず。
+- Health check: jaw, mouth に加えて funnel, smile, pucker を表示
+- TTS-Sync: 10フレームごとに funnel, smile, stretch も表示
+- concierge-controller.ts: 既に全母音チャンネルの統計値をログ出力済み
 
 ### 確認方法
 
-LAMAvatar.astro を修正後、`__testLipSync()` を再実行:
-- い(smile=0.6) と う(funnel=0.6) で**異なる口形状**が表示されれば → SDK は52次元対応
-- 変わらなければ → SDK 自体が jawOpen のみ対応（npmパッケージの制約）
+修正適用後、`__testLipSync()` を再実行:
+- 5母音で jaw/mouth 値が **全て異なる** ことをログで確認
+- 視覚的に い(jaw小+mouth微) と う(jaw中+mouth0) で異なる口の動きが見えれば成功
 
-## 4. SDK が jawOpen のみ対応の場合の代替案
+## 4. 今後の改善余地
 
-SDK が52次元に対応していない場合:
-1. **ExpressionManager方式に切り替え**: `gvrm.updateLipSync(mouthOpenness)` の公式を改良
-   - 現状: jawOpen×0.6 + lowerDown×0.2 + upperUp×0.1 + funnel×0.05 + pucker×0.05
-   - 改良: 母音ごとに異なる重みで mouthOpenness を計算
-2. **Three.js + GLBメッシュ**: Gaussian Splatting を捨てて、通常のメッシュ + 52 ARKit ブレンドシェイプ
-3. **NVIDIA Audio2Face-3D**: より高品質な A2E モデルに切り替え
+1. **SDK アップデート待ち**: SDK が52次元対応すれば `remapForSdkLimitation()` を無効化
+2. **A2Eモデルの改善**: 日本語母音の smile/funnel 出力が弱すぎる（smile raw ~0.04）→ より高品質なモデルへ
+3. **NVIDIA Audio2Face-3D**: ARKit 52次元をフル活用できるレンダリングパイプラインへの移行

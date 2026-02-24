@@ -190,9 +190,18 @@ class LAMAvatarController {
 
       // Health check (10s interval)
       setInterval(() => {
-        const jaw = this.expressionData['jawOpen'] || 0;
-        const mouth = this.expressionData['mouthLowerDownLeft'] || 0;
-        console.log(`[LAM Health] state=${this.currentState}, jaw=${jaw.toFixed(3)}, mouth=${mouth.toFixed(3)}, buffer=${this.frameBuffer.length}, ttsActive=${this.ttsActive}`);
+        const f = this.expressionData;
+        const jaw = f['jawOpen'] || 0;
+        const mouth = f['mouthLowerDownLeft'] || 0;
+        const funnel = f['mouthFunnel'] || 0;
+        const smile = f['mouthSmileLeft'] || 0;
+        const pucker = f['mouthPucker'] || 0;
+        console.log(
+          `[LAM Health] state=${this.currentState}, ` +
+          `jaw=${jaw.toFixed(3)}, mouth=${mouth.toFixed(3)}, ` +
+          `funnel=${funnel.toFixed(3)}, smile=${smile.toFixed(3)}, pucker=${pucker.toFixed(3)}, ` +
+          `buffer=${this.frameBuffer.length}, ttsActive=${this.ttsActive}`
+        );
       }, 10000);
 
       if (this.autoConnect && this.wsUrl) {
@@ -400,6 +409,63 @@ class LAMAvatarController {
   private lastLoggedFrameIndex = -1;
 
   /**
+   * SDK制約の回避: 母音チャンネル → jawOpen/lowerDown 合成
+   *
+   * gaussian-splat-renderer-for-lam SDK は jawOpen と mouthLowerDown の
+   * 2値しか FLAME メッシュ変形に使わない（__testLipSync() 診断で確認済み）。
+   * 他の母音チャンネル（smile, funnel, pucker, stretch）の情報を
+   * この2チャンネルに合成して、母音の口形状差を近似的に表現する。
+   *
+   * 合成後の期待値（A2Eブースト後）:
+   *   あ: jaw≈0.70, mouth≈0.42 (大きく開口)
+   *   い: jaw≈0.11, mouth≈0.07 (微小な動き — smile寄与)
+   *   う: jaw≈0.18, mouth≈0.00 (顎のみ — funnel/pucker寄与)
+   *   え: jaw≈0.20, mouth≈0.15 (中程度 — stretch/smile寄与)
+   *   お: jaw≈0.21, mouth≈0.00 (顎のみ — funnel寄与、う より大)
+   */
+  private remapForSdkLimitation(data: ExpressionData): ExpressionData {
+    const jaw = data['jawOpen'] || 0;
+    const lowerDownL = data['mouthLowerDownLeft'] || 0;
+    const lowerDownR = data['mouthLowerDownRight'] || 0;
+    const lowerDown = (lowerDownL + lowerDownR) * 0.5;
+    const funnel = data['mouthFunnel'] || 0;
+    const pucker = data['mouthPucker'] || 0;
+    const smile = ((data['mouthSmileLeft'] || 0) + (data['mouthSmileRight'] || 0)) * 0.5;
+    const stretch = ((data['mouthStretchLeft'] || 0) + (data['mouthStretchRight'] || 0)) * 0.5;
+
+    // jawOpen 合成: 母音チャンネルの寄与を加算
+    //   い: smile → 口角引きに伴う顎の微動
+    //   う/お: funnel/pucker → 唇突き出し・すぼめの顎動作
+    //   え: stretch → 口横伸ばしの顎動作
+    const compositeJaw = Math.min(0.7,
+      jaw
+      + smile * 0.5
+      + funnel * 0.35
+      + pucker * 0.2
+      + stretch * 0.3
+    );
+
+    // mouthLowerDown 合成: 母音特性を下唇の動きに変換
+    //   い: smile → 口角引き → lowerDown に反映（横方向を縦で近似）
+    //   え: stretch → 口横伸ばし → lowerDown に反映
+    //   う: pucker → 唇すぼめ → lowerDown を抑制（唇が前に出る方向）
+    const compositeLowerDown = Math.min(0.7,
+      Math.max(0,
+        lowerDown
+        + smile * 0.6
+        + stretch * 0.4
+        - pucker * 0.15
+      )
+    );
+
+    data['jawOpen'] = compositeJaw;
+    data['mouthLowerDownLeft'] = compositeLowerDown;
+    data['mouthLowerDownRight'] = compositeLowerDown;
+
+    return data;
+  }
+
+  /**
    * Called by renderer at ~60fps
    * Returns expression data based on TTS player currentTime
    */
@@ -447,11 +513,18 @@ class LAMAvatarController {
             this.expressionData[name] = frame[name] * fadeAlpha;
           });
 
+          // ★ SDK制約回避: 母音チャンネル → jaw/lowerDown 合成
+          this.remapForSdkLimitation(this.expressionData);
+
           if (frameIndex !== this.lastLoggedFrameIndex && frameIndex % 10 === 0) {
             this.lastLoggedFrameIndex = frameIndex;
-            const jaw = this.expressionData['jawOpen'] || 0;
-            const mouth = this.expressionData['mouthLowerDownLeft'] || 0;
-            console.log(`[LAM TTS-Sync] Frame ${frameIndex}/${this.frameBuffer.length}: jaw=${jaw.toFixed(3)}, mouth=${mouth.toFixed(3)}, time=${effectiveTimeMs.toFixed(0)}ms`);
+            const f = this.expressionData;
+            console.log(
+              `[LAM TTS-Sync] Frame ${frameIndex}/${this.frameBuffer.length}: ` +
+              `jaw=${(f['jawOpen']||0).toFixed(3)}, mouth=${(f['mouthLowerDownLeft']||0).toFixed(3)}, ` +
+              `funnel=${(f['mouthFunnel']||0).toFixed(3)}, smile=${(f['mouthSmileLeft']||0).toFixed(3)}, ` +
+              `stretch=${(f['mouthStretchLeft']||0).toFixed(3)}, time=${effectiveTimeMs.toFixed(0)}ms`
+            );
           }
 
           if (this.currentState !== 'Responding') {
@@ -468,6 +541,7 @@ class LAMAvatarController {
             Object.keys(lastFrame).forEach((name: string) => {
               this.expressionData[name] = lastFrame[name];
             });
+            this.remapForSdkLimitation(this.expressionData);
           }
           if (!this.externalTtsPlayer.ended) {
             return this.expressionData;

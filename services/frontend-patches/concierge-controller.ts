@@ -349,22 +349,22 @@ export class ConciergeController extends CoreController {
   // ★ 口周りblendshapeのスケール係数
   //
   // 【重要】__testLipSync() 診断で判明:
-  // LAMAvatar.astro は jawOpen と mouthLowerDown の2値しかレンダラーに渡していない。
-  // funnel, pucker, smile, stretch 等は getExpressionData() で無視されている。
-  // → LAMAvatar.astro パッチ適用後に全52次元が有効になるまで、
-  //   実質的に jawOpen と lowerDown のみが描画に影響する。
+  // SDK (gaussian-splat-renderer-for-lam) が jawOpen と mouthLowerDown の2値しか
+  // FLAME メッシュ変形に使わない。LAMAvatar.astro は全52次元を返しているが SDK が無視。
+  // → LAMAvatar.astro 側で remapForSdkLimitation() を追加し、
+  //   母音チャンネル(smile/funnel/pucker/stretch)を jaw/lowerDown に合成。
+  //   ここでのブースト値は合成の入力として使われる。
   //
   // A2Eモデルの出力特性: jawOpen弱(avg~0.05), lowerDown過剰(raw~0.84)
   // → lowerDown を抑制して jawOpen:lowerDown のバランスを是正
-  //
-  // ※パッチ適用後は funnel/smile/stretch のブーストが有効になる
+  // → 母音チャンネルをブーストして remapForSdkLimitation() の合成精度を上げる
   // ※全値は BLENDSHAPE_SAFE_MAX(0.7) でクランプ（FLAME LBS 数値安定のため）
   private static readonly MOUTH_AMPLIFY: { [key: string]: number } = {
     // --- 現在レンダラーに到達する値 ---
     'jawOpen': 1.0,                // 等倍: 顎の開きを主軸に
     'mouthLowerDownLeft': 0.5,     // 抑制: A2E過剰出力(raw~0.84)→ jaw:lowerDown比を改善
     'mouthLowerDownRight': 0.5,    // 抑制: 同上
-    // --- パッチ適用後に有効になる母音チャンネル ---
+    // --- 母音チャンネル（remapForSdkLimitation で jaw/lowerDown に合成される） ---
     'mouthFunnel': 2.0,            // う・お の唇突き出し（raw~0.12→0.24）
     'mouthPucker': 1.0,            // う の唇すぼめ（raw~0.35、ブースト不要）
     'mouthSmileLeft': 3.0,         // い の口角引き（raw~0.04→0.12）
