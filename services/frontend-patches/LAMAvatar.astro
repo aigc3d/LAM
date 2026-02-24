@@ -152,10 +152,34 @@ interface CapturedProgram {
   timestamp: number;
 }
 
+interface UniformValueCapture {
+  name: string;
+  value: number;
+  programId: number | string;
+  timestamp: number;
+}
+
+interface BoneTextureUpdate {
+  width: number;
+  height: number;
+  xoffset: number;
+  yoffset: number;
+  format: number;
+  type: number;
+  dataLength: number;
+  nonZeroCount: number;
+  firstValues: number[];  // First 60 float values (covers BS weights at texel 20+)
+  timestamp: number;
+}
+
 interface ShaderInterceptState {
   shaders: CapturedShader[];
   programs: CapturedProgram[];
   textureUploads: { width: number; height: number; format: number; type: number; timestamp: number }[];
+  uniformValues: UniformValueCapture[];  // Captured uniform1i values
+  boneTextureUpdates: BoneTextureUpdate[];  // boneTexture texSubImage2D calls
+  bsCountValue: number | null;  // Most recent bsCount value
+  gaussianSplatCountValue: number | null;  // Most recent gaussianSplatCount value
   installed: boolean;
 }
 
@@ -163,6 +187,10 @@ const SHADER_INTERCEPT: ShaderInterceptState = {
   shaders: [],
   programs: [],
   textureUploads: [],
+  uniformValues: [],
+  boneTextureUpdates: [],
+  bsCountValue: null,
+  gaussianSplatCountValue: null,
   installed: false,
 };
 
@@ -374,9 +402,11 @@ function installShaderIntercept(): void {
     return (origTexImage2D as any).apply(this, args);
   };
 
-  // --- 6. getUniformLocation: uniform 名をキャプチャ（expression 関連を特定）---
+  // --- 6. getUniformLocation: uniform 名をキャプチャ + location→name マッピング ---
   const origGetUniformLocation = proto.getUniformLocation;
   const capturedUniforms = new Set<string>();
+  const uniformLocationToName = new Map<WebGLUniformLocation, string>();
+  const uniformLocationToProgram = new Map<WebGLUniformLocation, number | string>();
   proto.getUniformLocation = function(program: WebGLProgram, name: string) {
     if (!capturedUniforms.has(name)) {
       capturedUniforms.add(name);
@@ -389,10 +419,157 @@ function installShaderIntercept(): void {
         );
       }
     }
-    return origGetUniformLocation.call(this, program, name);
+    const loc = origGetUniformLocation.call(this, program, name);
+    if (loc) {
+      uniformLocationToName.set(loc, name);
+      uniformLocationToProgram.set(loc, programToId.get(program) ?? '?');
+    }
+    return loc;
   };
 
-  // --- 7. getAttribLocation: attribute 名をキャプチャ ---
+  // --- 7. uniform1i: bsCount, gaussianSplatCount 等の整数uniform値をキャプチャ ---
+  const WATCHED_INT_UNIFORMS = ['bsCount', 'gaussianSplatCount', 'sceneCount', 'fadeInComplete',
+    'sphericalHarmonicsDegree', 'covariancesAreHalfFloat', 'pointCloudModeEnabled',
+    'orthographicMode', 'sphericalHarmonics8BitMode', 'sphericalHarmonicsMultiTextureMode'];
+  const lastIntValues = new Map<string, number>();
+  const origUniform1i = proto.uniform1i;
+  proto.uniform1i = function(location: WebGLUniformLocation | null, value: number) {
+    if (location) {
+      const name = uniformLocationToName.get(location);
+      if (name && WATCHED_INT_UNIFORMS.includes(name)) {
+        const prev = lastIntValues.get(name);
+        if (prev !== value) {
+          lastIntValues.set(name, value);
+          const pId = uniformLocationToProgram.get(location) ?? '?';
+          console.log(
+            `[Shader Intercept] 🟢 UNIFORM1I: ${name} = ${value} (Program #${pId})`
+          );
+          SHADER_INTERCEPT.uniformValues.push({
+            name, value, programId: pId, timestamp: performance.now()
+          });
+
+          if (name === 'bsCount') {
+            SHADER_INTERCEPT.bsCountValue = value;
+            console.log(
+              `[Shader Intercept] ⭐ bsCount = ${value} ← これがブレンドシェイプ数！`
+            );
+          }
+          if (name === 'gaussianSplatCount') {
+            SHADER_INTERCEPT.gaussianSplatCountValue = value;
+            console.log(
+              `[Shader Intercept] ⭐ gaussianSplatCount = ${value}`
+            );
+          }
+        }
+      }
+    }
+    return origUniform1i.call(this, location, value);
+  };
+
+  // --- 8. uniform1f: headBoneIndex 等の float uniform をキャプチャ ---
+  const WATCHED_FLOAT_UNIFORMS = ['headBoneIndex', 'splatScale', 'visibleRegionRadius',
+    'visibleRegionFadeStartRadius', 'inverseFocalAdjustment'];
+  const lastFloatValues = new Map<string, number>();
+  const origUniform1f = proto.uniform1f;
+  proto.uniform1f = function(location: WebGLUniformLocation | null, value: number) {
+    if (location) {
+      const name = uniformLocationToName.get(location);
+      if (name && WATCHED_FLOAT_UNIFORMS.includes(name)) {
+        const prev = lastFloatValues.get(name);
+        if (prev !== value) {
+          lastFloatValues.set(name, value);
+          const pId = uniformLocationToProgram.get(location) ?? '?';
+          console.log(
+            `[Shader Intercept] 🟢 UNIFORM1F: ${name} = ${value} (Program #${pId})`
+          );
+        }
+      }
+    }
+    return origUniform1f.call(this, location, value);
+  };
+
+  // --- 9. texSubImage2D: boneTexture への書き込みを監視 ---
+  // boneTexture にブレンドシェイプ重みが格納されている（texel 20+）
+  // SDK が毎フレーム boneTexture を更新するタイミングで重みデータをキャプチャ
+  let boneTexSubImageCount = 0;
+  const origTexSubImage2D = proto.texSubImage2D;
+  proto.texSubImage2D = function(...args: any[]) {
+    // texSubImage2D(target, level, xoffset, yoffset, width, height, format, type, data)
+    if (args.length >= 9 && args[8] instanceof ArrayBuffer || args[8] instanceof Uint32Array || args[8] instanceof Float32Array) {
+      const width = args[4];
+      const height = args[5];
+      const xoffset = args[2];
+      const yoffset = args[3];
+      const format = args[6];
+      const type = args[7];
+      const rawData = args[8];
+
+      // boneTexture は比較的小さい（128x1 など）、毎フレーム更新される
+      if (typeof width === 'number' && typeof height === 'number') {
+        // boneTexture の重み部分をキャプチャ（小〜中サイズのテクスチャで高頻度更新）
+        boneTexSubImageCount++;
+        if (boneTexSubImageCount <= 5 || boneTexSubImageCount % 300 === 0) {
+          // 最初の5回と300フレームごとにログ
+          let floatView: Float32Array | null = null;
+          let nonZeroCount = 0;
+          const firstValues: number[] = [];
+
+          try {
+            if (rawData instanceof Float32Array) {
+              floatView = rawData;
+            } else if (rawData instanceof Uint32Array) {
+              // usampler2D → Uint32 data, interpret as float bits
+              floatView = new Float32Array(rawData.buffer, rawData.byteOffset, rawData.length);
+            } else if (rawData instanceof ArrayBuffer) {
+              floatView = new Float32Array(rawData);
+            }
+
+            if (floatView) {
+              // テクスチャ全体から float 値を読み、特にTexel 20+ (BS weights) を注目
+              // Texel 20 = index 80 (4 components * 20 texels)
+              const bsWeightStartIdx = 20 * 4; // texel 20, 4 components per texel
+              for (let k = 0; k < Math.min(floatView.length, 240); k++) {
+                const v = floatView[k];
+                if (k >= bsWeightStartIdx && k < bsWeightStartIdx + 60) {
+                  firstValues.push(v);
+                }
+                if (Math.abs(v) > 1e-6) nonZeroCount++;
+              }
+            }
+          } catch (_) { /* ignore read errors */ }
+
+          const entry: BoneTextureUpdate = {
+            width, height, xoffset, yoffset, format, type,
+            dataLength: rawData?.byteLength || 0,
+            nonZeroCount,
+            firstValues,
+            timestamp: performance.now(),
+          };
+          SHADER_INTERCEPT.boneTextureUpdates.push(entry);
+
+          // BS weights (texel 20+): 4 floats per texel, 13 texels for 52 BS
+          const bsWeights = firstValues.slice(0, 52);
+          const nonZeroBs = bsWeights.filter(v => Math.abs(v) > 1e-6).length;
+          console.log(
+            `[Shader Intercept] 🟠 texSubImage2D #${boneTexSubImageCount}: ` +
+            `${width}x${height} offset=(${xoffset},${yoffset}) ` +
+            `format=0x${format.toString(16)} type=0x${type.toString(16)} ` +
+            `dataLen=${rawData?.byteLength || 0} nonZero=${nonZeroCount}`
+          );
+          if (nonZeroBs > 0) {
+            console.log(
+              `[Shader Intercept] 🟠 BS weights (texel20+, first ${bsWeights.length}): ` +
+              `nonZero=${nonZeroBs}/${bsWeights.length} ` +
+              `values=[${bsWeights.map(v => v.toFixed(4)).join(', ')}]`
+            );
+          }
+        }
+      }
+    }
+    return (origTexSubImage2D as any).apply(this, args);
+  };
+
+  // --- 10. getAttribLocation: attribute 名をキャプチャ ---
   const origGetAttribLocation = proto.getAttribLocation;
   const capturedAttribs = new Set<string>();
   proto.getAttribLocation = function(program: WebGLProgram, name: string) {
@@ -410,25 +587,66 @@ function installShaderIntercept(): void {
     return origGetAttribLocation.call(this, program, name);
   };
 
-  console.log('[Shader Intercept] ✅ Installed. All WebGL2 shaders will be captured.');
+  console.log('[Shader Intercept] ✅ Installed (v2: +uniform1i/1f, +texSubImage2D).');
   console.log('[Shader Intercept] Access captured data: window.__LAM_SHADER_INTERCEPT');
+  console.log('[Shader Intercept] Quick check: window.__LAM_SHADER_INTERCEPT.bsCountValue');
   console.log('[Shader Intercept] Dump analysis: window.__LAM_SHADER_INTERCEPT.analyze()');
 }
 
 // 分析ヘルパー関数をグローバルに公開
 (window as any).__LAM_SHADER_INTERCEPT.analyze = function() {
   const state = SHADER_INTERCEPT;
-  console.log('=== SHADER INTERCEPT ANALYSIS ===');
+  console.log('=== SHADER INTERCEPT ANALYSIS v2 ===');
   console.log(`Total shaders captured: ${state.shaders.length}`);
   console.log(`Total programs captured: ${state.programs.length}`);
   console.log(`Texture uploads: ${state.textureUploads.length}`);
+  console.log(`Uniform value captures: ${state.uniformValues.length}`);
+  console.log(`BoneTexture updates: ${state.boneTextureUpdates.length}`);
+
+  // ★ 最重要: bsCount と gaussianSplatCount
+  console.log('\n--- ⭐ CRITICAL VALUES ⭐ ---');
+  console.log(`  bsCount = ${state.bsCountValue ?? 'NOT CAPTURED YET'}`);
+  console.log(`  gaussianSplatCount = ${state.gaussianSplatCountValue ?? 'NOT CAPTURED YET'}`);
+  if (state.bsCountValue !== null) {
+    if (state.bsCountValue >= 50) {
+      console.log('  → シェーダーは52チャンネル対応！制限はJS側の重みマッピング');
+    } else {
+      console.log(`  → シェーダーは${state.bsCountValue}チャンネルのみ。SDK JS で制限されている`);
+    }
+  }
+
+  // 全 uniform 値
+  console.log('\n--- Captured uniform values ---');
+  const uniqueUniforms = new Map<string, number>();
+  for (const u of state.uniformValues) {
+    uniqueUniforms.set(u.name, u.value);
+  }
+  for (const [name, value] of uniqueUniforms) {
+    console.log(`  ${name} = ${value}`);
+  }
+
+  // BoneTexture 更新（BS weights分析）
+  if (state.boneTextureUpdates.length > 0) {
+    console.log(`\n--- BoneTexture updates (${state.boneTextureUpdates.length} captured) ---`);
+    const latest = state.boneTextureUpdates[state.boneTextureUpdates.length - 1];
+    console.log(`  Latest: ${latest.width}x${latest.height} nonZero=${latest.nonZeroCount}`);
+    if (latest.firstValues.length > 0) {
+      // BS weights: first 52 values from texel 20
+      const bsWeights = latest.firstValues.slice(0, 52);
+      const nonZeroBs = bsWeights.filter((v: number) => Math.abs(v) > 1e-6);
+      console.log(`  BS weights (texel 20+): ${nonZeroBs.length} non-zero of ${bsWeights.length}`);
+      nonZeroBs.forEach((v: number, idx: number) => {
+        const origIdx = bsWeights.indexOf(v);
+        console.log(`    BS[${origIdx}] = ${v.toFixed(6)}`);
+      });
+    }
+  }
 
   // Expression 関連シェーダー
   const exprShaders = state.shaders.filter(s => s.hasExpression);
   console.log(`\n--- Expression-related shaders: ${exprShaders.length} ---`);
   for (const s of exprShaders) {
     console.log(`  #${s.id} ${s.type} [${s.expressionKeywords.join(',')}] TF=${s.hasTransformFeedback}`);
-    console.log(`  Source (first 300 chars): ${s.source.substring(0, 300)}`);
   }
 
   // Transform Feedback プログラム
@@ -437,27 +655,6 @@ function installShaderIntercept(): void {
   for (const p of tfPrograms) {
     console.log(`  Program #${p.id}: VS=#${p.vertexShaderId}, FS=#${p.fragmentShaderId}`);
     console.log(`  Varyings: [${p.transformFeedbackVaryings?.join(', ') || 'N/A'}]`);
-    // 対応する頂点シェーダーのフルソースを表示
-    if (p.vertexShaderId !== null) {
-      const vs = state.shaders.find(s => s.id === p.vertexShaderId);
-      if (vs) {
-        console.log(`  --- TF Vertex Shader #${vs.id} FULL SOURCE ---`);
-        console.log(vs.source);
-        console.log('  --- END ---');
-      }
-    }
-  }
-
-  // Expression テクスチャ候補
-  const exprTex = state.textureUploads.filter(t =>
-    t.width === 52 || t.height === 52 || t.width === 104 || t.height === 104 ||
-    (t.width === 1 && t.height >= 52) || (t.height === 1 && t.width >= 52)
-  );
-  if (exprTex.length > 0) {
-    console.log(`\n--- Possible expression textures: ${exprTex.length} ---`);
-    for (const t of exprTex) {
-      console.log(`  ${t.width}x${t.height} format=0x${t.format.toString(16)} type=0x${t.type.toString(16)}`);
-    }
   }
 
   // 全シェーダーのサマリー
@@ -471,12 +668,15 @@ function installShaderIntercept(): void {
     );
   }
 
-  console.log('\n=== END ANALYSIS ===');
+  console.log('\n=== END ANALYSIS v2 ===');
   return {
+    bsCount: state.bsCountValue,
+    gaussianSplatCount: state.gaussianSplatCountValue,
     totalShaders: state.shaders.length,
     expressionShaders: exprShaders.length,
     tfPrograms: tfPrograms.length,
-    exprTextures: exprTex.length,
+    uniformValues: Object.fromEntries(uniqueUniforms),
+    boneTextureUpdates: state.boneTextureUpdates.length,
   };
 };
 
