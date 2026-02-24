@@ -365,7 +365,7 @@ export class ConciergeController extends CoreController {
   //   jawOpen effective max ~0.42 (0.28*1.5) とバランスさせるため0.5倍。
   private static readonly MOUTH_AMPLIFY: { [key: string]: number } = {
     // --- 主要チャンネル: SDKが直接適用 ---
-    'jawOpen': 1.5,                // 軽ブースト: A2E出力が弱め(avg~0.05, max~0.28)
+    'jawOpen': 1.0,                // 等倍: raw max~0.40。mouthLowerDownと加算→1.5xだと合計0.6超で顎極大
     'mouthLowerDownLeft': 0.5,     // 抑制: raw~0.84が強すぎ → 0.42程度に (jawOpenとバランス)
     'mouthLowerDownRight': 0.5,    // 抑制: 同上
     // --- 母音チャンネル: SDKが直接適用（remapForSdkLimitation不要） ---
