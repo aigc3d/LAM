@@ -868,6 +868,9 @@ class LAMAvatarController {
       this.showCanvas();
       console.log('LAM Avatar initialized successfully');
 
+      // ★ SDK内部情報のデバッグ出力
+      this.logSdkInternals();
+
       if (this.testMode) {
         console.log('[LAM TEST] Test mode enabled - looping test_expression_1s.json');
       }
@@ -970,9 +973,59 @@ class LAMAvatarController {
 
   // FLAME LBS 安全上限。これを超えるとメッシュ数値爆発
   private static readonly SAFE_MAX = 0.7;
-  // 口の動き上限（自然な範囲に制限）
-  private static readonly JAW_MAX = 0.30;   // 顎の最大開き
-  private static readonly MOUTH_MAX = 0.20; // 下唇の最大移動
+  // 旧2ch制限の口の動き上限（SDK全52ch対応判明により不要 → JAW_MAX/MOUTH_MAXは未使用）
+  // private static readonly JAW_MAX = 0.30;
+  // private static readonly MOUTH_MAX = 0.20;
+  private sdkInfoLogged = false; // SDK内部情報のワンタイムログ
+
+  /**
+   * SDK 内部情報をログ出力（初回のみ）
+   * morphTargetDictionary, bsCount, useFlame 等を確認
+   */
+  private logSdkInternals(): void {
+    if (this.sdkInfoLogged) return;
+    this.sdkInfoLogged = true;
+
+    try {
+      const r = this.renderer;
+      console.log('=== SDK INTERNALS ===');
+      console.log(`[SDK] useFlame = ${r?.useFlame}`);
+      console.log(`[SDK] viewer.useFlame = ${r?.viewer?.useFlame}`);
+
+      const splatMesh = r?.viewer?.splatMesh;
+      if (splatMesh) {
+        console.log(`[SDK] expressionBSNum = ${splatMesh.expressionBSNum}`);
+        console.log(`[SDK] gaussianSplatCount = ${splatMesh.gaussianSplatCount}`);
+        console.log(`[SDK] useFlameModel = ${splatMesh.useFlameModel}`);
+
+        const dict = splatMesh.morphTargetDictionary;
+        if (dict) {
+          const keys = Object.keys(dict);
+          console.log(`[SDK] morphTargetDictionary: ${keys.length} entries`);
+          keys.forEach((k, i) => {
+            console.log(`[SDK]   [${dict[k]}] ${k}`);
+          });
+        } else {
+          console.log('[SDK] morphTargetDictionary: null (not yet built)');
+        }
+
+        // bsCount uniform
+        const bsCount = splatMesh.material?.uniforms?.bsCount?.value;
+        console.log(`[SDK] bsCount uniform = ${bsCount}`);
+
+        // boneTexture size
+        const boneTexSize = splatMesh.material?.uniforms?.boneTextureSize?.value;
+        console.log(`[SDK] boneTextureSize = ${boneTexSize?.x}x${boneTexSize?.y}`);
+
+        // flameModelTexture size
+        const flameTexSize = splatMesh.material?.uniforms?.flameModelTextureSize?.value;
+        console.log(`[SDK] flameModelTextureSize = ${flameTexSize?.x}x${flameTexSize?.y}`);
+      }
+      console.log('=== END SDK INTERNALS ===');
+    } catch (e) {
+      console.warn('[SDK] Failed to log internals:', e);
+    }
+  }
 
   /**
    * SDK汚染対策: SDKが返却オブジェクトにFLAME LBS計算結果を書き戻す場合、
@@ -1095,8 +1148,10 @@ class LAMAvatarController {
             this.expressionData[name] = frame[name] * fadeAlpha;
           });
 
-          // ★ SDK制約回避: 母音チャンネル → jaw/lowerDown 合成
-          this.remapForSdkLimitation(this.expressionData);
+          // ★ SDK全52ch対応判明: remapForSdkLimitation() は不要
+          // SDKは morphTargetDictionary の全キーを boneTexture に書き込み、
+          // シェーダーが for(i < bsCount) で全チャンネル適用する。
+          // A2E の52次元出力をそのまま渡す。
 
           if (frameIndex !== this.lastLoggedFrameIndex && frameIndex % 10 === 0) {
             this.lastLoggedFrameIndex = frameIndex;
@@ -1105,7 +1160,8 @@ class LAMAvatarController {
               `[LAM TTS-Sync] Frame ${frameIndex}/${this.frameBuffer.length}: ` +
               `jaw=${(f['jawOpen']||0).toFixed(3)}, mouth=${(f['mouthLowerDownLeft']||0).toFixed(3)}, ` +
               `funnel=${(f['mouthFunnel']||0).toFixed(3)}, smile=${(f['mouthSmileLeft']||0).toFixed(3)}, ` +
-              `stretch=${(f['mouthStretchLeft']||0).toFixed(3)}, time=${effectiveTimeMs.toFixed(0)}ms`
+              `pucker=${(f['mouthPucker']||0).toFixed(3)}, stretch=${(f['mouthStretchLeft']||0).toFixed(3)}, ` +
+              `time=${effectiveTimeMs.toFixed(0)}ms`
             );
           }
 
@@ -1123,7 +1179,7 @@ class LAMAvatarController {
             Object.keys(lastFrame).forEach((name: string) => {
               this.expressionData[name] = lastFrame[name];
             });
-            this.remapForSdkLimitation(this.expressionData);
+            // remapForSdkLimitation 不要: SDK全52ch対応
           }
           if (!this.externalTtsPlayer.ended) {
             return this.safeReturnExpression();

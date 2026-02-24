@@ -352,35 +352,36 @@ export class ConciergeController extends CoreController {
   // SDK (gaussian-splat-renderer-for-lam) が jawOpen と mouthLowerDown の2値しか
   // FLAME メッシュ変形に使わない。LAMAvatar.astro は全52次元を返しているが SDK が無視。
   // → LAMAvatar.astro 側で remapForSdkLimitation() を追加し、
-  //   母音チャンネル(smile/funnel/pucker/stretch)を jaw/lowerDown に合成。
-  //   ここでのブースト値は合成の入力として使われる。
+  //   SDK全52ch対応判明: remapForSdkLimitation 廃止、全チャンネル直接パス。
+  //   MOUTH_AMPLIFY は A2E 出力の調整のみ（SDKは全ch適用する）。
   //
-  // A2Eモデルの出力特性: jawOpen弱(avg~0.05), lowerDown過剰(raw~0.84)
-  // → lowerDown を抑制して jawOpen:lowerDown のバランスを是正
-  // → 母音チャンネルをブーストして remapForSdkLimitation() の合成精度を上げる
+  // A2Eモデルの出力特性: jawOpen弱(avg~0.05), lowerDown強(raw~0.84)
+  // SDK は全52チャンネルを morphTargetDictionary 経由で boneTexture に書き込み、
+  // シェーダーが for(i < bsCount) で全チャンネル適用する。
+  // → 増幅は最小限にし、A2E の自然な出力を活かす
   // ※全値は BLENDSHAPE_SAFE_MAX(0.7) でクランプ（FLAME LBS 数値安定のため）
   private static readonly MOUTH_AMPLIFY: { [key: string]: number } = {
-    // --- 現在レンダラーに到達する値 ---
-    'jawOpen': 1.0,                // 等倍: リマップ側のJAW_MAXキャップで最大口開きを制限
-    'mouthLowerDownLeft': 0.25,    // 強抑制: A2E過剰出力(raw~0.84)→ jaw>mouth比を実現
-    'mouthLowerDownRight': 0.25,   // 強抑制: 同上
-    // --- 母音チャンネル（remapForSdkLimitation で jaw/lowerDown に合成される） ---
-    'mouthFunnel': 2.0,            // う・お の唇突き出し（raw~0.12→0.24）
-    'mouthPucker': 1.0,            // う の唇すぼめ（raw~0.35、ブースト不要）
-    'mouthSmileLeft': 3.0,         // い の口角引き（raw~0.04→0.12）
-    'mouthSmileRight': 3.0,        // い の口角引き
-    'mouthStretchLeft': 2.0,       // え の口横伸ばし
-    'mouthStretchRight': 2.0,      // え の口横伸ばし
+    // --- 主要チャンネル: SDKが直接適用 ---
+    'jawOpen': 1.5,                // 軽ブースト: A2E出力が弱め(avg~0.05, max~0.28)
+    'mouthLowerDownLeft': 1.0,     // 等倍: SDKが直接使用するため抑制不要
+    'mouthLowerDownRight': 1.0,    // 等倍: 同上
+    // --- 母音チャンネル: SDKが直接適用（remapForSdkLimitation不要） ---
+    'mouthFunnel': 1.5,            // 軽ブースト: う・お の唇突き出し（raw max~0.37）
+    'mouthPucker': 1.0,            // 等倍: う のすぼめ（raw max~0.49、十分な値）
+    'mouthSmileLeft': 2.0,         // ブースト: い の口角引き（raw max~0.04、弱い）
+    'mouthSmileRight': 2.0,        // ブースト: い の口角引き
+    'mouthStretchLeft': 1.5,       // 軽ブースト: え の口横伸ばし
+    'mouthStretchRight': 1.5,      // 軽ブースト: え の口横伸ばし
     // --- 補助チャンネル ---
     'mouthClose': 1.0,
-    'mouthUpperUpLeft': 0.5,       // 抑制: 過剰傾向
-    'mouthUpperUpRight': 0.5,
+    'mouthUpperUpLeft': 1.0,
+    'mouthUpperUpRight': 1.0,
     'mouthDimpleLeft': 1.0,
     'mouthDimpleRight': 1.0,
-    'mouthRollLower': 0.9,
-    'mouthRollUpper': 0.9,
-    'mouthShrugLower': 0.9,
-    'mouthShrugUpper': 0.9,
+    'mouthRollLower': 1.0,
+    'mouthRollUpper': 1.0,
+    'mouthShrugLower': 1.0,
+    'mouthShrugUpper': 1.0,
   };
 
   // FLAME LBS の安全範囲。これを超えるとメッシュが破綻（数値爆発）する
