@@ -454,17 +454,37 @@ export class ConciergeController extends CoreController {
       }
       const outputFrameRate = srcFrameRate * 2; // 30→60fps
 
-      // Step 2.5: 時間軸スムージング（口周りの急激な変化を緩和）
-      // EMA (指数移動平均) α=0.85 → 前フレームの影響15%で軽くスムージング
-      // ※α低すぎると音素遷移が鈍る。0.85は微細なノイズ除去のみ
-      const smoothAlpha = 0.85;
+      // Step 2.3: 動的範囲圧縮（セグメント内の振幅ムラを平準化）
+      // A2E出力は音声一定でも 0.001〜0.45 と乱高下する。
+      // 弱いフレーム（セグメント平均以下）を平均方向に引き上げ、
+      // 強いフレームはそのまま → 「ごにょごにょ⇔はっきり」の差を圧縮
       const mouthKeys = Object.keys(ConciergeController.MOUTH_AMPLIFY);
+      const compressionFactor = 0.4; // 弱フレームを平均方向に40%引き上げ
+      for (const key of mouthKeys) {
+        const values = interpolatedFrames.map(f => f[key] || 0);
+        const activeValues = values.filter(v => v > 0.01);
+        if (activeValues.length < 3) continue;
+        const mean = activeValues.reduce((a, b) => a + b) / activeValues.length;
+        for (const frame of interpolatedFrames) {
+          if (frame[key] !== undefined && frame[key] > 0.01 && frame[key] < mean) {
+            // 弱いフレームのみ引き上げ（強いフレームは維持）
+            frame[key] = frame[key] * (1 - compressionFactor) + mean * compressionFactor;
+          }
+        }
+      }
+
+      // Step 2.5: 非対称EMAスムージング
+      // 口の開き（attack）は素早く応答、閉じ（decay）はゆっくり減衰。
+      // → 短い"死区間"（A2Eが0に落ちる瞬間）で口が急に閉じるのを防ぐ
+      const attackAlpha = 0.82; // 開方向: 素早い応答（音素遷移を維持）
+      const decayAlpha = 0.45;  // 閉方向: ゆるやかな減衰（急な閉口を防止）
       for (let i = 1; i < interpolatedFrames.length; i++) {
         const prev = interpolatedFrames[i - 1];
         const curr = interpolatedFrames[i];
         for (const key of mouthKeys) {
           if (curr[key] !== undefined && prev[key] !== undefined) {
-            curr[key] = prev[key] * (1 - smoothAlpha) + curr[key] * smoothAlpha;
+            const alpha = curr[key] >= prev[key] ? attackAlpha : decayAlpha;
+            curr[key] = prev[key] * (1 - alpha) + curr[key] * alpha;
           }
         }
       }
