@@ -408,6 +408,31 @@ class LAMAvatarController {
   private getExpCallCount = 0;
   private lastLoggedFrameIndex = -1;
 
+  // FLAME LBS 安全上限。これを超えるとメッシュ数値爆発
+  private static readonly SAFE_MAX = 0.7;
+
+  /**
+   * SDK汚染対策: SDKが返却オブジェクトにFLAME LBS計算結果を書き戻す場合、
+   * 数値爆発した値(jaw=5億等)がフィードバックループで蓄積する。
+   * 毎フレーム開始時にサニタイズして断ち切る。
+   */
+  private sanitizeExpressionData(): void {
+    for (const key of Object.keys(this.expressionData)) {
+      const v = this.expressionData[key];
+      if (typeof v !== 'number' || !isFinite(v) || v > 1.0 || v < -1.0) {
+        this.expressionData[key] = 0;
+      }
+    }
+  }
+
+  /**
+   * SDKにexpression dataの安全なコピーを返す。
+   * SDKが書き戻してもthis.expressionDataを汚染しない。
+   */
+  private safeReturnExpression(): ExpressionData {
+    return { ...this.expressionData };
+  }
+
   /**
    * SDK制約の回避: 母音チャンネル → jawOpen/lowerDown 合成
    *
@@ -416,12 +441,7 @@ class LAMAvatarController {
    * 他の母音チャンネル（smile, funnel, pucker, stretch）の情報を
    * この2チャンネルに合成して、母音の口形状差を近似的に表現する。
    *
-   * 合成後の期待値（A2Eブースト後）:
-   *   あ: jaw≈0.70, mouth≈0.42 (大きく開口)
-   *   い: jaw≈0.11, mouth≈0.07 (微小な動き — smile寄与)
-   *   う: jaw≈0.18, mouth≈0.00 (顎のみ — funnel/pucker寄与)
-   *   え: jaw≈0.20, mouth≈0.15 (中程度 — stretch/smile寄与)
-   *   お: jaw≈0.21, mouth≈0.00 (顎のみ — funnel寄与、う より大)
+   * ※重みは控えめに設定（女性キャラの自然な口の動き範囲に収める）
    */
   private remapForSdkLimitation(data: ExpressionData): ExpressionData {
     const jaw = data['jawOpen'] || 0;
@@ -433,28 +453,22 @@ class LAMAvatarController {
     const smile = ((data['mouthSmileLeft'] || 0) + (data['mouthSmileRight'] || 0)) * 0.5;
     const stretch = ((data['mouthStretchLeft'] || 0) + (data['mouthStretchRight'] || 0)) * 0.5;
 
-    // jawOpen 合成: 母音チャンネルの寄与を加算
-    //   い: smile → 口角引きに伴う顎の微動
-    //   う/お: funnel/pucker → 唇突き出し・すぼめの顎動作
-    //   え: stretch → 口横伸ばしの顎動作
-    const compositeJaw = Math.min(0.7,
+    // jawOpen 合成: 控えめな重みで母音チャンネルの寄与を加算
+    const compositeJaw = Math.min(LAMAvatarController.SAFE_MAX,
       jaw
-      + smile * 0.5
-      + funnel * 0.35
-      + pucker * 0.2
-      + stretch * 0.3
+      + smile * 0.3
+      + funnel * 0.2
+      + pucker * 0.12
+      + stretch * 0.2
     );
 
-    // mouthLowerDown 合成: 母音特性を下唇の動きに変換
-    //   い: smile → 口角引き → lowerDown に反映（横方向を縦で近似）
-    //   え: stretch → 口横伸ばし → lowerDown に反映
-    //   う: pucker → 唇すぼめ → lowerDown を抑制（唇が前に出る方向）
-    const compositeLowerDown = Math.min(0.7,
+    // mouthLowerDown 合成: 母音特性を下唇の動きに変換（控えめ）
+    const compositeLowerDown = Math.min(LAMAvatarController.SAFE_MAX,
       Math.max(0,
         lowerDown
-        + smile * 0.6
-        + stretch * 0.4
-        - pucker * 0.15
+        + smile * 0.35
+        + stretch * 0.25
+        - pucker * 0.1
       )
     );
 
@@ -471,6 +485,11 @@ class LAMAvatarController {
    */
   public getExpressionData() {
     this.getExpCallCount++;
+
+    // ★ SDK汚染対策: SDKが前フレームの返却オブジェクト経由で
+    //   FLAME LBS の計算結果を書き戻す場合がある（jaw=5億等）。
+    //   フィードバックループを断ち切るため毎フレーム開始時にサニタイズ。
+    this.sanitizeExpressionData();
 
     // Test mode: loop test data
     if (this.testMode && this.testBsData) {
@@ -489,7 +508,7 @@ class LAMAvatarController {
         const jaw = this.expressionData['jawOpen'] || 0;
         console.log(`[LAM TEST] Frame ${frameIndex}/${length}: jaw=${jaw.toFixed(3)}`);
       }
-      return this.expressionData;
+      return this.safeReturnExpression();
     }
 
     // TTS sync mode: index frameBuffer by ttsPlayer.currentTime
@@ -531,7 +550,7 @@ class LAMAvatarController {
             this.setChatState('Responding');
           }
           this.ttsLastCurrentTime = this.externalTtsPlayer.currentTime;
-          return this.expressionData;
+          return this.safeReturnExpression();
 
         } else if (frameIndex >= this.frameBuffer.length) {
           // Past buffer end - hold last frame while TTS still playing
@@ -544,7 +563,7 @@ class LAMAvatarController {
             this.remapForSdkLimitation(this.expressionData);
           }
           if (!this.externalTtsPlayer.ended) {
-            return this.expressionData;
+            return this.safeReturnExpression();
           }
         }
       }
@@ -565,7 +584,7 @@ class LAMAvatarController {
             Object.keys(this.expressionData).forEach((name: string) => {
               this.expressionData[name] = (this.expressionData[name] || 0) * fadeOutAlpha;
             });
-            return this.expressionData;
+            return this.safeReturnExpression();
           }
 
           // Fade-out complete
@@ -583,7 +602,7 @@ class LAMAvatarController {
       console.log(`[LAM Idle] buffer=${this.frameBuffer.length}, ttsActive=${this.ttsActive}, ttsTime=${ttsTime}s`);
     }
 
-    return this.expressionData;
+    return this.safeReturnExpression();
   }
 
   public setExpressionData(data: ExpressionData) {
