@@ -361,25 +361,22 @@ export class ConciergeController extends CoreController {
   // → 増幅は最小限にし、A2E の自然な出力を活かす
   // ※全値は BLENDSHAPE_SAFE_MAX(0.7) でクランプ（FLAME LBS 数値安定のため）
   //
-  // 母音分化 + 振幅チューニング:
-  //   動的範囲圧縮（双方向）がピークを抑え、谷を引き上げるため、
-  //   amplifyを高めに設定しても安全。圧縮なしだとピーク爆発するが、
-  //   圧縮ありで平均方向に引き寄せられる。
-  //
-  //   日本語母音の視認性: jaw+lowerDown で口の開き、
-  //   smile/funnel/pucker/stretch で形状分化
+  // 自然な口の動きチューニング:
+  //   エネルギー正規化でフレーム振幅を均一化。
+  //   amplifyは「形状の可視性」のみ担当（振幅はエネルギー正規化が制御）。
+  //   過度な誇張を避け、自然な動きを優先。
   private static readonly MOUTH_AMPLIFY: { [key: string]: number } = {
     // --- 主要チャンネル（口の開き） ---
-    'jawOpen': 2.0,                // 強ブースト: raw avg~0.06→eff~0.12。圧縮でピーク抑制
-    'mouthLowerDownLeft': 0.5,     // 中抑制: raw~0.84→eff~0.42。圧縮でピーク→0.30程度
-    'mouthLowerDownRight': 0.5,    // 中抑制: 同上
+    'jawOpen': 1.5,                // 中ブースト: raw avg~0.06。自然な開口
+    'mouthLowerDownLeft': 0.4,     // 中抑制: raw~0.84→eff~0.34
+    'mouthLowerDownRight': 0.4,    // 中抑制: 同上
     // --- 母音チャンネル: 日本語5母音の形状分化 ---
-    'mouthFunnel': 2.5,            // 強ブースト: う・お の唇突き出し
+    'mouthFunnel': 2.0,            // ブースト: う・お の唇突き出し
     'mouthPucker': 1.5,            // 軽ブースト: う のすぼめ
-    'mouthSmileLeft': 3.5,         // 強ブースト: い の口角引き
-    'mouthSmileRight': 3.5,        // 強ブースト: い の口角引き
-    'mouthStretchLeft': 2.0,       // ブースト: え の口横伸ばし
-    'mouthStretchRight': 2.0,      // ブースト: え の口横伸ばし
+    'mouthSmileLeft': 3.0,         // ブースト: い の口角引き（raw弱いため高め）
+    'mouthSmileRight': 3.0,        // ブースト: い の口角引き
+    'mouthStretchLeft': 1.8,       // 軽ブースト: え の口横伸ばし
+    'mouthStretchRight': 1.8,      // 軽ブースト: え の口横伸ばし
     // --- 補助チャンネル ---
     'mouthClose': 1.0,
     'mouthUpperUpLeft': 1.0,
@@ -466,8 +463,8 @@ export class ConciergeController extends CoreController {
       //   全体の振幅だけをfloor〜ceilingに収める。
       //   → "あ"と"い"の区別が維持される
       const mouthKeys = Object.keys(ConciergeController.MOUTH_AMPLIFY);
-      const energyFloor = 0.35;   // 発話中の最低口エネルギー（これ以下→スケールアップ）
-      const energyCeiling = 1.8;  // 最大口エネルギー（これ以上→スケールダウン）
+      const energyFloor = 0.15;   // 発話中の最低口エネルギー（低め→自然な強弱を残す）
+      const energyCeiling = 1.2;  // 最大口エネルギー（低め→ピーク誇張を抑制）
       for (const frame of interpolatedFrames) {
         let energy = 0;
         for (const key of mouthKeys) {
@@ -492,8 +489,8 @@ export class ConciergeController extends CoreController {
       // Step 2.5: 非対称EMAスムージング
       // 口の開き（attack）は素早く応答、閉じ（decay）はゆっくり減衰。
       // → 短い"死区間"（A2Eが0に落ちる瞬間）で口が急に閉じるのを防ぐ
-      const attackAlpha = 0.82; // 開方向: 素早い応答（音素遷移を維持）
-      const decayAlpha = 0.45;  // 閉方向: ゆるやかな減衰（急な閉口を防止）
+      const attackAlpha = 0.60; // 開方向: やや緩やか（自然な遷移、パクパク防止）
+      const decayAlpha = 0.50;  // 閉方向: ゆるやかな減衰（急な閉口を防止）
       for (let i = 1; i < interpolatedFrames.length; i++) {
         const prev = interpolatedFrames[i - 1];
         const curr = interpolatedFrames[i];
