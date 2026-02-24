@@ -361,22 +361,24 @@ export class ConciergeController extends CoreController {
   // → 増幅は最小限にし、A2E の自然な出力を活かす
   // ※全値は BLENDSHAPE_SAFE_MAX(0.7) でクランプ（FLAME LBS 数値安定のため）
   //
-  // 母音分化チューニング:
-  //   lowerDown が全音素で支配的 → 全てが「あ」に見える問題の対策:
-  //   1) lowerDown を 0.3x に強く抑制（raw ~0.84 → effective ~0.25）
-  //   2) 母音固有チャンネルを大きくブースト（smile, funnel, stretch）
-  //   → 相対的に母音形状が目立つようにする
+  // 母音分化 + 振幅チューニング:
+  //   動的範囲圧縮（双方向）がピークを抑え、谷を引き上げるため、
+  //   amplifyを高めに設定しても安全。圧縮なしだとピーク爆発するが、
+  //   圧縮ありで平均方向に引き寄せられる。
+  //
+  //   日本語母音の視認性: jaw+lowerDown で口の開き、
+  //   smile/funnel/pucker/stretch で形状分化
   private static readonly MOUTH_AMPLIFY: { [key: string]: number } = {
-    // --- 主要チャンネル ---
-    'jawOpen': 1.0,                // 等倍: raw max~0.40（あ の主要ドライバ）
-    'mouthLowerDownLeft': 0.3,     // 強抑制: raw~0.84→eff~0.25。他母音ch対比を改善
-    'mouthLowerDownRight': 0.3,    // 強抑制: 同上
+    // --- 主要チャンネル（口の開き） ---
+    'jawOpen': 2.0,                // 強ブースト: raw avg~0.06→eff~0.12。圧縮でピーク抑制
+    'mouthLowerDownLeft': 0.5,     // 中抑制: raw~0.84→eff~0.42。圧縮でピーク→0.30程度
+    'mouthLowerDownRight': 0.5,    // 中抑制: 同上
     // --- 母音チャンネル: 日本語5母音の形状分化 ---
-    'mouthFunnel': 2.5,            // 強ブースト: う・お の唇突き出し（raw max~0.18→eff~0.45）
-    'mouthPucker': 1.5,            // 軽ブースト: う のすぼめ（raw max~0.43→eff~0.65）
-    'mouthSmileLeft': 3.5,         // 強ブースト: い の口角引き（raw max~0.12→eff~0.42）
+    'mouthFunnel': 2.5,            // 強ブースト: う・お の唇突き出し
+    'mouthPucker': 1.5,            // 軽ブースト: う のすぼめ
+    'mouthSmileLeft': 3.5,         // 強ブースト: い の口角引き
     'mouthSmileRight': 3.5,        // 強ブースト: い の口角引き
-    'mouthStretchLeft': 2.0,       // ブースト: え の口横伸ばし（raw max~0.23→eff~0.46）
+    'mouthStretchLeft': 2.0,       // ブースト: え の口横伸ばし
     'mouthStretchRight': 2.0,      // ブースト: え の口横伸ばし
     // --- 補助チャンネル ---
     'mouthClose': 1.0,
@@ -454,20 +456,21 @@ export class ConciergeController extends CoreController {
       }
       const outputFrameRate = srcFrameRate * 2; // 30→60fps
 
-      // Step 2.3: 動的範囲圧縮（セグメント内の振幅ムラを平準化）
-      // A2E出力は音声一定でも 0.001〜0.45 と乱高下する。
-      // 弱いフレーム（セグメント平均以下）を平均方向に引き上げ、
-      // 強いフレームはそのまま → 「ごにょごにょ⇔はっきり」の差を圧縮
+      // Step 2.3: 双方向動的範囲圧縮（振幅ムラを均一化）
+      // A2E出力の乱高下を平準化:
+      //   弱フレーム → 平均方向に引き上げ（ごにょごにょ防止）
+      //   強フレーム → 平均方向に引き下げ（ピーク抑制）
+      // → amplifyを高めに設定しても安全。全体的に均一な口の動きになる
       const mouthKeys = Object.keys(ConciergeController.MOUTH_AMPLIFY);
-      const compressionFactor = 0.4; // 弱フレームを平均方向に40%引き上げ
+      const compressionFactor = 0.5; // 50%を平均方向に寄せる（強めの圧縮）
       for (const key of mouthKeys) {
         const values = interpolatedFrames.map(f => f[key] || 0);
         const activeValues = values.filter(v => v > 0.01);
         if (activeValues.length < 3) continue;
         const mean = activeValues.reduce((a, b) => a + b) / activeValues.length;
         for (const frame of interpolatedFrames) {
-          if (frame[key] !== undefined && frame[key] > 0.01 && frame[key] < mean) {
-            // 弱いフレームのみ引き上げ（強いフレームは維持）
+          if (frame[key] !== undefined && frame[key] > 0.01) {
+            // 双方向: 弱も強も平均方向に寄せる
             frame[key] = frame[key] * (1 - compressionFactor) + mean * compressionFactor;
           }
         }
