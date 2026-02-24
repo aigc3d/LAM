@@ -351,24 +351,24 @@ export class ConciergeController extends CoreController {
   // 顎の開きと下唇の引き下げを強く抑制して自然な口元を実現。
   // <1.0 = 抑制（元のA2E出力より控えめ）, >1.0 = 強調
   private static readonly MOUTH_AMPLIFY: { [key: string]: number } = {
-    'jawOpen': 0.55,               // 強く抑制: 顎が不自然に下がるのを防止（元1.4）
-    'mouthClose': 0.9,             // やや抑制（元1.3）
-    'mouthFunnel': 1.1,            // う・お の区別を保持（元1.5）
-    'mouthPucker': 1.1,            // う の区別を保持（元1.5）
-    'mouthSmileLeft': 1.05,        // い の区別を保持（元1.3）
-    'mouthSmileRight': 1.05,       // い の区別を保持（元1.3）
-    'mouthStretchLeft': 1.0,       // え の区別を保持（元1.2）
-    'mouthStretchRight': 1.0,      // え の区別を保持（元1.2）
-    'mouthLowerDownLeft': 0.5,     // 強く抑制: 下唇の引き下げ過ぎ防止（元1.3）
-    'mouthLowerDownRight': 0.5,    // 強く抑制: 下唇の引き下げ過ぎ防止（元1.3）
-    'mouthUpperUpLeft': 0.7,       // 抑制: 上唇（元1.2）
-    'mouthUpperUpRight': 0.7,      // 抑制: 上唇（元1.2）
-    'mouthDimpleLeft': 0.9,        // やや抑制（元1.1）
-    'mouthDimpleRight': 0.9,       // やや抑制（元1.1）
-    'mouthRollLower': 0.85,        // 抑制（元1.2）
-    'mouthRollUpper': 0.85,        // 抑制（元1.2）
-    'mouthShrugLower': 0.85,       // 抑制（元1.2）
-    'mouthShrugUpper': 0.85,       // 抑制（元1.2）
+    'jawOpen': 0.85,               // やや抑制: 自然な顎の開き（元1.4→0.55は抑制過多）
+    'mouthClose': 1.0,             // 中立（元1.3）
+    'mouthFunnel': 1.2,            // う・お の区別を強調（元1.5）
+    'mouthPucker': 1.2,            // う の区別を強調（元1.5）
+    'mouthSmileLeft': 1.15,        // い の区別を強調（元1.3）
+    'mouthSmileRight': 1.15,       // い の区別を強調（元1.3）
+    'mouthStretchLeft': 1.1,       // え の区別を保持（元1.2）
+    'mouthStretchRight': 1.1,      // え の区別を保持（元1.2）
+    'mouthLowerDownLeft': 0.75,    // 抑制: 下唇の引き下げ（元1.3→0.5は抑制過多）
+    'mouthLowerDownRight': 0.75,   // 抑制: 下唇の引き下げ（元1.3→0.5は抑制過多）
+    'mouthUpperUpLeft': 0.85,      // やや抑制: 上唇（元1.2）
+    'mouthUpperUpRight': 0.85,     // やや抑制: 上唇（元1.2）
+    'mouthDimpleLeft': 1.0,        // 中立（元1.1）
+    'mouthDimpleRight': 1.0,       // 中立（元1.1）
+    'mouthRollLower': 0.9,         // やや抑制（元1.2）
+    'mouthRollUpper': 0.9,         // やや抑制（元1.2）
+    'mouthShrugLower': 0.9,        // やや抑制（元1.2）
+    'mouthShrugUpper': 0.9,        // やや抑制（元1.2）
   };
 
   /**
@@ -432,8 +432,8 @@ export class ConciergeController extends CoreController {
       const outputFrameRate = srcFrameRate * 2; // 30→60fps
 
       // Step 2.5: 時間軸スムージング（口周りの急激な変化を緩和）
-      // EMA (指数移動平均) α=0.6 → 前フレームの影響40%を残して滑らかに遷移
-      const smoothAlpha = 0.6;
+      // EMA (指数移動平均) α=0.7 → 前フレームの影響30%を残して滑らかに遷移
+      const smoothAlpha = 0.7;
       const mouthKeys = Object.keys(ConciergeController.MOUTH_AMPLIFY);
       for (let i = 1; i < interpolatedFrames.length; i++) {
         const prev = interpolatedFrames[i - 1];
