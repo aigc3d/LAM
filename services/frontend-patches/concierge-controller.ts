@@ -367,16 +367,16 @@ export class ConciergeController extends CoreController {
   //   過度な誇張を避け、自然な動きを優先。
   private static readonly MOUTH_AMPLIFY: { [key: string]: number } = {
     // --- 主要チャンネル（口の開き） ---
-    'jawOpen': 1.5,                // 中ブースト: raw avg~0.06。自然な開口
-    'mouthLowerDownLeft': 0.4,     // 中抑制: raw~0.84→eff~0.34
-    'mouthLowerDownRight': 0.4,    // 中抑制: 同上
+    'jawOpen': 1.7,                // 中ブースト: raw avg~0.06。自然な開口
+    'mouthLowerDownLeft': 0.45,    // 中抑制: raw~0.84→eff~0.38
+    'mouthLowerDownRight': 0.45,   // 中抑制: 同上
     // --- 母音チャンネル: 日本語5母音の形状分化 ---
-    'mouthFunnel': 2.0,            // ブースト: う・お の唇突き出し
+    'mouthFunnel': 2.2,            // ブースト: う・お の唇突き出し
     'mouthPucker': 1.5,            // 軽ブースト: う のすぼめ
-    'mouthSmileLeft': 3.0,         // ブースト: い の口角引き（raw弱いため高め）
-    'mouthSmileRight': 3.0,        // ブースト: い の口角引き
-    'mouthStretchLeft': 1.8,       // 軽ブースト: え の口横伸ばし
-    'mouthStretchRight': 1.8,      // 軽ブースト: え の口横伸ばし
+    'mouthSmileLeft': 3.2,         // ブースト: い の口角引き（raw弱いため高め）
+    'mouthSmileRight': 3.2,        // ブースト: い の口角引き
+    'mouthStretchLeft': 1.9,       // 軽ブースト: え の口横伸ばし
+    'mouthStretchRight': 1.9,      // 軽ブースト: え の口横伸ばし
     // --- 補助チャンネル ---
     'mouthClose': 1.0,
     'mouthUpperUpLeft': 1.0,
@@ -463,8 +463,8 @@ export class ConciergeController extends CoreController {
       //   全体の振幅だけをfloor〜ceilingに収める。
       //   → "あ"と"い"の区別が維持される
       const mouthKeys = Object.keys(ConciergeController.MOUTH_AMPLIFY);
-      const energyFloor = 0.15;   // 発話中の最低口エネルギー（低め→自然な強弱を残す）
-      const energyCeiling = 1.2;  // 最大口エネルギー（低め→ピーク誇張を抑制）
+      const energyFloor = 0.25;   // 発話中の最低口エネルギー（弱フレーム引き上げ）
+      const energyCeiling = 1.5;  // 最大口エネルギー（ピーク抑制しつつ余裕あり）
       for (const frame of interpolatedFrames) {
         let energy = 0;
         for (const key of mouthKeys) {
@@ -489,8 +489,8 @@ export class ConciergeController extends CoreController {
       // Step 2.5: 非対称EMAスムージング
       // 口の開き（attack）は素早く応答、閉じ（decay）はゆっくり減衰。
       // → 短い"死区間"（A2Eが0に落ちる瞬間）で口が急に閉じるのを防ぐ
-      const attackAlpha = 0.60; // 開方向: やや緩やか（自然な遷移、パクパク防止）
-      const decayAlpha = 0.50;  // 閉方向: ゆるやかな減衰（急な閉口を防止）
+      const attackAlpha = 0.70; // 開方向: 適度に追従（もごもご防止 + パクパク防止の中間）
+      const decayAlpha = 0.48;  // 閉方向: ゆるやかな減衰（急な閉口を防止）
       for (let i = 1; i < interpolatedFrames.length; i++) {
         const prev = interpolatedFrames[i - 1];
         const curr = interpolatedFrames[i];
