@@ -347,28 +347,28 @@ export class ConciergeController extends CoreController {
   }
 
   // ★ 口周りblendshapeのスケール係数
-  // 女性キャラ向け: 全体的に控えめ。母音の区別(あいうえお)は保ちつつ、
-  // 顎の開きと下唇の引き下げを強く抑制して自然な口元を実現。
-  // <1.0 = 抑制（元のA2E出力より控えめ）, >1.0 = 強調
+  // 女性キャラ向け: 顎の開きは控えめ、母音の形状差(あいうえお)は強調。
+  // A2Eモデルの日本語出力は母音区別が弱い（smile raw~0.04, funnel raw~0.12）ため、
+  // 母音形状チャンネルは大幅にブーストして補償する。
   private static readonly MOUTH_AMPLIFY: { [key: string]: number } = {
-    'jawOpen': 0.85,               // やや抑制: 自然な顎の開き（元1.4→0.55は抑制過多）
-    'mouthClose': 1.0,             // 中立（元1.3）
-    'mouthFunnel': 1.2,            // う・お の区別を強調（元1.5）
-    'mouthPucker': 1.2,            // う の区別を強調（元1.5）
-    'mouthSmileLeft': 1.15,        // い の区別を強調（元1.3）
-    'mouthSmileRight': 1.15,       // い の区別を強調（元1.3）
-    'mouthStretchLeft': 1.1,       // え の区別を保持（元1.2）
-    'mouthStretchRight': 1.1,      // え の区別を保持（元1.2）
-    'mouthLowerDownLeft': 0.75,    // 抑制: 下唇の引き下げ（元1.3→0.5は抑制過多）
-    'mouthLowerDownRight': 0.75,   // 抑制: 下唇の引き下げ（元1.3→0.5は抑制過多）
-    'mouthUpperUpLeft': 0.85,      // やや抑制: 上唇（元1.2）
-    'mouthUpperUpRight': 0.85,     // やや抑制: 上唇（元1.2）
-    'mouthDimpleLeft': 1.0,        // 中立（元1.1）
-    'mouthDimpleRight': 1.0,       // 中立（元1.1）
-    'mouthRollLower': 0.9,         // やや抑制（元1.2）
-    'mouthRollUpper': 0.9,         // やや抑制（元1.2）
-    'mouthShrugLower': 0.9,        // やや抑制（元1.2）
-    'mouthShrugUpper': 0.9,        // やや抑制（元1.2）
+    'jawOpen': 0.85,               // やや抑制: 自然な顎の開き
+    'mouthClose': 1.0,             // 中立
+    'mouthFunnel': 2.5,            // 大幅ブースト: う・お の唇突き出し（raw~0.12→0.30）
+    'mouthPucker': 2.5,            // 大幅ブースト: う の唇すぼめ
+    'mouthSmileLeft': 3.0,         // 大幅ブースト: い の口角引き（raw~0.04→0.12）
+    'mouthSmileRight': 3.0,        // 大幅ブースト: い の口角引き
+    'mouthStretchLeft': 2.0,       // ブースト: え の口横伸ばし
+    'mouthStretchRight': 2.0,      // ブースト: え の口横伸ばし
+    'mouthLowerDownLeft': 0.75,    // 抑制: 下唇の引き下げ
+    'mouthLowerDownRight': 0.75,   // 抑制: 下唇の引き下げ
+    'mouthUpperUpLeft': 0.85,      // やや抑制: 上唇
+    'mouthUpperUpRight': 0.85,     // やや抑制: 上唇
+    'mouthDimpleLeft': 1.0,        // 中立
+    'mouthDimpleRight': 1.0,       // 中立
+    'mouthRollLower': 0.9,         // やや抑制
+    'mouthRollUpper': 0.9,         // やや抑制
+    'mouthShrugLower': 0.9,        // やや抑制
+    'mouthShrugUpper': 0.9,        // やや抑制
   };
 
   /**
@@ -432,8 +432,9 @@ export class ConciergeController extends CoreController {
       const outputFrameRate = srcFrameRate * 2; // 30→60fps
 
       // Step 2.5: 時間軸スムージング（口周りの急激な変化を緩和）
-      // EMA (指数移動平均) α=0.7 → 前フレームの影響30%を残して滑らかに遷移
-      const smoothAlpha = 0.7;
+      // EMA (指数移動平均) α=0.85 → 前フレームの影響15%で軽くスムージング
+      // ※α低すぎると音素遷移が鈍る。0.85は微細なノイズ除去のみ
+      const smoothAlpha = 0.85;
       const mouthKeys = Object.keys(ConciergeController.MOUTH_AMPLIFY);
       for (let i = 1; i < interpolatedFrames.length; i++) {
         const prev = interpolatedFrames[i - 1];
@@ -448,15 +449,22 @@ export class ConciergeController extends CoreController {
       // Step 3: LAMAvatarにキュー投入
       lamController.queueExpressionFrames(interpolatedFrames, outputFrameRate);
 
-      // Step 4: 診断ログ（blendshape統計値）
-      const jawValues = rawFrames.map((f: { [k: string]: number }) => f['jawOpen'] || 0);
-      const funnelValues = rawFrames.map((f: { [k: string]: number }) => f['mouthFunnel'] || 0);
-      const smileValues = rawFrames.map((f: { [k: string]: number }) => f['mouthSmileLeft'] || 0);
-      const jawMax = Math.max(...jawValues);
-      const jawAvg = jawValues.reduce((a: number, b: number) => a + b, 0) / jawValues.length;
-      const funnelMax = Math.max(...funnelValues);
-      const smileMax = Math.max(...smileValues);
-      console.log(`[Concierge] Expression: ${rawFrames.length}→${interpolatedFrames.length} frames (${srcFrameRate}→${outputFrameRate}fps) | jaw: max=${jawMax.toFixed(3)} avg=${jawAvg.toFixed(3)} | funnel: max=${funnelMax.toFixed(3)} | smile: max=${smileMax.toFixed(3)}`);
+      // Step 4: 診断ログ（全母音チャンネルの統計値）
+      const stat = (key: string) => {
+        const vals = rawFrames.map((f: { [k: string]: number }) => f[key] || 0);
+        return { max: Math.max(...vals), avg: vals.reduce((a: number, b: number) => a + b, 0) / vals.length };
+      };
+      const jaw = stat('jawOpen');
+      const funnel = stat('mouthFunnel');
+      const pucker = stat('mouthPucker');
+      const smile = stat('mouthSmileLeft');
+      const stretch = stat('mouthStretchLeft');
+      const lowerDown = stat('mouthLowerDownLeft');
+      console.log(
+        `[Concierge] Expression: ${rawFrames.length}→${interpolatedFrames.length} frames (${srcFrameRate}→${outputFrameRate}fps)\n` +
+        `  jaw: max=${jaw.max.toFixed(3)} avg=${jaw.avg.toFixed(3)} | lowerDown: max=${lowerDown.max.toFixed(3)}\n` +
+        `  funnel: max=${funnel.max.toFixed(3)} | pucker: max=${pucker.max.toFixed(3)} | smile: max=${smile.max.toFixed(3)} | stretch: max=${stretch.max.toFixed(3)}`
+      );
     } else {
       console.warn(`[Concierge] No expression frames in TTS response (names=${!!expression?.names}, frames=${expression?.frames?.length || 0})`);
     }
