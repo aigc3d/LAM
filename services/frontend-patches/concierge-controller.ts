@@ -456,22 +456,35 @@ export class ConciergeController extends CoreController {
       }
       const outputFrameRate = srcFrameRate * 2; // 30→60fps
 
-      // Step 2.3: 双方向動的範囲圧縮（振幅ムラを均一化）
-      // A2E出力の乱高下を平準化:
-      //   弱フレーム → 平均方向に引き上げ（ごにょごにょ防止）
-      //   強フレーム → 平均方向に引き下げ（ピーク抑制）
-      // → amplifyを高めに設定しても安全。全体的に均一な口の動きになる
+      // Step 2.3: フレーム全体エネルギー正規化
+      // 旧方式（チャンネル個別圧縮）の問題:
+      //   各チャンネルを個別に平均に寄せると、母音の「形状比率」が壊れる。
+      //   例: "あ"(jaw高,smile低) と "い"(jaw低,smile高) が同じ形に見える
+      //
+      // 新方式: フレーム全体の「エネルギー」（全ch合計）を正規化。
+      //   チャンネル間の比率（=母音の形状）を保存したまま、
+      //   全体の振幅だけをfloor〜ceilingに収める。
+      //   → "あ"と"い"の区別が維持される
       const mouthKeys = Object.keys(ConciergeController.MOUTH_AMPLIFY);
-      const compressionFactor = 0.5; // 50%を平均方向に寄せる（強めの圧縮）
-      for (const key of mouthKeys) {
-        const values = interpolatedFrames.map(f => f[key] || 0);
-        const activeValues = values.filter(v => v > 0.01);
-        if (activeValues.length < 3) continue;
-        const mean = activeValues.reduce((a, b) => a + b) / activeValues.length;
-        for (const frame of interpolatedFrames) {
-          if (frame[key] !== undefined && frame[key] > 0.01) {
-            // 双方向: 弱も強も平均方向に寄せる
-            frame[key] = frame[key] * (1 - compressionFactor) + mean * compressionFactor;
+      const energyFloor = 0.35;   // 発話中の最低口エネルギー（これ以下→スケールアップ）
+      const energyCeiling = 1.8;  // 最大口エネルギー（これ以上→スケールダウン）
+      for (const frame of interpolatedFrames) {
+        let energy = 0;
+        for (const key of mouthKeys) {
+          energy += frame[key] || 0;
+        }
+        if (energy < 0.05) continue; // 真の無音フレームはスキップ
+        let scale = 1.0;
+        if (energy < energyFloor) {
+          scale = energyFloor / energy; // 弱→引き上げ
+        } else if (energy > energyCeiling) {
+          scale = energyCeiling / energy; // 強→引き下げ
+        }
+        if (scale !== 1.0) {
+          for (const key of mouthKeys) {
+            if (frame[key] !== undefined) {
+              frame[key] = Math.min(ConciergeController.BLENDSHAPE_SAFE_MAX, frame[key] * scale);
+            }
           }
         }
       }
