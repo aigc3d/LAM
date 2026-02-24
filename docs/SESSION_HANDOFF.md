@@ -89,25 +89,44 @@
 
 **未解決の技術的問題**: iPhone SE (A13/A15, 3-4GB RAM) で81,424 Gaussianのソートと描画が30FPSで回るか。iPhone 16 (A18)で35FPSなので、SE世代ではさらに厳しい可能性がある。
 
-### 1.4 SDK 2チャンネル制限（2026-02-24 発見・検証済み）
+### 1.4 SDK ブレンドシェイプ対応（2026-02-24 調査完了）
 
-**リップシンクの根本的ボトルネック**:
+**⚠️ 重要訂正**: 「2チャンネル制限」は **誤診** だった。SDKソース解析で全52チャンネル対応が判明。
 
-getExpressionData() で52次元全てを返しているが、SDK内部の Transform Feedback 頂点シェーダーが **jawOpen と mouthLowerDown の2チャンネルしか** FLAME expression blendshapes に適用していない。
+#### 判明した事実（SDK JS ソース逆解析）
 
 ```
-A2E出力 (52次元) → getExpressionData() (52キー返却) → SDK内部で2つだけ使用
-                                                          ↑ ボトルネック
+データフロー（useFlame == false の場合 ← デフォルト設定）:
+
+getExpressionData() ← LAMAvatar のコールバック（52チャンネル）
+    ↓ updateBS()
+this.expressionData ← 52チャンネルのオブジェクト
+    ↓ setExpression() ← 毎フレーム呼ばれる（useFlame==false時）
+splatMesh.bsWeight = this.expressionData
+    ↓ updateBoneMatrixTexture()
+boneTexture[morphTargetDictionary[key] + bonesNum*16] = uintEncodedFloat(value)
+    ↓ 各チャンネルが boneTexture のテクセル20+ に格納
+シェーダー: for(int i = 0; i < bsCount; ++i) { ... weight * uintBitsToFloat(sampledBSPos) }
+    → 全チャンネルの変形が合成される
 ```
 
-**検証経緯**:
-1. A2Eデータ品質を確認 → 52次元出力は日本語母音を正しく弁別（あ/い/う/え/お が異なるチャンネルに分布）
-2. compositeリマップで52→2に集約するチューニングを4ラウンド実施
-3. jawOpen増幅 (1.0→2.5→1.5→1.0) と JAW_MAX/MOUTH_MAX キャップを試行
-4. MOUTH_MAX=0.20 でフレームの33%がクリップ → ダイナミックレンジ喪失 → ロボット的な口の動き
-5. **結論: A2Eは十分。SDKの2チャンネル制限が品質の天井**
+#### SDK の重要な設定値
+- `var useFlame = "false"` ← SDK デフォルト。FLAME bone回転ではなく headBoneIndex 1本の回転
+- `bsCount` = `flameModel.geometry.morphAttributes.position.length` ← アバターモデルの morph target 数
+- `morphTargetDictionary` = GLB の morph target name → index マッピング
+- `boneTexture` サイズ = `4x32` テクセル（RGBA32UI）、テクセル20+ に BS 重みを4個/テクセルで格納
 
-**次のアクション** → Phase 0: SDKシェーダーインターセプトで内部動作を解析し、52チャンネル対応パッチの可否を判断。詳細は `tests/a2e_japanese/REVISED_PLAN.md` を参照。
+#### 以前の誤診の原因
+1. `__testLipSync()` テストで jawOpen/mouthLowerDown のみ目に見える効果があった
+2. → 「他のチャンネルは SDK が無視している」と結論
+3. → 実際には他チャンネルの blendshape base が弱いか、morph target に含まれていない可能性
+4. → `remapForSdkLimitation()` で52→2チャンネルに圧縮 → かえって品質劣化
+
+#### 現在の対応（d45c391）
+- `remapForSdkLimitation()` を廃止、全52チャンネルを直接パス
+- `logSdkInternals()` で `morphTargetDictionary`、`bsCount`、`useFlame` をランタイム確認
+- `MOUTH_AMPLIFY` を自然な値に修正（過剰抑制/ブースト廃止）
+- シェーダーインターセプト v2 で `bsCount` uniform 値を自動キャプチャ
 
 ---
 
@@ -418,18 +437,31 @@ GPUテクスチャにパック → 頂点シェーダーでLBS計算 → Transfo
 
 ## 8. 次のセッションでやるべきこと
 
-### 最優先: SDK 2チャンネル制限の突破 (Phase 0)
+### 最優先: 52チャンネルリップシンクの品質評価
 
-リップシンク品質の天井はSDKの2チャンネル制限。チューニングでは解決不可。
+SDK全52ch対応が判明。`remapForSdkLimitation()` 廃止済み（d45c391）。
 
-1. **シェーダーインターセプト** — gourmet-sp のブラウザで WebGL シェーダーをキャプチャ
-2. **npm パッケージ逆解析** — `gaussian-splat-renderer-for-lam` の minified JS を beautify して構造把握
-3. **Transform Feedback 頂点シェーダー解析** — 52次元のどのインデックスが読まれているか特定
-4. **パッチ可否判断** — シェーダーを差し替えて52チャンネル対応できるか評価
-5. → パッチ可能なら Phase 1B (WebGL シェーダーパッチ)
-6. → 不可能なら Phase 2 (Three.js + カスタム FLAME レンダラー)
+1. **gourmet-sp をデプロイしてライブテスト**
+   - コンソールに `=== SDK INTERNALS ===` セクションが出力される
+   - `morphTargetDictionary` の実際の内容を確認
+   - `bsCount` uniform 値を確認
+   - `[Shader Intercept] ⭐ bsCount = ???` を確認
+2. **リップシンク品質の目視評価**
+   - 「あいうえお」「こんにちは」の口形状が以前より改善したか
+   - 特に「い」「う」の口形状差が出ているか（smile/funnel/pucker チャンネルの直接効果）
+3. **`morphTargetDictionary` の内容に応じた対応**:
+   - 全52チャンネルある → A2E出力を最大限活用可能。MOUTH_AMPLIFY の微調整のみ
+   - チャンネル数が少ない → アバターモデル(GLB)のmorph target制限。別アバターで検証
+4. **MOUTH_AMPLIFY のチューニング** — A2E出力の弱いチャンネル（smile等）のブースト値調整
 
-詳細計画: `tests/a2e_japanese/REVISED_PLAN.md`
+### 完了済み: Phase 0 SDK調査
+
+| Phase | ステータス | 結果 |
+|-------|-----------|------|
+| 0-3: WebGL シェーダーインターセプト | ✅ 完了 | 4シェーダー + TF Program キャプチャ |
+| 0-2: npm パッケージ逆解析 | ✅ 完了 | SDK JS (152,643行) の完全フロー解析 |
+| 0-1: LAM_WebRender ソース確認 | ✅ 完了 | useFlame=false がデフォルト、全52ch対応 |
+| 1B: シェーダーパッチ | **不要** | シェーダーは既に `for(i < bsCount)` で全ch対応 |
 
 ### 並行: iPhone SE 実機検証
 
@@ -439,15 +471,7 @@ GPUテクスチャにパック → 頂点シェーダーでLBS計算 → Transfo
 4. → 30FPS出るなら Approach A (LAM WebGL SDK)
 5. → 出ないなら Approach B (Three.js + GLBメッシュ) に切り替え
 
-### 並行: 日本語A2Eテスト実行
-
-オーナーのローカル環境 (`C:\Users\hamad\OpenAvatarChat`) で:
-```powershell
-conda activate oac
-python tests/a2e_japanese/run_all_tests.py
-```
-
-### その後: 技術スタック決定 → アルファ版実装
+### その後: A2E 出力最適化 → アルファ版実装
 
 ゴールは「動くもの」。調査や検証で止まるな。
 
@@ -464,3 +488,4 @@ python tests/a2e_japanese/run_all_tests.py
 | フロントエンド統合 | `cde7c54`〜`2e16f78` | A2Eリップシンク統合、TTS修正、データ形式修正 |
 | リップシンクチューニング | `aab7f4d`〜`97a1e26` | jawOpen倍率調整(4ラウンド)、JAW_MAX/MOUTH_MAX導入、TTS切替バグ修正 |
 | SDK調査・計画見直し | `951f016` | REVISED_PLAN.md作成、2チャンネル制限の構造的限界を確認 |
+| SDK内部解析・全52ch対応 | `7ce8399`〜`d45c391` | SESSION_HANDOFF更新、WebGLシェーダーインターセプトv2、シェーダーキャプチャ(captured_shader_2.glsl)、SDK JS逆解析(152,643行)、**全52ch対応判明**、remapForSdkLimitation廃止、MOUTH_AMPLIFY自然値化 |
