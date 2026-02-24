@@ -350,11 +350,12 @@ export class ConciergeController extends CoreController {
   // 女性キャラ向け: 顎の開きは控えめ、母音の形状差(あいうえお)は強調。
   // A2Eモデルの日本語出力は母音区別が弱い（smile raw~0.04, funnel raw~0.12）ため、
   // 母音形状チャンネルは大幅にブーストして補償する。
+  // ※pucker は raw が大きい(~0.35)のでブースト不要。過大値は FLAME LBS の数値爆発を招く。
   private static readonly MOUTH_AMPLIFY: { [key: string]: number } = {
     'jawOpen': 0.85,               // やや抑制: 自然な顎の開き
     'mouthClose': 1.0,             // 中立
-    'mouthFunnel': 2.5,            // 大幅ブースト: う・お の唇突き出し（raw~0.12→0.30）
-    'mouthPucker': 2.5,            // 大幅ブースト: う の唇すぼめ
+    'mouthFunnel': 2.0,            // ブースト: う・お の唇突き出し（raw~0.12→0.24）
+    'mouthPucker': 1.0,            // 中立: raw が十分大きい(~0.35)。ブーストで飽和→メッシュ破綻
     'mouthSmileLeft': 3.0,         // 大幅ブースト: い の口角引き（raw~0.04→0.12）
     'mouthSmileRight': 3.0,        // 大幅ブースト: い の口角引き
     'mouthStretchLeft': 2.0,       // ブースト: え の口横伸ばし
@@ -370,6 +371,9 @@ export class ConciergeController extends CoreController {
     'mouthShrugLower': 0.9,        // やや抑制
     'mouthShrugUpper': 0.9,        // やや抑制
   };
+
+  // FLAME LBS の安全範囲。これを超えるとメッシュが破綻（数値爆発）する
+  private static readonly BLENDSHAPE_SAFE_MAX = 0.7;
 
   /**
    * TTS応答に同梱されたExpressionデータをバッファに即投入（遅延ゼロ）
@@ -408,7 +412,8 @@ export class ConciergeController extends CoreController {
           // 口周りblendshapeを増幅（日本語母音の可視性向上）
           const amp = ConciergeController.MOUTH_AMPLIFY[name];
           if (amp) {
-            val = Math.min(1.0, val * amp);
+            // FLAME LBS 安全範囲でクランプ（>0.7 で数値不安定→メッシュ破綻）
+            val = Math.min(ConciergeController.BLENDSHAPE_SAFE_MAX, val * amp);
           }
           frame[name] = val;
         });
