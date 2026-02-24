@@ -360,11 +360,14 @@ export class ConciergeController extends CoreController {
   // シェーダーが for(i < bsCount) で全チャンネル適用する。
   // → 増幅は最小限にし、A2E の自然な出力を活かす
   // ※全値は BLENDSHAPE_SAFE_MAX(0.7) でクランプ（FLAME LBS 数値安定のため）
+  //
+  // lowerDown抑制理由: A2E raw max ~0.84 → クランプ後0.7でも口が極端に開く。
+  //   jawOpen effective max ~0.42 (0.28*1.5) とバランスさせるため0.5倍。
   private static readonly MOUTH_AMPLIFY: { [key: string]: number } = {
     // --- 主要チャンネル: SDKが直接適用 ---
     'jawOpen': 1.5,                // 軽ブースト: A2E出力が弱め(avg~0.05, max~0.28)
-    'mouthLowerDownLeft': 1.0,     // 等倍: SDKが直接使用するため抑制不要
-    'mouthLowerDownRight': 1.0,    // 等倍: 同上
+    'mouthLowerDownLeft': 0.5,     // 抑制: raw~0.84が強すぎ → 0.42程度に (jawOpenとバランス)
+    'mouthLowerDownRight': 0.5,    // 抑制: 同上
     // --- 母音チャンネル: SDKが直接適用（remapForSdkLimitation不要） ---
     'mouthFunnel': 1.5,            // 軽ブースト: う・お の唇突き出し（raw max~0.37）
     'mouthPucker': 1.0,            // 等倍: う のすぼめ（raw max~0.49、十分な値）
