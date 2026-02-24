@@ -367,14 +367,14 @@ export class ConciergeController extends CoreController {
   //   過度な誇張を避け、自然な動きを優先。
   private static readonly MOUTH_AMPLIFY: { [key: string]: number } = {
     // --- 主要チャンネル（口の開き） ---
-    'jawOpen': 1.9,                // 強めブースト: raw avg~0.06→もごもご防止
-    'mouthLowerDownLeft': 0.48,    // 中抑制: raw~0.84→eff~0.40
-    'mouthLowerDownRight': 0.48,   // 中抑制: 同上
+    'jawOpen': 2.2,                // 積極ブースト: raw avg~0.06→もごもご完全防止
+    'mouthLowerDownLeft': 0.50,    // 抑制: raw~0.84→eff~0.42
+    'mouthLowerDownRight': 0.50,   // 抑制: 同上
     // --- 母音チャンネル: 日本語5母音の形状分化 ---
-    'mouthFunnel': 2.4,            // ブースト: う・お の唇突き出し
+    'mouthFunnel': 2.5,            // ブースト: う・お の唇突き出し
     'mouthPucker': 1.5,            // 軽ブースト: う のすぼめ
-    'mouthSmileLeft': 3.4,         // ブースト: い の口角引き（raw弱いため高め）
-    'mouthSmileRight': 3.4,        // ブースト: い の口角引き
+    'mouthSmileLeft': 3.5,         // ブースト: い の口角引き（raw弱いため高め）
+    'mouthSmileRight': 3.5,        // ブースト: い の口角引き
     'mouthStretchLeft': 2.0,       // ブースト: え の口横伸ばし
     'mouthStretchRight': 2.0,      // ブースト: え の口横伸ばし
     // --- 補助チャンネル ---
@@ -463,8 +463,8 @@ export class ConciergeController extends CoreController {
       //   全体の振幅だけをfloor〜ceilingに収める。
       //   → "あ"と"い"の区別が維持される
       const mouthKeys = Object.keys(ConciergeController.MOUTH_AMPLIFY);
-      const energyFloor = 0.30;   // 発話中の最低口エネルギー（弱フレーム引き上げ強め）
-      const energyCeiling = 1.6;  // 最大口エネルギー（ピークに余裕を持たせる）
+      const energyFloor = 0.45;   // 発話中の最低口エネルギー（弱フレーム→積極引き上げ）
+      const energyCeiling = 1.8;  // 最大口エネルギー（ピークに十分な余裕）
       for (const frame of interpolatedFrames) {
         let energy = 0;
         for (const key of mouthKeys) {
@@ -489,8 +489,8 @@ export class ConciergeController extends CoreController {
       // Step 2.5: 非対称EMAスムージング
       // 口の開き（attack）は素早く応答、閉じ（decay）はゆっくり減衰。
       // → 短い"死区間"（A2Eが0に落ちる瞬間）で口が急に閉じるのを防ぐ
-      const attackAlpha = 0.75; // 開方向: 速めに追従（もごもご防止、テキパキほどではない）
-      const decayAlpha = 0.47;  // 閉方向: ゆるやかな減衰（急な閉口を防止）
+      const attackAlpha = 0.78; // 開方向: 速めに追従（もごもご防止）
+      const decayAlpha = 0.35;  // 閉方向: 遅い減衰（死区間で口形状を維持→もごもご撲滅）
       for (let i = 1; i < interpolatedFrames.length; i++) {
         const prev = interpolatedFrames[i - 1];
         const curr = interpolatedFrames[i];
