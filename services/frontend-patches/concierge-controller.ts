@@ -348,8 +348,9 @@ export class ConciergeController extends CoreController {
 
   // ★ 口周りblendshapeの増幅係数（日本語母音の可視性向上）
   // あ(jawOpen大), い(smile), う(pucker/funnel), え(stretch), お(funnel+jawOpen中)
+  // ★ jawOpen/mouthLowerDown: 増幅なし（A2Eモデル出力で十分 + 過剰増幅で顎が不自然に落ちる問題の修正）
   private static readonly MOUTH_AMPLIFY: { [key: string]: number } = {
-    'jawOpen': 1.4,
+    'jawOpen': 1.0,           // 1.4→1.0: 増幅なし（スパイク時にjaw=0.5超えて不自然）
     'mouthClose': 1.3,
     'mouthFunnel': 1.5,       // う・お で重要
     'mouthPucker': 1.5,       // う で重要
@@ -357,8 +358,8 @@ export class ConciergeController extends CoreController {
     'mouthSmileRight': 1.3,   // い で重要
     'mouthStretchLeft': 1.2,  // え で重要
     'mouthStretchRight': 1.2, // え で重要
-    'mouthLowerDownLeft': 1.3,
-    'mouthLowerDownRight': 1.3,
+    'mouthLowerDownLeft': 1.0, // 1.3→1.0: 顎の下方向引っ張りを抑制
+    'mouthLowerDownRight': 1.0, // 1.3→1.0: 同上
     'mouthUpperUpLeft': 1.2,
     'mouthUpperUpRight': 1.2,
     'mouthDimpleLeft': 1.1,
@@ -368,6 +369,9 @@ export class ConciergeController extends CoreController {
     'mouthShrugLower': 1.2,
     'mouthShrugUpper': 1.2,
   };
+
+  // ★ jawOpenの上限値: これ以上だと不自然に顎が下がる
+  private static readonly JAW_OPEN_MAX = 0.35;
 
   /**
    * TTS応答に同梱されたExpressionデータをバッファに即投入（遅延ゼロ）
@@ -408,10 +412,29 @@ export class ConciergeController extends CoreController {
           if (amp) {
             val = Math.min(1.0, val * amp);
           }
+          // ★ jawOpenの上限キャップ（不自然な顎落ち防止）
+          if (name === 'jawOpen') {
+            val = Math.min(val, ConciergeController.JAW_OPEN_MAX);
+          }
+          // ★ mouthLowerDownの上限キャップ（下あご引っ張り防止）
+          if (name === 'mouthLowerDownLeft' || name === 'mouthLowerDownRight') {
+            val = Math.min(val, 0.25);
+          }
           frame[name] = val;
         });
         return frame;
       });
+
+      // Step 1.5: ★ jawOpen スパイク抑制 — EMAスムージング
+      // 急激な値変化（0.03→0.55等）を抑制して自然な口の動きにする
+      const JAW_SMOOTH_ALPHA = 0.4; // 低いほどスムーズ（0.3-0.5が自然）
+      let prevJaw = 0;
+      for (let i = 0; i < rawFrames.length; i++) {
+        const currentJaw = rawFrames[i]['jawOpen'] || 0;
+        const smoothedJaw = JAW_SMOOTH_ALPHA * currentJaw + (1 - JAW_SMOOTH_ALPHA) * prevJaw;
+        rawFrames[i]['jawOpen'] = smoothedJaw;
+        prevJaw = smoothedJaw;
+      }
 
       // Step 2: フレーム補間 (30fps → 60fps) — 線形補間で滑らかに
       const interpolatedFrames: { [key: string]: number }[] = [];
@@ -434,13 +457,21 @@ export class ConciergeController extends CoreController {
 
       // Step 4: 診断ログ（blendshape統計値）
       const jawValues = rawFrames.map((f: { [k: string]: number }) => f['jawOpen'] || 0);
+      const lowerDownValues = rawFrames.map((f: { [k: string]: number }) => Math.max(f['mouthLowerDownLeft'] || 0, f['mouthLowerDownRight'] || 0));
       const funnelValues = rawFrames.map((f: { [k: string]: number }) => f['mouthFunnel'] || 0);
+      const puckerValues = rawFrames.map((f: { [k: string]: number }) => f['mouthPucker'] || 0);
       const smileValues = rawFrames.map((f: { [k: string]: number }) => f['mouthSmileLeft'] || 0);
+      const stretchValues = rawFrames.map((f: { [k: string]: number }) => Math.max(f['mouthStretchLeft'] || 0, f['mouthStretchRight'] || 0));
       const jawMax = Math.max(...jawValues);
       const jawAvg = jawValues.reduce((a: number, b: number) => a + b, 0) / jawValues.length;
+      const lowerDownMax = Math.max(...lowerDownValues);
       const funnelMax = Math.max(...funnelValues);
+      const puckerMax = Math.max(...puckerValues);
       const smileMax = Math.max(...smileValues);
-      console.log(`[Concierge] Expression: ${rawFrames.length}→${interpolatedFrames.length} frames (${srcFrameRate}→${outputFrameRate}fps) | jaw: max=${jawMax.toFixed(3)} avg=${jawAvg.toFixed(3)} | funnel: max=${funnelMax.toFixed(3)} | smile: max=${smileMax.toFixed(3)}`);
+      const stretchMax = Math.max(...stretchValues);
+      console.log(`[Concierge] Expression: ${rawFrames.length}→${interpolatedFrames.length} frames (${srcFrameRate}→${outputFrameRate}fps)`);
+      console.log(`  jaw: max=${jawMax.toFixed(3)} avg=${jawAvg.toFixed(3)} | lowerDown: max=${lowerDownMax.toFixed(3)}`);
+      console.log(`  funnel: max=${funnelMax.toFixed(3)} | pucker: max=${puckerMax.toFixed(3)} | smile: max=${smileMax.toFixed(3)} | stretch: max=${stretchMax.toFixed(3)}`);
     } else {
       console.warn(`[Concierge] No expression frames in TTS response (names=${!!expression?.names}, frames=${expression?.frames?.length || 0})`);
     }
