@@ -305,6 +305,9 @@ class Audio2ExpressionEngine:
                 },
                 "num_worker": 0,
                 "batch_size": 1,
+                # ポストプロセッシング強化 (Streaming config のデフォルトを上書き)
+                "movement_smooth": True,
+                "brow_movement": True,
             }
 
             logger.info(f"[A2E Engine] Loading config: {config_file}")
