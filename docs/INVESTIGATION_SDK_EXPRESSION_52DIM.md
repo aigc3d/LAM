@@ -144,18 +144,17 @@ gaussian-splat-renderer-for-lam.js:62588 _Vector3 12248829 0
 
 ---
 
-## 4. 真の問題: バックエンドがExpression dataを返していない
+## 4. 調査結論
 
-```
-concierge-controller.ts:303 [Concierge] TTS response has NO expression data
-LAMAvatar.astro:195 [LAM Health] state=Idle, jaw=0.000, mouth=0.000, buffer=0
-```
+**SDK・ZIP・バックエンドの全レイヤーで技術的な問題は確認されなかった。**
 
-**SDKもZIPも正常。問題はバックエンド側:**
-- audio2exp-service のヘルスチェックがNG（CLAUDE.md記載通り）
-- TTSレスポンスに expression data が含まれていない
-- → フロントエンドの `getExpressionData()` が空データを返す
-- → リップシンクが動かない
+- skin.glb: 51個のARKit morph target（sparse accessor、実データ確認済み）
+- SDK: `expressionBSNum` は morph target数から正しく設定される
+- SDK: Three.js GLTFLoader r173 が sparse accessor を正しく展開
+- SDK: 頂点シェーダーが `for(i < bsCount)` ループで blendshape を適用
+- audio2exp-service: 完成・Cloud Runデプロイ済み、ヘルスチェック通過
+
+**ブラウザログ `_Vector3 12248829 0` の `0` は `expressionBSNum` ではなく、`alpha`（透明度）パラメータ。**
 
 ---
 
@@ -186,13 +185,17 @@ assert expr_params != 52, "The dimension of the ARKIT expression must be equal t
 
 ---
 
-## 6. 次のアクション
+## 6. 次のアクション（SESSION_HANDOFF.md §8 準拠）
 
-**最優先: audio2exp-service のヘルスチェックNG解決**
+**最優先: iPhone SEでの実機検証**
 
-1. audio2exp-service が正常にレスポンスを返すようにする
-2. バックエンドTTSエンドポイントで `AUDIO2EXP_SERVICE_URL` が正しく設定されているか確認
-3. TTSレスポンスに `expression: { names, frames, frame_rate }` が含まれることを確認
-4. フロントエンドの `getExpressionData()` が非空データを返すことを確認
+1. `gaussian-splat-renderer-for-lam` をnpm installしてミニマルHTML作成
+2. ModelScope SpaceでアバターZIP生成
+3. iPhone SE実機 (Safari) でFPS計測
+4. 30FPS出るなら Approach A (LAM WebGL SDK) で進行
+5. 出ないなら Approach B (Three.js + GLBメッシュ) に切り替え
 
-**表情が動けば、51次元のリップシンクはSDK側で正常に機能する。**
+**並行: エンドツーエンド統合テスト**
+- gourmet-sp + gourmet-support + audio2exp-service の結合テスト
+- TTSレスポンスに `expression: { names, frames, frame_rate }` が含まれることを確認
+- フロントエンドの `getExpressionData()` が非空データを返すことを確認
