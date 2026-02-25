@@ -35,16 +35,11 @@
 - **フレームレート変換**: 30fps→60fpsの補間処理がフロントエンドで実行されている
 - **データフロー**: `audio2exp-service` → `gourmet-support (TTS応答に同梱)` → `concierge-controller.ts (applyExpressionFromTts)` → `lamAvatarController.queueExpressionFrames()` → LAMAvatar バッファ
 
-### F3. アバターの口は動いていない
+### F3. アバターの口は動いている（タイミングもほぼ正しい）
 
-- **ブラウザコンソールログ**（`claude_log_20260224.txt` 6286-6308行）:
-  ```
-  LAMAvatar.astro:195 [LAM Health] state=Idle, jaw=0.000, mouth=0.000, buffer=0, ttsActive=false
-  LAMAvatar.astro:195 [LAM Health] state=Idle, jaw=0.000, mouth=0.000, buffer=311, ttsActive=false
-  LAMAvatar.astro:195 [LAM Health] state=Idle, jaw=0.000, mouth=0.000, buffer=617, ttsActive=false
-  ```
-- **buffer=617 なのに jaw=0.000**: バッファにデータが入っているのに、アバターの口の値がゼロのまま
-- **状態**: `state=Idle` のまま遷移しない
+- **ユーザー実証済み**: アバターの口はそれっぽく動いており、TTS音声とのタイミングもほぼ合っている
+- **つまり**: バッファ→SDK `getExpressionData()` →頂点シェーダーのパイプライン全体が繋がって動作している
+- **問題はクオリティ**: 動いてはいるが、リップシンクの質が低い（F9参照）
 
 ### F4. skin.glb に51個のARKit morph targetが正常に格納されている
 
@@ -119,24 +114,25 @@
 | H3 | SDKがsparse accessorに非対応 | Three.js r173 GLTFLoaderに対応コードあり | `INVESTIGATION_SDK_EXPRESSION_52DIM.md` §2.5 |
 | H4 | `expressionBSNum = 0` | `0`はalpha（透明度）パラメータ | `INVESTIGATION_SDK_EXPRESSION_52DIM.md` §3 |
 | H5 | A2Eバックエンドがデータを返していない | 311, 617フレームがフロントエンドバッファに到達 | `claude_log_20260224.txt` 6296-6303行 |
+| H6 | アバターの口が動いていない | **口は動いている。** タイミングもほぼ正しい。問題は動かないことではなくクオリティが低いこと | ユーザー実証済み |
 
 ---
 
 ## 未解決の問題（原因未特定）
 
-### 核心的な謎
+### 核心的な問題
 
-**バッファにExpressionデータが入っているのに（buffer=617, jawMax=0.456）、アバターの口が動かない（jaw=0.000, mouth=0.000）。**
+**リップシンクのクオリティが低い。** パイプライン全体は繋がって動いている（音声再生、Expressionデータ到達、口の動き、タイミング全てOK）が、口の動きの質が不十分。
 
-### 原因候補として検証が必要な領域
+### 品質が低い原因の候補（要調査）
 
 以下は仮説ではなく、「まだ検証していない領域」の列挙。
 
-1. **バッファ→SDK `getExpressionData()` の接続**: `lamAvatarController.queueExpressionFrames()` でバッファに入ったデータが、SDK の `getExpressionData()` コールバックから実際に返されているか
-2. **`ttsActive` フラグの状態管理**: ブラウザログで `ttsActive=false` が続いているが、音声は再生されている。`ttsActive` の判定ロジックが正しくない可能性
-3. **フレーム消費トリガー**: LAMAvatarがバッファからフレームを消費する条件は何か（`ttsActive=true` が条件なら、そこが断線箇所）
-4. **SDKの `expressionBSNum` のランタイム値**: 理論上51だが、ブラウザで実測していない
-5. **`setExternalTtsPlayer` のリンク成否**: `concierge-controller.ts` がLAMAvatarのTTSプレーヤーをリンクしようとしているが、成功しているかのログ確認
+1. **A2Eモデルの出力品質**: Wav2Vec2 → A2E Decoderの出力するblendshape係数自体の精度。jawOpen max=0.456 は十分か、他のblendshapeの値域は適切か
+2. **blendshape増幅パラメータの調整**: `concierge-controller.ts` の `MOUTH_AMPLIFY` 係数が最適かどうか
+3. **フレーム補間の品質**: 30fps→60fps線形補間が滑らかさに十分か
+4. **SDKの `expressionBSNum` のランタイム値**: 理論上51だが、ブラウザで実測していない。仮に少ない数値だと一部blendshapeが無視される
+5. **A2Eモデルが口以外のblendshapeを十分に活用しているか**: 眉、目、頬などの表情パラメータが生成されているか
 
 ---
 
