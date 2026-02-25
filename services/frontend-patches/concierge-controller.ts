@@ -346,32 +346,51 @@ export class ConciergeController extends CoreController {
     }
   }
 
-  // ★ 口周りblendshapeの増幅係数（日本語母音の可視性向上）
-  // あ(jawOpen大), い(smile), う(pucker/funnel), え(stretch), お(funnel+jawOpen中)
-  // ★ jawOpen/mouthLowerDown: 増幅なし（A2Eモデル出力で十分 + 過剰増幅で顎が不自然に落ちる問題の修正）
+  // ★ 口周りblendshapeのスケール係数
+  //
+  // 【重要】__testLipSync() 診断で判明:
+  // SDK (gaussian-splat-renderer-for-lam) が jawOpen と mouthLowerDown の2値しか
+  // FLAME メッシュ変形に使わない。LAMAvatar.astro は全52次元を返しているが SDK が無視。
+  // → LAMAvatar.astro 側で remapForSdkLimitation() を追加し、
+  //   SDK全52ch対応判明: remapForSdkLimitation 廃止、全チャンネル直接パス。
+  //   MOUTH_AMPLIFY は A2E 出力の調整のみ（SDKは全ch適用する）。
+  //
+  // A2Eモデルの出力特性: jawOpen弱(avg~0.05), lowerDown強(raw~0.84)
+  // SDK は全52チャンネルを morphTargetDictionary 経由で boneTexture に書き込み、
+  // シェーダーが for(i < bsCount) で全チャンネル適用する。
+  // → 増幅は最小限にし、A2E の自然な出力を活かす
+  // ※全値は BLENDSHAPE_SAFE_MAX(0.7) でクランプ（FLAME LBS 数値安定のため）
+  //
+  // 自然な口の動きチューニング:
+  //   エネルギー正規化でフレーム振幅を均一化。
+  //   amplifyは「形状の可視性」のみ担当（振幅はエネルギー正規化が制御）。
+  //   過度な誇張を避け、自然な動きを優先。
   private static readonly MOUTH_AMPLIFY: { [key: string]: number } = {
-    'jawOpen': 1.0,           // 1.4→1.0: 増幅なし（スパイク時にjaw=0.5超えて不自然）
-    'mouthClose': 1.3,
-    'mouthFunnel': 1.5,       // う・お で重要
-    'mouthPucker': 1.5,       // う で重要
-    'mouthSmileLeft': 1.3,    // い で重要
-    'mouthSmileRight': 1.3,   // い で重要
-    'mouthStretchLeft': 1.2,  // え で重要
-    'mouthStretchRight': 1.2, // え で重要
-    'mouthLowerDownLeft': 1.0, // 1.3→1.0: 顎の下方向引っ張りを抑制
-    'mouthLowerDownRight': 1.0, // 1.3→1.0: 同上
-    'mouthUpperUpLeft': 1.2,
-    'mouthUpperUpRight': 1.2,
-    'mouthDimpleLeft': 1.1,
-    'mouthDimpleRight': 1.1,
-    'mouthRollLower': 1.2,
-    'mouthRollUpper': 1.2,
-    'mouthShrugLower': 1.2,
-    'mouthShrugUpper': 1.2,
+    // --- 主要チャンネル（口の開き） ---
+    'jawOpen': 2.2,                // 積極ブースト: raw avg~0.06→もごもご完全防止
+    'mouthLowerDownLeft': 0.50,    // 抑制: raw~0.84→eff~0.42
+    'mouthLowerDownRight': 0.50,   // 抑制: 同上
+    // --- 母音チャンネル: 日本語5母音の形状分化 ---
+    'mouthFunnel': 2.5,            // ブースト: う・お の唇突き出し
+    'mouthPucker': 1.5,            // 軽ブースト: う のすぼめ
+    'mouthSmileLeft': 3.5,         // ブースト: い の口角引き（raw弱いため高め）
+    'mouthSmileRight': 3.5,        // ブースト: い の口角引き
+    'mouthStretchLeft': 2.0,       // ブースト: え の口横伸ばし
+    'mouthStretchRight': 2.0,      // ブースト: え の口横伸ばし
+    // --- 補助チャンネル ---
+    'mouthClose': 1.0,
+    'mouthUpperUpLeft': 1.0,
+    'mouthUpperUpRight': 1.0,
+    'mouthDimpleLeft': 1.0,
+    'mouthDimpleRight': 1.0,
+    'mouthRollLower': 1.0,
+    'mouthRollUpper': 1.0,
+    'mouthShrugLower': 1.0,
+    'mouthShrugUpper': 1.0,
   };
 
-  // ★ jawOpenの上限値: これ以上だと不自然に顎が下がる
-  private static readonly JAW_OPEN_MAX = 0.35;
+  // FLAME LBS の安全範囲。これを超えるとメッシュが破綻（数値爆発）する
+  private static readonly BLENDSHAPE_SAFE_MAX = 0.7;
 
   /**
    * TTS応答に同梱されたExpressionデータをバッファに即投入（遅延ゼロ）
@@ -410,31 +429,13 @@ export class ConciergeController extends CoreController {
           // 口周りblendshapeを増幅（日本語母音の可視性向上）
           const amp = ConciergeController.MOUTH_AMPLIFY[name];
           if (amp) {
-            val = Math.min(1.0, val * amp);
-          }
-          // ★ jawOpenの上限キャップ（不自然な顎落ち防止）
-          if (name === 'jawOpen') {
-            val = Math.min(val, ConciergeController.JAW_OPEN_MAX);
-          }
-          // ★ mouthLowerDownの上限キャップ（下あご引っ張り防止）
-          if (name === 'mouthLowerDownLeft' || name === 'mouthLowerDownRight') {
-            val = Math.min(val, 0.25);
+            // FLAME LBS 安全範囲でクランプ（>0.7 で数値不安定→メッシュ破綻）
+            val = Math.min(ConciergeController.BLENDSHAPE_SAFE_MAX, val * amp);
           }
           frame[name] = val;
         });
         return frame;
       });
-
-      // Step 1.5: ★ jawOpen スパイク抑制 — EMAスムージング
-      // 急激な値変化（0.03→0.55等）を抑制して自然な口の動きにする
-      const JAW_SMOOTH_ALPHA = 0.4; // 低いほどスムーズ（0.3-0.5が自然）
-      let prevJaw = 0;
-      for (let i = 0; i < rawFrames.length; i++) {
-        const currentJaw = rawFrames[i]['jawOpen'] || 0;
-        const smoothedJaw = JAW_SMOOTH_ALPHA * currentJaw + (1 - JAW_SMOOTH_ALPHA) * prevJaw;
-        rawFrames[i]['jawOpen'] = smoothedJaw;
-        prevJaw = smoothedJaw;
-      }
 
       // Step 2: フレーム補間 (30fps → 60fps) — 線形補間で滑らかに
       const interpolatedFrames: { [key: string]: number }[] = [];
@@ -452,26 +453,96 @@ export class ConciergeController extends CoreController {
       }
       const outputFrameRate = srcFrameRate * 2; // 30→60fps
 
+      // Step 2.3: フレーム全体エネルギー正規化
+      // 旧方式（チャンネル個別圧縮）の問題:
+      //   各チャンネルを個別に平均に寄せると、母音の「形状比率」が壊れる。
+      //   例: "あ"(jaw高,smile低) と "い"(jaw低,smile高) が同じ形に見える
+      //
+      // 新方式: フレーム全体の「エネルギー」（全ch合計）を正規化。
+      //   チャンネル間の比率（=母音の形状）を保存したまま、
+      //   全体の振幅だけをfloor〜ceilingに収める。
+      //   → "あ"と"い"の区別が維持される
+      const mouthKeys = Object.keys(ConciergeController.MOUTH_AMPLIFY);
+      const energyFloor = 0.45;   // 発話中の最低口エネルギー（弱フレーム→積極引き上げ）
+      const energyCeiling = 1.8;  // 最大口エネルギー（ピークに十分な余裕）
+      for (const frame of interpolatedFrames) {
+        let energy = 0;
+        for (const key of mouthKeys) {
+          energy += frame[key] || 0;
+        }
+        if (energy < 0.05) continue; // 真の無音フレームはスキップ
+        let scale = 1.0;
+        if (energy < energyFloor) {
+          scale = energyFloor / energy; // 弱→引き上げ
+        } else if (energy > energyCeiling) {
+          scale = energyCeiling / energy; // 強→引き下げ
+        }
+        if (scale !== 1.0) {
+          for (const key of mouthKeys) {
+            if (frame[key] !== undefined) {
+              frame[key] = Math.min(ConciergeController.BLENDSHAPE_SAFE_MAX, frame[key] * scale);
+            }
+          }
+        }
+      }
+
+      // Step 2.5: 非対称EMAスムージング
+      // 口の開き（attack）は素早く応答、閉じ（decay）は適度に減衰。
+      // decayを遅くし過ぎると母音遷移がズレるので、適度な速度を維持。
+      const attackAlpha = 0.80; // 開方向: 速い追従（母音切替に即応）
+      const decayAlpha = 0.50;  // 閉方向: 適度な減衰（母音同期を維持）
+      for (let i = 1; i < interpolatedFrames.length; i++) {
+        const prev = interpolatedFrames[i - 1];
+        const curr = interpolatedFrames[i];
+        for (const key of mouthKeys) {
+          if (curr[key] !== undefined && prev[key] !== undefined) {
+            const alpha = curr[key] >= prev[key] ? attackAlpha : decayAlpha;
+            curr[key] = prev[key] * (1 - alpha) + curr[key] * alpha;
+          }
+        }
+      }
+
+      // Step 2.7: ポストEMAエネルギーフロア
+      // EMAスムージング後に死区間の口が閉じ切るのを防止。
+      // decayで母音同期は保ちつつ、ここで最低エネルギーを保証。
+      // チャンネル比率は維持 → 母音の形状（あ/い/う区別）が崩れない。
+      const postEmaFloor = 0.18; // EMA後の最低口エネルギー
+      const postEmaSkip = 0.02;  // これ以下は真の無音（フロア適用しない）
+      for (const frame of interpolatedFrames) {
+        let energy = 0;
+        for (const key of mouthKeys) {
+          energy += frame[key] || 0;
+        }
+        if (energy <= postEmaSkip) continue; // 真の無音はスキップ
+        if (energy < postEmaFloor) {
+          const scale = postEmaFloor / energy;
+          for (const key of mouthKeys) {
+            if (frame[key] !== undefined) {
+              frame[key] = Math.min(ConciergeController.BLENDSHAPE_SAFE_MAX, frame[key] * scale);
+            }
+          }
+        }
+      }
+
       // Step 3: LAMAvatarにキュー投入
       lamController.queueExpressionFrames(interpolatedFrames, outputFrameRate);
 
-      // Step 4: 診断ログ（blendshape統計値）
-      const jawValues = rawFrames.map((f: { [k: string]: number }) => f['jawOpen'] || 0);
-      const lowerDownValues = rawFrames.map((f: { [k: string]: number }) => Math.max(f['mouthLowerDownLeft'] || 0, f['mouthLowerDownRight'] || 0));
-      const funnelValues = rawFrames.map((f: { [k: string]: number }) => f['mouthFunnel'] || 0);
-      const puckerValues = rawFrames.map((f: { [k: string]: number }) => f['mouthPucker'] || 0);
-      const smileValues = rawFrames.map((f: { [k: string]: number }) => f['mouthSmileLeft'] || 0);
-      const stretchValues = rawFrames.map((f: { [k: string]: number }) => Math.max(f['mouthStretchLeft'] || 0, f['mouthStretchRight'] || 0));
-      const jawMax = Math.max(...jawValues);
-      const jawAvg = jawValues.reduce((a: number, b: number) => a + b, 0) / jawValues.length;
-      const lowerDownMax = Math.max(...lowerDownValues);
-      const funnelMax = Math.max(...funnelValues);
-      const puckerMax = Math.max(...puckerValues);
-      const smileMax = Math.max(...smileValues);
-      const stretchMax = Math.max(...stretchValues);
-      console.log(`[Concierge] Expression: ${rawFrames.length}→${interpolatedFrames.length} frames (${srcFrameRate}→${outputFrameRate}fps)`);
-      console.log(`  jaw: max=${jawMax.toFixed(3)} avg=${jawAvg.toFixed(3)} | lowerDown: max=${lowerDownMax.toFixed(3)}`);
-      console.log(`  funnel: max=${funnelMax.toFixed(3)} | pucker: max=${puckerMax.toFixed(3)} | smile: max=${smileMax.toFixed(3)} | stretch: max=${stretchMax.toFixed(3)}`);
+      // Step 4: 診断ログ（全母音チャンネルの統計値）
+      const stat = (key: string) => {
+        const vals = rawFrames.map((f: { [k: string]: number }) => f[key] || 0);
+        return { max: Math.max(...vals), avg: vals.reduce((a: number, b: number) => a + b, 0) / vals.length };
+      };
+      const jaw = stat('jawOpen');
+      const funnel = stat('mouthFunnel');
+      const pucker = stat('mouthPucker');
+      const smile = stat('mouthSmileLeft');
+      const stretch = stat('mouthStretchLeft');
+      const lowerDown = stat('mouthLowerDownLeft');
+      console.log(
+        `[Concierge] Expression: ${rawFrames.length}→${interpolatedFrames.length} frames (${srcFrameRate}→${outputFrameRate}fps)\n` +
+        `  jaw: max=${jaw.max.toFixed(3)} avg=${jaw.avg.toFixed(3)} | lowerDown: max=${lowerDown.max.toFixed(3)}\n` +
+        `  funnel: max=${funnel.max.toFixed(3)} | pucker: max=${pucker.max.toFixed(3)} | smile: max=${smile.max.toFixed(3)} | stretch: max=${stretch.max.toFixed(3)}`
+      );
     } else {
       console.warn(`[Concierge] No expression frames in TTS response (names=${!!expression?.names}, frames=${expression?.frames?.length || 0})`);
     }
