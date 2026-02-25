@@ -357,7 +357,7 @@ export class ConciergeController extends CoreController {
   //   >1.0 = 増幅（口の動きを強調）
   //   <1.0 = 抑制（口の動きを控えめに）
   private static readonly MOUTH_AMPLIFY: { [key: string]: number } = {
-    'jawOpen': 1.0,
+    'jawOpen': 1.8,            // A2E raw avg~0.05 → 増幅してもごもご防止
     'mouthClose': 1.0,
     'mouthFunnel': 1.0,
     'mouthPucker': 1.0,
@@ -365,8 +365,8 @@ export class ConciergeController extends CoreController {
     'mouthSmileRight': 1.0,
     'mouthStretchLeft': 1.0,
     'mouthStretchRight': 1.0,
-    'mouthLowerDownLeft': 1.0,
-    'mouthLowerDownRight': 1.0,
+    'mouthLowerDownLeft': 0.45, // A2E raw~0.84 → 抑制（下あご引っ張り防止）
+    'mouthLowerDownRight': 0.45,
     'mouthUpperUpLeft': 1.0,
     'mouthUpperUpRight': 1.0,
     'mouthDimpleLeft': 1.0,
