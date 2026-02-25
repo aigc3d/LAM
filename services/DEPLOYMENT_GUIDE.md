@@ -1,5 +1,82 @@
 # A2E (Audio2Expression) 統合デプロイメントガイド
 
+## ★ 成功実績のあるデプロイコマンド（最重要 — ここだけ読めばデプロイできる）
+
+> **警告**: このセクションは**実際に成功したコマンドとログ**に基づく。
+> Claudeの知識ベースや推測で改変してはならない。変更するなら新たな成功実績が必要。
+
+### 1行コピペ版（PowerShell / ローカルPC実行）
+
+```bash
+gcloud run deploy audio2exp-service --source . --project hp-support-477512 --region us-central1 --memory 8Gi --cpu 4 --timeout 300 --min-instances 1 --max-instances 3 --cpu-boost --set-env-vars "MODEL_DIR=/app/models,DEVICE=cpu,WARMUP_TIMEOUT=0,ENGINE_LOAD_TIMEOUT=1500"
+```
+
+### 実行場所
+
+```
+C:\Users\hamad\audio2exp-service
+```
+
+### 成功時のログ（2026-02-24 実績）
+
+```
+Building using Dockerfile and deploying container to Cloud Run service [audio2exp-service]
+in project [hp-support-477512] region [us-central1]
+OK Building and deploying... Done.
+OK Validating Service...
+OK Uploading sources...
+OK Building Container... Logs are available at
+   [https://console.cloud.google.com/cloud-build/builds;region=us-central1/
+    ebfc645b-a2e5-48e6-b952-4e82e35b9f1d?project=417509577941]
+OK Creating Revision...
+OK Routing traffic...
+Done.
+Service [audio2exp-service] revision [audio2exp-service-00030-rfn] has been deployed
+and is serving 100 percent of traffic.
+Service URL: https://audio2exp-service-417509577941.us-central1.run.app
+```
+
+### デプロイ後の確認手順
+
+```bash
+# 直後は "loading" — これは正常（モデルロード中）
+curl https://audio2exp-service-417509577941.us-central1.run.app/health
+# → {"engine_ready":false,"error":null,"model_dir":"/app/models","status":"loading"}
+
+# 数分待って再確認 → engine_ready: true で成功
+curl https://audio2exp-service-417509577941.us-central1.run.app/health
+# → {"device":"cpu","engine_ready":true,"mode":"infer","model_dir":"/app/models","status":"healthy"}
+
+# ログ確認
+gcloud run services logs read audio2exp-service --project hp-support-477512 --region us-central1 --limit 50
+```
+
+### ★ 失敗履歴（同じ失敗を繰り返さないために）
+
+| 試行 | パラメータ | 結果 | 原因 |
+|------|-----------|------|------|
+| 1-3回目 | `--memory 2Gi --cpu 2` | OOM（メモリ不足）× 3回 | torch + transformers + モデル(408MB) が2GBに収まらない |
+| 4回目 | `--memory 4Gi --cpu 2` | ビルド完走、ヘルスチェックNG | メモリぎりぎり、モデルロード中にOOMまたはタイムアウト |
+| 5回目 | `--memory 4Gi --cpu 4` | ビルド完走、ヘルスチェック不安定 | ENGINE_LOAD_TIMEOUT不足 |
+| **6回目（成功）** | **`--memory 8Gi --cpu 4 --cpu-boost`** | **成功** | 十分なメモリ + cpu-boost + WARMUP_TIMEOUT=0 |
+
+### ★ パラメータの意味（なぜこの値なのか — 実証に基づく理由）
+
+| パラメータ | 値 | 理由（実証済み） |
+|-----------|-----|-----------------|
+| `--memory 8Gi` | 8GB | 4Giでは不安定。torch(~1.5GB) + wav2vec2(~360MB) + LAMモデル(~50MB) + 推論バッファ |
+| `--cpu 4` | 4 vCPU | 2CPUではモデルロードが遅すぎてタイムアウト |
+| `--cpu-boost` | 有効 | 起動時CPUブースト。モデルロード高速化 |
+| `--timeout 300` | 5分 | リクエスト処理タイムアウト |
+| `--min-instances 1` | 1 | コールドスタート回避（モデルロード19分） |
+| `--max-instances 3` | 3 | 同時リクエスト上限 |
+| `WARMUP_TIMEOUT=0` | スキップ | warmupダミー推論をスキップ（CPU起動高速化） |
+| `ENGINE_LOAD_TIMEOUT=1500` | 25分 | CPUモデルロード所要時間の上限 |
+| `MODEL_DIR=/app/models` | Docker内パス | Dockerfileで COPY されたモデルの配置先 |
+| `DEVICE=cpu` | CPU | Cloud RunはGPUなし |
+
+---
+
 ## アーキテクチャ
 
 ```
@@ -107,7 +184,7 @@ gcloud run deploy audio2exp-service \
 ```bash
 # 環境変数に audio2exp-service のURLを設定
 gcloud run services update gourmet-support \
-  --set-env-vars "AUDIO2EXP_SERVICE_URL=https://audio2exp-service-xxxxx.run.app"
+  --set-env-vars "AUDIO2EXP_SERVICE_URL=https://audio2exp-service-417509577941.us-central1.run.app"
 ```
 
 `app_customer_support.py` は既に `AUDIO2EXP_SERVICE_URL` を参照済み。
@@ -202,10 +279,10 @@ gcloud run services update gourmet-support \
 ### A2Eサービスが応答しない
 ```bash
 # ログ確認
-gcloud run services logs read audio2exp-service --limit 50
+gcloud run services logs read audio2exp-service --project hp-support-477512 --region us-central1 --limit 50
 
 # ヘルスチェック
-curl https://audio2exp-service-xxxxx.run.app/health
+curl https://audio2exp-service-417509577941.us-central1.run.app/health
 ```
 
 ### expressionデータが空
