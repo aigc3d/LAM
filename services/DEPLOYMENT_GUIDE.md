@@ -30,10 +30,10 @@
 #### 1a. モデルの準備
 
 ```bash
-# LAM_audio2exp モデル (HuggingFace) - 直接ダウンロード
+# LAM_audio2exp Non-Streaming フルモデル (HuggingFace) — 6層Transformer + 5016 identity
 mkdir -p models
-wget -O models/LAM_audio2exp_streaming.tar \
-  https://huggingface.co/3DAIGC/LAM_audio2exp/resolve/main/LAM_audio2exp_streaming.tar
+wget -O models/LAM_audio2exp.tar \
+  https://huggingface.co/3DAIGC/LAM_audio2exp/resolve/main/LAM_audio2exp.tar
 
 # Wav2Vec2 モデル
 git lfs install
@@ -43,16 +43,19 @@ git clone https://huggingface.co/facebook/wav2vec2-base-960h models/wav2vec2-bas
 対応するディレクトリ構造（どちらでもOK）:
 ```
 models/
-├── LAM_audio2exp_streaming.tar          ← フラット配置（推奨）
+├── LAM_audio2exp.tar                    ← Non-Streaming フルモデル（推奨）
 └── wav2vec2-base-960h/
 
 # または
 models/
 ├── LAM_audio2exp/
 │   └── pretrained_models/
-│       └── lam_audio2exp_streaming.tar  ← サブディレクトリ配置
+│       └── lam_audio2exp.tar            ← サブディレクトリ配置
 └── wav2vec2-base-960h/
 ```
+
+**注意**: Streaming 軽量モデル (`LAM_audio2exp_streaming.tar`) もフォールバックとして使えるが、
+Non-Streaming フルモデルの方が品質が大幅に高い（Transformer有効、5016 identity クラス）。
 
 #### 1b. ローカルテスト
 
@@ -72,28 +75,28 @@ curl http://localhost:8081/health
 #### 1c. Docker ビルド & Cloud Run デプロイ
 
 ```bash
-# ビルド
-docker build -t audio2exp-service .
-
-# GCR にプッシュ
-docker tag audio2exp-service gcr.io/PROJECT_ID/audio2exp-service
-docker push gcr.io/PROJECT_ID/audio2exp-service
-
-# Cloud Run デプロイ
+# Cloud Run デプロイ（--source 方式、推奨）
+# ※ modelsディレクトリに Non-Streaming モデルを配置してから実行
 gcloud run deploy audio2exp-service \
-  --image gcr.io/PROJECT_ID/audio2exp-service \
-  --platform managed \
+  --source . \
+  --project hp-support-477512 \
   --region us-central1 \
-  --memory 4Gi \
-  --cpu 2 \
-  --timeout 120 \
+  --memory 8Gi \
+  --cpu 4 \
+  --timeout 300 \
   --min-instances 1 \
   --max-instances 3 \
-  --set-env-vars "MODEL_DIR=/app/models,DEVICE=cpu"
+  --cpu-boost \
+  --set-env-vars "MODEL_DIR=/app/models,DEVICE=cpu,WARMUP_TIMEOUT=0,ENGINE_LOAD_TIMEOUT=1500"
 ```
 
-**注意**: `min-instances=1` でコールドスタートを排除。
-Wav2Vec2のモデルロードに数秒かかるため、初回リクエストの遅延を防ぐ。
+**成功パラメータの根拠:**
+- `--memory 8Gi`: torch + transformers + LAMフルモデル(Transformer付き) の同時ロードに必要
+- `--cpu 4`: ロード高速化
+- `--cpu-boost`: 起動時のCPUブースト
+- `ENGINE_LOAD_TIMEOUT=1500`: CPUでのモデルロードに約19分→25分の猶予
+- `WARMUP_TIMEOUT=0`: warmup（ダミー推論）をスキップ（CPUタイムアウト回避）
+- `--min-instances 1`: コールドスタートを排除
 
 ### 2. gourmet-support の設定
 
@@ -120,8 +123,8 @@ gcloud run services update gourmet-support \
 | モデル | サイズ | 用途 |
 |--------|--------|------|
 | wav2vec2-base-960h | ~360MB | 音響特徴量抽出 |
-| LAM_audio2exp | ~50MB (推定) | 表情デコーダー |
-| Total | ~410MB | |
+| LAM_audio2exp (Non-Streaming) | ~400MB | 表情デコーダー (6層Transformer + 5016 identity) |
+| Total | ~760MB | |
 
 ## API リファレンス
 
@@ -176,9 +179,9 @@ gcloud run services update gourmet-support \
 
 | 指標 | 目標値 | 備考 |
 |------|--------|------|
-| 推論レイテンシ | < 2秒 (1文あたり) | CPU, 2vCPU |
-| TTS + A2E合計 | < 3秒 | 並列化不可 (TTS→A2E) |
-| メモリ使用量 | < 1.5GB | モデルロード込み |
+| 推論レイテンシ | < 5秒 (1文あたり) | CPU, 4vCPU, フルモデル |
+| TTS + A2E合計 | < 7秒 | 並列化不可 (TTS→A2E) |
+| メモリ使用量 | < 6GB | フルモデル(Transformer付き) ロード込み |
 | 同時リクエスト | 3 | max-instances=3 |
 
 ## フォールバック動作

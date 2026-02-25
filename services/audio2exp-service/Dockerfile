@@ -26,5 +26,6 @@ ENV DEVICE=cpu
 
 EXPOSE 8080
 
-# Shell form so $PORT is expanded at runtime (Cloud Run injects PORT=8080)
-CMD gunicorn --bind "0.0.0.0:${PORT}" --timeout 120 --workers 1 --threads 4 app:app
+# Shell form so env vars are expanded at runtime (Cloud Run injects PORT=8080)
+# GUNICORN_TIMEOUT: リクエスト処理タイムアウト (エンジンロードはバックグラウンド)
+CMD gunicorn --bind "0.0.0.0:${PORT}" --timeout ${GUNICORN_TIMEOUT:-300} --workers 1 --threads 4 app:app

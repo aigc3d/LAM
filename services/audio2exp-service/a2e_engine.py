@@ -85,7 +85,6 @@ class Audio2ExpressionEngine:
         self._ready = False
         self._use_infer = False  # INFER パイプライン使用フラグ
         self._infer = None       # INFER パイプラインインスタンス
-        self._infer_context = None  # ストリーミング推論のコンテキスト
 
         # デバイス決定
         import torch
@@ -143,51 +142,63 @@ class Audio2ExpressionEngine:
         """
         A2E チェックポイントファイルを探索。
 
-        HuggingFace からダウンロードした LAM_audio2exp_streaming.tar は
-        gzip 圧縮の tar アーカイブで、中に pretrained_models/lam_audio2exp_streaming.tar
-        (これが実際の PyTorch チェックポイント) が入っている。
-        自動的に展開して内側のチェックポイントを返す。
+        Non-Streaming フルモデル (lam_audio2exp.tar) を優先検索。
+        フォールバックとして Streaming モデルも検索。
+
+        HuggingFace からダウンロードした tar は gzip 圧縮の tar アーカイブで、
+        中に pretrained_models/lam_audio2exp.tar (PyTorch チェックポイント) が
+        入っている。自動的に展開して内側のチェックポイントを返す。
         """
-        import gzip
         import tarfile
 
         model_dir = self.model_dir
 
-        # 実際の PyTorch チェックポイント (展開済み) を優先検索
-        search_patterns = [
-            model_dir / "pretrained_models" / "lam_audio2exp_streaming.tar",
-            model_dir / "pretrained_models" / "LAM_audio2exp_streaming.tar",
-            model_dir / "lam_audio2exp_streaming.pth",
-            model_dir / "LAM_audio2exp_streaming.pth",
-            model_dir / "LAM_audio2exp" / "pretrained_models" / "lam_audio2exp_streaming.tar",
-            model_dir / "LAM_audio2exp" / "pretrained_models" / "LAM_audio2exp_streaming.tar",
+        # 1. Non-Streaming フルモデル (優先)
+        full_model_patterns = [
+            model_dir / "pretrained_models" / "lam_audio2exp.tar",
+            model_dir / "pretrained_models" / "LAM_audio2exp.tar",
+            model_dir / "lam_audio2exp.pth",
+            model_dir / "LAM_audio2exp" / "pretrained_models" / "lam_audio2exp.tar",
+            model_dir / "LAM_audio2exp" / "pretrained_models" / "LAM_audio2exp.tar",
         ]
-
-        for path in search_patterns:
+        for path in full_model_patterns:
             if path.exists():
+                logger.info(f"[A2E Engine] Found Non-Streaming full model: {path}")
                 return str(path)
 
-        # 外側の gzip tar を見つけたら自動展開
+        # 2. 外側の gzip tar を展開 (Non-Streaming 優先)
         outer_candidates = [
-            model_dir / "LAM_audio2exp_streaming.tar",
-            model_dir / "lam_audio2exp_streaming.tar",
+            (model_dir / "LAM_audio2exp.tar", "lam_audio2exp.tar"),
+            (model_dir / "lam_audio2exp.tar", "lam_audio2exp.tar"),
+            (model_dir / "LAM_audio2exp_streaming.tar", "lam_audio2exp_streaming.tar"),
+            (model_dir / "lam_audio2exp_streaming.tar", "lam_audio2exp_streaming.tar"),
         ]
-        for outer_path in outer_candidates:
+        for outer_path, inner_name in outer_candidates:
             if outer_path.exists():
                 try:
                     with tarfile.open(str(outer_path), "r:gz") as tf:
                         tf.extractall(path=str(model_dir))
                         logger.info(f"[A2E Engine] Extracted {outer_path}")
-                    # 展開後に内側のチェックポイントを探索
-                    inner = model_dir / "pretrained_models" / "lam_audio2exp_streaming.tar"
+                    inner = model_dir / "pretrained_models" / inner_name
                     if inner.exists():
                         return str(inner)
                 except Exception as e:
                     logger.warning(f"[A2E Engine] Failed to extract {outer_path}: {e}")
 
-        # ワイルドカード検索
+        # 3. Streaming モデル (フォールバック)
+        streaming_patterns = [
+            model_dir / "pretrained_models" / "lam_audio2exp_streaming.tar",
+            model_dir / "pretrained_models" / "LAM_audio2exp_streaming.tar",
+            model_dir / "lam_audio2exp_streaming.pth",
+            model_dir / "LAM_audio2exp" / "pretrained_models" / "lam_audio2exp_streaming.tar",
+        ]
+        for path in streaming_patterns:
+            if path.exists():
+                logger.warning(f"[A2E Engine] Non-Streaming model not found, falling back to Streaming: {path}")
+                return str(path)
+
+        # 4. ワイルドカード検索
         tar_files = list(model_dir.rglob("*audio2exp*.tar"))
-        # 外側の gzip tar は除外
         tar_files = [f for f in tar_files if f.stat().st_size < 400_000_000]
         if tar_files:
             return str(tar_files[0])
@@ -256,9 +267,16 @@ class Audio2ExpressionEngine:
             os.environ.setdefault("MASTER_ADDR", "localhost")
             os.environ.setdefault("MASTER_PORT", "12345")
 
-            # config ファイルのパス
-            config_file = os.path.join(lam_path, "configs",
-                                       "lam_audio2exp_config_streaming.py")
+            # config ファイルのパス — チェックポイント名からモデル種別を判定
+            is_streaming = "streaming" in checkpoint_path.lower()
+            if is_streaming:
+                config_name = "lam_audio2exp_config_streaming.py"
+                logger.info("[A2E Engine] Using STREAMING config (lightweight model)")
+            else:
+                config_name = "lam_audio2exp_config.py"
+                logger.info("[A2E Engine] Using NON-STREAMING config (full model with 6-layer Transformer)")
+
+            config_file = os.path.join(lam_path, "configs", config_name)
             if not os.path.exists(config_file):
                 logger.warning(f"[A2E Engine] Config not found: {config_file}")
                 return False
@@ -309,30 +327,35 @@ class Audio2ExpressionEngine:
             self._infer.model.to(device)
             self._infer.model.eval()
 
-            # Warmup 推論 (タイムアウト付き、失敗しても致命的ではない)
-            logger.info("[A2E Engine] Running warmup inference (timeout=120s)...")
-            import threading as _thr
-            warmup_result = [None]  # [None]=running, [True]=ok, [Exception]=fail
-
-            def _warmup():
-                try:
-                    dummy_audio = np.zeros(INFER_INPUT_SAMPLE_RATE, dtype=np.float32)
-                    self._infer.infer_streaming_audio(
-                        audio=dummy_audio, ssr=INFER_INPUT_SAMPLE_RATE, context=None
-                    )
-                    warmup_result[0] = True
-                except Exception as exc:
-                    warmup_result[0] = exc
-
-            t = _thr.Thread(target=_warmup, daemon=True)
-            t.start()
-            t.join(timeout=120)
-            if t.is_alive():
-                logger.warning("[A2E Engine] Warmup timed out after 120s (non-fatal, inference may be slow on CPU)")
-            elif isinstance(warmup_result[0], Exception):
-                logger.warning(f"[A2E Engine] Warmup failed (non-fatal): {warmup_result[0]}")
+            # Warmup 推論 (WARMUP_TIMEOUT 環境変数で制御)
+            # WARMUP_TIMEOUT=0 でスキップ（成功事例のデプロイパラメータ）
+            warmup_timeout = int(os.environ.get("WARMUP_TIMEOUT", "120"))
+            if warmup_timeout == 0:
+                logger.info("[A2E Engine] Warmup SKIPPED (WARMUP_TIMEOUT=0)")
             else:
-                logger.info("[A2E Engine] Warmup succeeded")
+                logger.info(f"[A2E Engine] Running warmup inference (batch mode, timeout={warmup_timeout}s)...")
+                import threading as _thr
+                warmup_result = [None]  # [None]=running, [True]=ok, [Exception]=fail
+
+                def _warmup():
+                    try:
+                        dummy_audio = np.zeros(INFER_INPUT_SAMPLE_RATE, dtype=np.float32)
+                        self._infer.infer_batch_audio(
+                            audio=dummy_audio, ssr=INFER_INPUT_SAMPLE_RATE
+                        )
+                        warmup_result[0] = True
+                    except Exception as exc:
+                        warmup_result[0] = exc
+
+                t = _thr.Thread(target=_warmup, daemon=True)
+                t.start()
+                t.join(timeout=warmup_timeout)
+                if t.is_alive():
+                    logger.warning(f"[A2E Engine] Warmup timed out after {warmup_timeout}s (non-fatal, inference may be slow on CPU)")
+                elif isinstance(warmup_result[0], Exception):
+                    logger.warning(f"[A2E Engine] Warmup failed (non-fatal): {warmup_result[0]}")
+                else:
+                    logger.info("[A2E Engine] Warmup succeeded")
 
             logger.info("[A2E Engine] INFER pipeline loaded successfully!")
             return True
@@ -402,46 +425,28 @@ class Audio2ExpressionEngine:
 
     def _process_with_infer(self, audio_pcm: np.ndarray, duration: float) -> dict:
         """
-        INFER パイプラインで推論。
+        INFER パイプラインで推論 (バッチモード)。
 
-        infer_streaming_audio() を使用:
-        - 音声をチャンクに分割
-        - チャンクごとに推論 (コンテキスト引き継ぎ)
-        - ポストプロセッシング込み (smooth_mouth, frame_blending,
-          savitzky_golay, symmetrize, eye_blinks)
+        infer_batch_audio() を使用:
+        - 音声全体を一括でモデルに入力 (チャンク分割なし)
+        - 完全版ポストプロセッシング (smooth_mouth_movements,
+          apply_random_brow_movement, savitzky_golay, symmetrize, eye_blinks)
         """
-        chunk_samples = INFER_INPUT_SAMPLE_RATE  # 1秒チャンク
-        all_expressions = []
-        context = None
-
         try:
-            for start in range(0, len(audio_pcm), chunk_samples):
-                end = min(start + chunk_samples, len(audio_pcm))
-                chunk = audio_pcm[start:end]
+            result = self._infer.infer_batch_audio(
+                audio=audio_pcm, ssr=INFER_INPUT_SAMPLE_RATE
+            )
+            expression = result.get("expression")
 
-                # 極端に短いチャンクはスキップ
-                if len(chunk) < INFER_INPUT_SAMPLE_RATE // 10:
-                    continue
-
-                result, context = self._infer.infer_streaming_audio(
-                    audio=chunk, ssr=INFER_INPUT_SAMPLE_RATE, context=context
-                )
-                expr = result.get("expression")
-                if expr is not None:
-                    all_expressions.append(expr.astype(np.float32))
-
-            if not all_expressions:
+            if expression is None or len(expression) == 0:
                 logger.warning("[A2E Engine] INFER produced no expression data")
                 num_frames = max(1, int(duration * A2E_OUTPUT_FPS))
                 expression = np.zeros((num_frames, 52), dtype=np.float32)
-            else:
-                expression = np.concatenate(all_expressions, axis=0)
 
-            logger.info(f"[A2E Engine] INFER: {expression.shape[0]} frames, "
+            logger.info(f"[A2E Engine] INFER batch: {expression.shape[0]} frames, "
                         f"jawOpen range=[{expression[:, 24].min():.3f}, "
-                        f"{expression[:, 24].max():.3f}]")  # jawOpen = index 24 in INFER order
+                        f"{expression[:, 24].max():.3f}]")
 
-            # フレームリストに変換
             frames = [frame.tolist() for frame in expression]
 
             return {
@@ -451,13 +456,11 @@ class Audio2ExpressionEngine:
             }
 
         except Exception as e:
-            logger.error(f"[A2E Engine] INFER inference error: {e}")
+            logger.error(f"[A2E Engine] INFER batch inference error: {e}")
             traceback.print_exc()
-            # エラー時はフォールバック
             logger.warning("[A2E Engine] Falling back to Wav2Vec2 for this request")
             if hasattr(self, 'wav2vec_model'):
                 return self._process_with_fallback(audio_pcm, duration)
-            # Wav2Vec2 もない場合は空フレームを返す
             num_frames = max(1, int(duration * A2E_OUTPUT_FPS))
             return {
                 "names": ARKIT_BLENDSHAPE_NAMES_INFER,
