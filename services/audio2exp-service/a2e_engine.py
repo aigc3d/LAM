@@ -99,9 +99,35 @@ class Audio2ExpressionEngine:
         self._initialize()
 
     def _initialize(self):
-        """エンジン初期化 - INFER パイプラインを優先的にロード"""
-        # 1. INFER パイプラインを試行
-        if self._try_load_infer_pipeline():
+        """エンジン初期化 - INFER パイプラインを優先的にロード（タイムアウト付き）"""
+        import threading
+
+        # INFER パイプラインのロードタイムアウト (秒)
+        # Cloud Run CPU ではモデルビルドに10分以上かかる場合がある
+        infer_timeout = int(os.environ.get("INFER_LOAD_TIMEOUT", "600"))
+        logger.info(f"[A2E Engine] INFER pipeline load timeout: {infer_timeout}s")
+
+        # 1. INFER パイプラインをタイムアウト付きスレッドで試行
+        infer_result = [None]  # None=running, True=ok, Exception=fail
+
+        def _try_infer():
+            try:
+                infer_result[0] = self._try_load_infer_pipeline()
+            except Exception as e:
+                infer_result[0] = e
+
+        t = threading.Thread(target=_try_infer, daemon=True)
+        t.start()
+        t.join(timeout=infer_timeout)
+
+        if t.is_alive():
+            logger.warning(
+                f"[A2E Engine] INFER pipeline timed out after {infer_timeout}s "
+                f"(model build too slow on CPU). Falling back to Wav2Vec2."
+            )
+        elif isinstance(infer_result[0], Exception):
+            logger.warning(f"[A2E Engine] INFER pipeline failed: {infer_result[0]}")
+        elif infer_result[0] is True:
             self._use_infer = True
             self._ready = True
             logger.info("[A2E Engine] Ready (INFER pipeline mode)")
@@ -258,8 +284,13 @@ class Audio2ExpressionEngine:
         logger.info(f"[A2E Engine] Wav2Vec2: {wav2vec_dir}")
 
         try:
+            import time as _time
+
+            t_import = _time.time()
+            logger.info("[A2E Engine] Importing INFER modules...")
             from engines.defaults import default_config_parser
             from engines.infer import INFER
+            logger.info(f"[A2E Engine] Import done in {_time.time() - t_import:.1f}s")
 
             # DDP 環境変数 (single-process 用)
             os.environ.setdefault("WORLD_SIZE", "1")
@@ -310,8 +341,10 @@ class Audio2ExpressionEngine:
                 "brow_movement": True,
             }
 
+            t_cfg = _time.time()
             logger.info(f"[A2E Engine] Loading config: {config_file}")
             cfg = default_config_parser(config_file, cfg_options)
+            logger.info(f"[A2E Engine] Config loaded in {_time.time() - t_cfg:.1f}s")
 
             # default_setup() をスキップ (DDP 関連の処理は不要)
             # 必要な設定を手動で設定
@@ -322,13 +355,17 @@ class Audio2ExpressionEngine:
             cfg.batch_size_val_per_gpu = 1
             cfg.batch_size_test_per_gpu = 1
 
-            logger.info("[A2E Engine] Building INFER model...")
+            t_build = _time.time()
+            logger.info("[A2E Engine] Building INFER model (this may take several minutes on CPU)...")
             self._infer = INFER.build(dict(type=cfg.infer.type, cfg=cfg))
+            logger.info(f"[A2E Engine] INFER.build() done in {_time.time() - t_build:.1f}s")
 
             # CPU + eval mode
             device = torch.device(self.device)
+            logger.info("[A2E Engine] Moving model to device and setting eval mode...")
             self._infer.model.to(device)
             self._infer.model.eval()
+            logger.info(f"[A2E Engine] Model ready on {device}")
 
             # Warmup 推論 (WARMUP_TIMEOUT 環境変数で制御)
             # WARMUP_TIMEOUT=0 でスキップ（成功事例のデプロイパラメータ）
