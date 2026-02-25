@@ -423,9 +423,6 @@ class LAMAvatarController {
 
   // FLAME LBS 安全上限。これを超えるとメッシュ数値爆発
   private static readonly SAFE_MAX = 0.7;
-  // 旧2ch制限の口の動き上限（SDK全52ch対応判明により不要 → JAW_MAX/MOUTH_MAXは未使用）
-  // private static readonly JAW_MAX = 0.30;
-  // private static readonly MOUTH_MAX = 0.20;
   private sdkInfoLogged = false; // SDK内部情報のワンタイムログ
 
   /**
@@ -497,52 +494,6 @@ class LAMAvatarController {
    */
   private safeReturnExpression(): ExpressionData {
     return { ...this.expressionData };
-  }
-
-  /**
-   * SDK制約の回避: 母音チャンネル → jawOpen/lowerDown 合成
-   *
-   * gaussian-splat-renderer-for-lam SDK は jawOpen と mouthLowerDown の
-   * 2値しか FLAME メッシュ変形に使わない（__testLipSync() 診断で確認済み）。
-   * 他の母音チャンネル（smile, funnel, pucker, stretch）の情報を
-   * この2チャンネルに合成して、母音の口形状差を近似的に表現する。
-   *
-   * ※重みは控えめに設定（女性キャラの自然な口の動き範囲に収める）
-   */
-  private remapForSdkLimitation(data: ExpressionData): ExpressionData {
-    const jaw = data['jawOpen'] || 0;
-    const lowerDownL = data['mouthLowerDownLeft'] || 0;
-    const lowerDownR = data['mouthLowerDownRight'] || 0;
-    const lowerDown = (lowerDownL + lowerDownR) * 0.5;
-    const funnel = data['mouthFunnel'] || 0;
-    const pucker = data['mouthPucker'] || 0;
-    const smile = ((data['mouthSmileLeft'] || 0) + (data['mouthSmileRight'] || 0)) * 0.5;
-    const stretch = ((data['mouthStretchLeft'] || 0) + (data['mouthStretchRight'] || 0)) * 0.5;
-
-    // jawOpen 合成: 母音チャンネルの寄与を加算し、JAW_MAXでキャップ
-    const compositeJaw = Math.min(LAMAvatarController.JAW_MAX,
-      jaw
-      + smile * 0.3
-      + funnel * 0.2
-      + pucker * 0.12
-      + stretch * 0.2
-    );
-
-    // mouthLowerDown 合成: 母音特性を下唇の動きに変換、MOUTH_MAXでキャップ
-    const compositeLowerDown = Math.min(LAMAvatarController.MOUTH_MAX,
-      Math.max(0,
-        lowerDown
-        + smile * 0.2
-        + stretch * 0.15
-        - pucker * 0.1
-      )
-    );
-
-    data['jawOpen'] = compositeJaw;
-    data['mouthLowerDownLeft'] = compositeLowerDown;
-    data['mouthLowerDownRight'] = compositeLowerDown;
-
-    return data;
   }
 
   /**
