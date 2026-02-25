@@ -42,16 +42,13 @@ engine = None
 _engine_error = None
 _engine_lock = threading.Lock()
 
-ENGINE_LOAD_TIMEOUT = int(os.getenv("ENGINE_LOAD_TIMEOUT", "1500"))
-
 
 def _load_engine():
-    """バックグラウンドスレッドでエンジンをロード（ENGINE_LOAD_TIMEOUT で制御）"""
+    """バックグラウンドスレッドでエンジンをロード"""
     global engine, _engine_error
     try:
         from a2e_engine import Audio2ExpressionEngine
-        logger.info(f"[Audio2Exp] Loading engine: model_dir={MODEL_DIR}, device={DEVICE}, "
-                    f"timeout={ENGINE_LOAD_TIMEOUT}s")
+        logger.info(f"[Audio2Exp] Loading engine: model_dir={MODEL_DIR}, device={DEVICE}")
         t0 = time.time()
         eng = Audio2ExpressionEngine(model_dir=MODEL_DIR, device=DEVICE)
         elapsed = time.time() - t0
@@ -59,9 +56,8 @@ def _load_engine():
             engine = eng
         logger.info(f"[Audio2Exp] Engine ready in {elapsed:.1f}s")
     except Exception as e:
-        elapsed = time.time() - t0 if 't0' in dir() else 0
         with _engine_lock:
-            _engine_error = f"Engine failed after {elapsed:.0f}s: {e}"
+            _engine_error = str(e)
         logger.error(f"[Audio2Exp] Engine failed to load: {e}", exc_info=True)
 
 

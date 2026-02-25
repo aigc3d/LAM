@@ -166,61 +166,6 @@ class Audio2ExpressionInfer(InferBase):
 
         logger.info("<<<<<<<<<<<<<<<<< End Evaluation <<<<<<<<<<<<<<<<<")
 
-    def infer_batch_audio(self,
-                          audio: np.ndarray,
-                          ssr: float = 16000):
-        """
-        バッチ推論: 音声全体を一括処理。
-
-        streaming と異なり、チャンク分割なしで全音声をモデルに入力。
-        ポストプロセッシングも完全版(smooth_mouth + brow_movement + savgol +
-        symmetrize + eye_blinks)を適用。
-
-        Args:
-            audio: PCM float32 音声データ
-            ssr: サンプルレート (default: 16000)
-
-        Returns:
-            {"code": SUCCESS, "expression": np.ndarray[T, 52], "headpose": None}
-        """
-        # リサンプリング
-        if ssr != self.cfg.audio_sr:
-            audio = librosa.resample(
-                audio.astype(np.float32), orig_sr=ssr, target_sr=self.cfg.audio_sr
-            )
-
-        frame_length = math.ceil(audio.shape[0] / self.cfg.audio_sr * 30)
-        volume = librosa.feature.rms(
-            y=audio,
-            frame_length=int(1 / 30 * self.cfg.audio_sr),
-            hop_length=int(1 / 30 * self.cfg.audio_sr),
-        )[0]
-        if volume.shape[0] > frame_length:
-            volume = volume[:frame_length]
-
-        with torch.no_grad():
-            input_dict = {
-                'id_idx': F.one_hot(
-                    torch.tensor(self.cfg.id_idx),
-                    self.cfg.model.backbone.num_identity_classes,
-                ).to(self.device)[None, ...],
-                'input_audio_array': torch.FloatTensor(audio).to(self.device)[None, ...],
-            }
-            output_dict = self.model(input_dict)
-
-        out_exp = output_dict['pred_exp'].squeeze().cpu().numpy()
-
-        # バッチ用ポストプロセッシング (infer() と同じパイプライン)
-        out_exp = smooth_mouth_movements(out_exp, 0, volume)
-        out_exp = apply_random_brow_movement(out_exp, volume)
-        out_exp = self.blendshape_postprocess(out_exp)
-
-        return {
-            "code": RETURN_CODE['SUCCESS'],
-            "expression": out_exp,
-            "headpose": None,
-        }
-
     def infer_streaming_audio(self,
                            audio: np.ndarray,
                            ssr: float,
