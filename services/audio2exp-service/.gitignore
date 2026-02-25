@@ -1,0 +1,4 @@
+# Model files (baked into Docker image via .gcloudignore, not committed to git)
+models/
+__pycache__/
+*.pyc
