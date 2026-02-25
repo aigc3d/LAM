@@ -104,8 +104,8 @@ class Audio2ExpressionEngine:
 
         # INFER パイプラインのロードタイムアウト (秒)
         # tar事前解凍済みでも INFER.build() にCPUで10-15分かかる
-        # デフォルト1200s(20分)で完走を待つ。fallbackは最終手段。
-        infer_timeout = int(os.environ.get("INFER_LOAD_TIMEOUT", "1200"))
+        # 以前の成功実績: ENGINE_LOAD_TIMEOUT=1500 で完走
+        infer_timeout = int(os.environ.get("INFER_LOAD_TIMEOUT", "1500"))
         logger.info(f"[A2E Engine] INFER pipeline load timeout: {infer_timeout}s")
 
         # 1. INFER パイプラインをタイムアウト付きスレッドで試行
