@@ -488,6 +488,13 @@ class Audio2ExpressionEngine:
                         f"jawOpen range=[{expression[:, 24].min():.3f}, "
                         f"{expression[:, 24].max():.3f}]")
 
+            # 表情スケーリング（モデル出力が控えめなため補正）
+            scale = float(os.environ.get("EXPRESSION_SCALE", "1.8"))
+            if scale != 1.0:
+                expression = np.clip(expression * scale, 0.0, 1.0)
+                logger.info(f"[A2E Engine] Scaled x{scale}: jawOpen range="
+                            f"[{expression[:, 24].min():.3f}, {expression[:, 24].max():.3f}]")
+
             frames = [frame.tolist() for frame in expression]
 
             return {
