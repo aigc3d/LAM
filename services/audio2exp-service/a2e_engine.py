@@ -619,8 +619,18 @@ class Audio2ExpressionEngine:
         silence_mask = speech_activity < 0.1
         blendshapes[silence_mask] *= 0.1
 
-        # スムージング
-        if n_frames > 3:
+        # スムージング（2パス: Gaussian-like kernel でジッター除去）
+        # INFER パイプラインの savitzky_golay に近い効果を近似
+        if n_frames > 5:
+            # Pass 1: 5-frame Gaussian-like kernel (σ≈1.0)
+            kernel1 = np.array([0.06, 0.24, 0.40, 0.24, 0.06])
+            for i in range(52):
+                blendshapes[:, i] = np.convolve(blendshapes[:, i], kernel1, mode='same')
+            # Pass 2: 3-frame uniform for additional smoothness
+            kernel2 = np.ones(3) / 3
+            for i in range(52):
+                blendshapes[:, i] = np.convolve(blendshapes[:, i], kernel2, mode='same')
+        elif n_frames > 3:
             kernel = np.ones(3) / 3
             for i in range(52):
                 blendshapes[:, i] = np.convolve(blendshapes[:, i], kernel, mode='same')

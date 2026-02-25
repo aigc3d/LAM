@@ -180,6 +180,11 @@ class LAMAvatarController {
   // Fade-in/out: smooth transition from/to neutral to avoid visual artifacts
   private readonly FADE_IN_FRAMES = 6; // 6 frames at 30fps = 200ms fade
   private fadeOutStartTime: number | null = null;
+  // Temporal smoothing (EMA) to eliminate jitter/choppy vibration
+  // Lower = smoother but more latent, Higher = more responsive but more jitter
+  // 0.35 at 60fps ≈ 95% convergence in ~130ms (good balance for lip-sync)
+  private readonly EMA_ALPHA = 0.35;
+  private smoothedExpression: ExpressionData = {};
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -405,6 +410,7 @@ class LAMAvatarController {
 
   private resetExpression(): void {
     ARKIT_CHANNEL_NAMES.forEach(name => { this.expressionData[name] = 0; });
+    this.smoothedExpression = {};
     console.log('[LAM Avatar] Expression reset to neutral');
   }
 
@@ -538,15 +544,21 @@ class LAMAvatarController {
         const frameIndex = Math.floor((effectiveTimeMs / 1000) * this.frameRate);
 
         if (frameIndex >= 0 && frameIndex < this.frameBuffer.length) {
-          this.expressionData = {};
           const frame = this.frameBuffer[frameIndex];
           // Fade-in: gradually blend from neutral (0) to actual values
           // to prevent visual artifacts (Gaussian Splat distortion) at speech start
           const fadeAlpha = frameIndex < this.FADE_IN_FRAMES
             ? frameIndex / this.FADE_IN_FRAMES
             : 1.0;
+          // Apply EMA temporal smoothing to eliminate jitter
+          // smoothed = prev + alpha * (target - prev)
+          this.expressionData = {};
           Object.keys(frame).forEach((name: string) => {
-            this.expressionData[name] = frame[name] * fadeAlpha;
+            const target = frame[name] * fadeAlpha;
+            const prev = this.smoothedExpression[name] || 0;
+            const smoothed = prev + this.EMA_ALPHA * (target - prev);
+            this.expressionData[name] = smoothed;
+            this.smoothedExpression[name] = smoothed;
           });
 
           // ★ SDK全52ch対応判明: remapForSdkLimitation() は不要
@@ -573,14 +585,17 @@ class LAMAvatarController {
           return this.safeReturnExpression();
 
         } else if (frameIndex >= this.frameBuffer.length) {
-          // Past buffer end - hold last frame while TTS still playing
+          // Past buffer end - hold last frame while TTS still playing (with EMA)
           const lastFrame = this.frameBuffer[this.frameBuffer.length - 1];
           if (lastFrame) {
             this.expressionData = {};
             Object.keys(lastFrame).forEach((name: string) => {
-              this.expressionData[name] = lastFrame[name];
+              const target = lastFrame[name];
+              const prev = this.smoothedExpression[name] || 0;
+              const smoothed = prev + this.EMA_ALPHA * (target - prev);
+              this.expressionData[name] = smoothed;
+              this.smoothedExpression[name] = smoothed;
             });
-            // remapForSdkLimitation 不要: SDK全52ch対応
           }
           if (!this.externalTtsPlayer.ended) {
             return this.safeReturnExpression();
@@ -667,6 +682,7 @@ class LAMAvatarController {
     this.ttsTransitioning = true; // 新TTS開始まで早期fade-outを抑制
     this.ttsLastCurrentTime = 0;
     this.fadeOutStartTime = null;
+    this.smoothedExpression = {}; // Reset EMA state for new segment
     console.log('[LAM Avatar] Frame buffer cleared (transitioning)');
   }
 
