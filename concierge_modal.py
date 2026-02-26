@@ -41,8 +41,8 @@ image = (
     )
     .apt_install(
         "git", "libgl1-mesa-glx", "libglib2.0-0", "ffmpeg", "wget", "tree",
-        "libusb-1.0-0", "build-essential", "ninja-build",
-        "clang", "llvm", "libclang-dev",
+        "libusb-1.0-0", "build-essential",
+        "gcc", "g++", "ninja-build",
         # Blender runtime deps
         "xz-utils", "libxi6", "libxxf86vm1", "libxfixes3",
         "libxrender1", "libxkbcommon0", "libsm6",
@@ -67,9 +67,11 @@ image = (
         "FORCE_CUDA": "1",
         "CUDA_HOME": "/usr/local/cuda",
         "MAX_JOBS": "4",
-        "TORCH_CUDA_ARCH_LIST": "8.6",
-        "CC": "clang",
-        "CXX": "clang++",
+        "TORCH_CUDA_ARCH_LIST": "8.9",
+        "CC": "gcc",
+        "CXX": "g++",
+        "TORCH_EXTENSIONS_DIR": "/root/.cache/torch_extensions",
+        "TORCHDYNAMO_DISABLE": "1",
     })
     # CUDA extensions
     .run_commands(
@@ -117,7 +119,7 @@ image = (
     # More CUDA extensions
     .run_commands(
         "pip install git+https://github.com/ashawkey/diff-gaussian-rasterization.git --no-build-isolation",
-        "pip install git+https://github.com/ShenhanQian/nvdiffrast.git@backface-culling --no-build-isolation",
+        "pip install git+https://github.com/NVlabs/nvdiffrast.git --no-build-isolation",
     )
     # FBX SDK
     .run_commands(
@@ -144,6 +146,16 @@ image = (
         "build_ext --inplace",
     )
 )
+
+
+def _precompile_nvdiffrast():
+    """Pre-compile nvdiffrast CUDA kernels during image build to avoid cold-start delay."""
+    import torch
+    import nvdiffrast.torch as dr
+    print("nvdiffrast pre-compiled OK")
+
+
+image = image.run_function(_precompile_nvdiffrast)
 
 
 def _download_missing_models():
@@ -728,22 +740,14 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking, mot
         yield f"Error: {str(e)}\n\nTraceback:\n{tb}", None, None, None, None
 
 
-@app.cls(gpu="L4", image=image, volumes={OUTPUT_VOL_PATH: output_vol}, timeout=600, scaledown_window=10)
+@app.cls(gpu="L4", image=image, volumes={OUTPUT_VOL_PATH: output_vol}, timeout=600, scaledown_window=300, min_containers=0, max_containers=1)
 class Generator:
     @modal.enter()
     def setup(self):
         import shutil
         os.chdir("/root/LAM")
         sys.path.insert(0, "/root/LAM")
-        import torch.utils.cpp_extension as _cext
-        _orig_load = _cext.load
-        def _patched_load(*args, **kwargs):
-            cflags = list(kwargs.get("extra_cflags", []) or [])
-            if "-Wno-c++11-narrowing" not in cflags: cflags.append("-Wno-c++11-narrowing")
-            kwargs["extra_cflags"] = cflags
-            return _orig_load(*args, **kwargs)
-        _cext.load = _patched_load
-        
+
         print("Initializing LAM pipeline on GPU...")
         self.cfg, self.lam, self.flametracking = _init_lam_pipeline()
         print("GPU pipeline ready.")
