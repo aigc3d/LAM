@@ -145,6 +145,30 @@ image = (
         "include_dirs=[numpy.get_include()])\" "
         "build_ext --inplace",
     )
+    # BIRD-MONSTER FIX: Remove @torch.compile from cloned LAM source files.
+    # These decorators cause silent numerical corruption on Modal L4 GPUs
+    # with CUDA 11.8 + PyTorch 2.3.0. Setting TORCHDYNAMO_DISABLE=1 at runtime
+    # is NOT sufficient because the decorator wraps the function at import time.
+    .run_commands(
+        "sed -i 's/^    @torch.compile$/    # @torch.compile  # DISABLED: causes bird-monster on Modal/' "
+        "/root/LAM/lam/models/modeling_lam.py",
+        "sed -i 's/^    @torch.compile$/    # @torch.compile  # DISABLED: causes bird-monster on Modal/' "
+        "/root/LAM/lam/models/encoders/dinov2_fusion_wrapper.py",
+        "sed -i 's/^    @torch.compile$/    # @torch.compile  # DISABLED: causes bird-monster on Modal/' "
+        "/root/LAM/lam/losses/tvloss.py",
+        "sed -i 's/^    @torch.compile$/    # @torch.compile  # DISABLED: causes bird-monster on Modal/' "
+        "/root/LAM/lam/losses/pixelwise.py",
+        "echo '[BIRD-FIX] Removed all @torch.compile decorators from LAM source'",
+    )
+    # Pre-download DINOv2 pretrained weights during image build to avoid
+    # runtime download dependency from dl.fbaipublicfiles.com
+    .run_commands(
+        "python -c \""
+        "import torch; "
+        "url='https://dl.fbaipublicfiles.com/dinov2/dinov2_vitl14/dinov2_vitl14_reg4_pretrain.pth'; "
+        "torch.hub.load_state_dict_from_url(url, map_location='cpu'); "
+        "print('DINOv2 ViT-L/14 weights cached OK')\"",
+    )
 )
 
 
@@ -251,6 +275,10 @@ if _has_assets:
     image = image.add_local_dir("./assets", remote_path="/root/LAM/assets")
 if os.path.isdir("./tools"):
     image = image.add_local_dir("./tools", remote_path="/root/LAM/tools")
+# Overlay local lam/ directory to ensure code consistency with this repo.
+# The git clone may have a different version than our local fork.
+if os.path.isdir("./lam"):
+    image = image.add_local_dir("./lam", remote_path="/root/LAM/lam")
 
 dl_image = modal.Image.debian_slim(python_version="3.10").pip_install("fastapi")
 ui_image = modal.Image.debian_slim(python_version="3.10").pip_install(
@@ -302,10 +330,30 @@ def _init_lam_pipeline():
     """Initialize FLAME tracking and LAM model. Called once per container."""
     import torch
     import torch._dynamo
-    from safetensors.torch import load_file as _load_safetensors
-    from lam.models import ModelLAM
-    from app_lam import parse_configs
 
+    # ============================================================
+    # CRITICAL: Disable torch.compile/dynamo BEFORE any lam imports.
+    # @torch.compile decorators on ModelLAM.forward_latent_points and
+    # Dinov2FusionWrapper.forward are evaluated at IMPORT time (class
+    # definition). If we monkey-patch torch.compile AFTER the import,
+    # the decorators have already created wrapper objects that can
+    # silently corrupt computation on Modal L4 GPUs.
+    # ============================================================
+    os.environ["TORCHDYNAMO_DISABLE"] = "1"
+    os.environ["TORCH_COMPILE_DISABLE"] = "1"
+    torch._dynamo.config.disable = True
+    torch._dynamo.config.suppress_errors = True
+    torch._dynamo.reset()
+
+    _original_torch_compile = torch.compile
+    def _noop_compile(fn=None, *args, **kwargs):
+        if fn is not None:
+            return fn
+        return lambda f: f
+    torch.compile = _noop_compile
+    print("[BIRD-FIX] torch.compile patched to no-op BEFORE imports")
+
+    # Set up working directory and paths BEFORE importing lam modules
     os.chdir("/root/LAM")
     sys.path.insert(0, "/root/LAM")
     _setup_model_paths()
@@ -318,22 +366,10 @@ def _init_lam_pipeline():
         "NUMBA_THREADING_LAYER": "omp",
     })
 
-    # Aggressively disable torch.compile / dynamo
-    os.environ["TORCHDYNAMO_DISABLE"] = "1"
-    os.environ["TORCH_COMPILE_DISABLE"] = "1"
-    torch._dynamo.config.disable = True
-    torch._dynamo.config.suppress_errors = True
-    torch._dynamo.reset()
-
-    # Monkey-patch torch.compile to be a pure no-op BEFORE any model import
-    # This ensures @torch.compile decorators have zero effect
-    _original_torch_compile = torch.compile
-    def _noop_compile(fn=None, *args, **kwargs):
-        if fn is not None:
-            return fn
-        return lambda f: f
-    torch.compile = _noop_compile
-    print("[BIRD-FIX] Patched torch.compile -> no-op")
+    # NOW import lam modules (with torch.compile safely disabled)
+    from safetensors.torch import load_file as _load_safetensors
+    from lam.models import ModelLAM
+    from app_lam import parse_configs
 
     # Parse config
     cfg, _ = parse_configs()
@@ -342,8 +378,22 @@ def _init_lam_pipeline():
     model_cfg = cfg.model
     lam = ModelLAM(**model_cfg)
 
-    # Restore original torch.compile (for other use)
+    # Restore original torch.compile
     torch.compile = _original_torch_compile
+
+    # Verify torch.compile is truly disabled on critical methods
+    fwd_lp = getattr(lam, 'forward_latent_points', None)
+    if fwd_lp is not None:
+        is_compiled = hasattr(fwd_lp, '_torchdynamo_orig_callable') or \
+                      hasattr(fwd_lp, '__wrapped__') or \
+                      'OptimizedModule' in type(fwd_lp).__name__ or \
+                      '_TorchCompile' in type(fwd_lp).__name__
+        print(f"[BIRD-FIX] forward_latent_points type: {type(fwd_lp).__name__}, compiled={is_compiled}")
+    enc_fwd = getattr(lam.encoder, 'forward', None) if hasattr(lam, 'encoder') else None
+    if enc_fwd is not None:
+        is_compiled = hasattr(enc_fwd, '_torchdynamo_orig_callable') or \
+                      'OptimizedModule' in type(enc_fwd).__name__
+        print(f"[BIRD-FIX] encoder.forward type: {type(enc_fwd).__name__}, compiled={is_compiled}")
 
     ckpt_path = os.path.join(cfg.model_name, "model.safetensors")
     print(f"Loading checkpoint: {ckpt_path}")
@@ -384,6 +434,14 @@ def _init_lam_pipeline():
     print(f"  Missing in ckpt: {missing_in_ckpt}")
     if load_ratio < 80:
         print(f"  [CRITICAL] Only {load_ratio:.1f}% of weights loaded! Model may produce garbage output.")
+
+    # Log key encoder/renderer weight loading status
+    encoder_loaded = sum(1 for k in ckpt_keys if k.startswith("encoder."))
+    renderer_loaded = sum(1 for k in ckpt_keys if k.startswith("renderer."))
+    transformer_loaded = sum(1 for k in ckpt_keys if k.startswith("transformer."))
+    print(f"  Encoder keys in ckpt: {encoder_loaded}")
+    print(f"  Renderer keys in ckpt: {renderer_loaded}")
+    print(f"  Transformer keys in ckpt: {transformer_loaded}")
     print("="*100)
 
     lam.to("cuda")

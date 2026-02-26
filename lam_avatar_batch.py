@@ -87,16 +87,16 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
     from glob import glob
 
     # ==========================================
-    # BIRD-MONSTER FIX: Aggressively disable torch.compile
+    # BIRD-MONSTER FIX v3: Disable torch.compile BEFORE any imports.
+    # The @torch.compile decorators on forward_latent_points and
+    # Dinov2FusionWrapper.forward are evaluated at import time.
+    # The monkey-patch in _init_lam_pipeline now runs BEFORE imports.
+    # These env vars provide an additional safety layer.
     # ==========================================
-    # @torch.compile on Dinov2FusionWrapper.forward causes garbled output
-    # (bird-monster artifact) because compiled DINOv2 produces wrong features.
-    # Environment variable alone is NOT sufficient in PyTorch 2.3.0 + CUDA 11.8.
     os.environ["TORCHDYNAMO_DISABLE"] = "1"
     os.environ["TORCH_COMPILE_DISABLE"] = "1"
     torch._dynamo.config.disable = True
     torch._dynamo.config.suppress_errors = True
-    # Reset dynamo state to ensure disable takes effect for all future compiles
     torch._dynamo.reset()
 
     os.chdir("/root/LAM")
@@ -131,42 +131,27 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
     print("Initializing LAM pipeline...")
     cfg, lam, flametracking = _init_lam_pipeline()
 
-    # ==========================================
-    # BIRD-MONSTER FIX: Force-unwrap @torch.compile from DINOv2 encoder
-    # ==========================================
-    _unwrapped = False
-    if hasattr(lam, 'encoder'):
-        encoder = lam.encoder
-        # Method 1: Check for _orig_mod (torch.compile wraps Module)
-        if hasattr(encoder, '_orig_mod'):
-            lam.encoder = encoder._orig_mod
-            _unwrapped = True
-            print("[BIRD-FIX] Unwrapped torch.compile from encoder (Module level)")
-        # Method 2: Check forward method for dynamo wrapper
-        fwd = getattr(encoder, 'forward', None)
-        if fwd is not None:
-            # torch.compile stores original callable in _torchdynamo_orig_callable
-            orig = getattr(fwd, '_torchdynamo_orig_callable', None)
-            if orig is not None:
-                import types
-                lam.encoder.forward = types.MethodType(orig, lam.encoder)
-                _unwrapped = True
-                print("[BIRD-FIX] Unwrapped torch.compile from encoder.forward (dynamo)")
-            # Also check __wrapped__ (functools.wraps pattern)
-            orig2 = getattr(fwd, '__wrapped__', None)
-            if orig2 is not None and not _unwrapped:
-                import types
-                lam.encoder.forward = types.MethodType(orig2, lam.encoder)
-                _unwrapped = True
-                print("[BIRD-FIX] Unwrapped torch.compile from encoder.forward (__wrapped__)")
-    if not _unwrapped:
-        print("[BIRD-FIX] No torch.compile wrapper detected (dynamo may be properly disabled)")
-
-    # Verify weight loading completeness
+    # Verify model state
     total_params = sum(1 for _ in lam.state_dict())
     print(f"[DIAG] Model total state_dict keys: {total_params}")
     print(f"[DIAG] Model device: {next(lam.parameters()).device}")
     print(f"[DIAG] Encoder type: {type(lam.encoder).__name__}")
+    print(f"[DIAG] forward_latent_points type: {type(lam.forward_latent_points).__name__}")
+
+    # Quick encoder sanity check: feed a dummy image and verify output is not garbage
+    print("[DIAG] Running encoder sanity check...")
+    with torch.no_grad():
+        dummy = torch.randn(1, 3, 504, 504, device="cuda", dtype=torch.float32) * 0.5 + 0.5
+        enc_out = lam.forward_encode_image(dummy)
+        print(f"  Encoder output: shape={enc_out.shape}, "
+              f"min={enc_out.min():.4f}, max={enc_out.max():.4f}, "
+              f"mean={enc_out.mean():.4f}, std={enc_out.std():.4f}")
+        if enc_out.std() < 0.001:
+            print("  [CRITICAL] Encoder output has near-zero variance - weights may not be loaded!")
+        if torch.isnan(enc_out).any():
+            print("  [CRITICAL] Encoder output contains NaN!")
+        del dummy, enc_out
+        torch.cuda.empty_cache()
 
     print("LAM pipeline ready.")
     print("=" * 80)
@@ -273,6 +258,43 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
             print("  [WARN] comp_rgb is nearly black -- model may not have loaded weights correctly")
         if torch.isnan(comp_rgb).any():
             print("  [CRITICAL] comp_rgb contains NaN!")
+
+        # Diagnostic: Gaussian splat position stats (canonical model)
+        if "cano_gs_lst" in res and len(res["cano_gs_lst"]) > 0:
+            gs_model = res["cano_gs_lst"][0]
+            gs_xyz = gs_model.xyz
+            gs_offset = gs_model.offset if hasattr(gs_model, 'offset') and gs_model.offset is not None else None
+            print(f"  [DIAG] Gaussian XYZ: shape={gs_xyz.shape}, "
+                  f"min=[{gs_xyz.min(0).values[0]:.4f},{gs_xyz.min(0).values[1]:.4f},{gs_xyz.min(0).values[2]:.4f}], "
+                  f"max=[{gs_xyz.max(0).values[0]:.4f},{gs_xyz.max(0).values[1]:.4f},{gs_xyz.max(0).values[2]:.4f}]")
+            if gs_offset is not None:
+                print(f"  [DIAG] Gaussian offset: shape={gs_offset.shape}, "
+                      f"abs_mean={gs_offset.abs().mean():.6f}, abs_max={gs_offset.abs().max():.6f}")
+            gs_scaling = gs_model.scaling
+            if gs_scaling is not None:
+                print(f"  [DIAG] Gaussian scaling: mean={gs_scaling.mean():.6f}, max={gs_scaling.max():.6f}")
+
+        # Diagnostic: Per-frame stats for first 3 frames
+        n_frames = min(3, comp_rgb.shape[0])
+        for fi in range(n_frames):
+            frame = comp_rgb[fi]
+            mask_f = comp_mask[fi]
+            fg_pixels = (mask_f > 0.5).sum().item()
+            total_pixels = mask_f.numel()
+            print(f"  [DIAG] Frame {fi}: mean={frame.mean():.4f}, "
+                  f"fg_pixels={fg_pixels}/{total_pixels} ({100*fg_pixels/total_pixels:.1f}%)")
+
+        # Save first 3 frames as individual diagnostic PNGs
+        diag_dir = os.path.join(tmpdir, "diagnostics")
+        os.makedirs(diag_dir, exist_ok=True)
+        rgb_np = comp_rgb.detach().cpu().numpy()
+        mask_np = comp_mask.detach().cpu().numpy()
+        mask_np[mask_np < 0.5] = 0.0
+        for fi in range(n_frames):
+            frame_rgb = rgb_np[fi] * mask_np[fi] + (1 - mask_np[fi]) * 1
+            frame_rgb = (np.clip(frame_rgb, 0, 1.0) * 255).astype(np.uint8)
+            Image.fromarray(frame_rgb).save(os.path.join(diag_dir, f"frame_{fi:03d}.png"))
+        print(f"  [DIAG] Saved {n_frames} diagnostic frames to {diag_dir}")
         print("  Inference complete.")
 
         # Step 5: Generate GLB + ZIP
@@ -357,6 +379,12 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
         shutil.copy2(compare_path, os.path.join(vol_out, "compare.png"))
         shutil.copy2(preproc_vis_path, os.path.join(vol_out, "preprocessed_input.png"))
 
+        # Save diagnostic frames
+        for fi in range(n_frames):
+            src_diag = os.path.join(diag_dir, f"frame_{fi:03d}.png")
+            if os.path.exists(src_diag):
+                shutil.copy2(src_diag, os.path.join(vol_out, f"frame_{fi:03d}.png"))
+
         # Save params for experiment tracking (with diagnostics)
         result_meta = {
             "params": params,
@@ -430,7 +458,10 @@ def main(
 
     # Download results from Modal Volume to local machine
     os.makedirs(output_dir, exist_ok=True)
-    download_files = ["avatar.zip", "preview.png", "compare.png", "preprocessed_input.png", "result_meta.json"]
+    download_files = [
+        "avatar.zip", "preview.png", "compare.png", "preprocessed_input.png", "result_meta.json",
+        "frame_000.png", "frame_001.png", "frame_002.png",
+    ]
     print(f"\nDownloading results to {output_dir}/...")
 
     for fname in download_files:
