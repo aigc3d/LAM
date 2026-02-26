@@ -97,6 +97,14 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
     from concierge_modal import _setup_model_paths, _init_lam_pipeline
     _setup_model_paths()
 
+    # Clean stale FLAME tracking data from previous runs
+    tracking_root = os.path.join(os.getcwd(), "output", "tracking")
+    if os.path.isdir(tracking_root):
+        for subdir in ["preprocess", "tracking", "export"]:
+            stale = os.path.join(tracking_root, subdir)
+            if os.path.isdir(stale):
+                shutil.rmtree(stale)
+
     # Parse params
     shape_scale = params.get("shape_scale", 1.0)
     motion_name = params.get("motion_name", "talk")
@@ -227,14 +235,15 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
             dst=os.path.join(oac_dir, "animation.glb"),
         )
 
-        # Vertex order JSON
+        # Vertex order JSON (must read mesh BEFORE removing it)
         import trimesh
         _mesh = trimesh.load(saved_head_path)
         _n_verts = _mesh.vertices.shape[0]
         with open(os.path.join(oac_dir, "vertex_order.json"), "w") as f:
             json.dump(list(range(_n_verts)), f)
+        del _mesh  # release memory before cleanup
 
-        # Clean up temp mesh
+        # Clean up temp mesh (after vertex_order.json is written)
         if os.path.exists(saved_head_path):
             os.remove(saved_head_path)
 
@@ -316,6 +325,7 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
 def main(
     image_path: str,
     param_json_path: str = "",
+    output_dir: str = "./output",
 ):
     """
     Local entrypoint for CLI execution.
@@ -323,6 +333,7 @@ def main(
     Args:
         image_path: Path to input face image (PNG/JPG)
         param_json_path: Path to params JSON file (optional)
+        output_dir: Local directory to download results (default: ./output)
     """
     # Read image as bytes
     with open(image_path, "rb") as f:
@@ -341,3 +352,25 @@ def main(
     # Execute on remote GPU
     result = generate_avatar_batch.remote(image_bytes, params)
     print(f"\nResult: {json.dumps(result, indent=2)}")
+
+    # Download results from Modal Volume to local machine
+    os.makedirs(output_dir, exist_ok=True)
+    download_files = ["avatar.zip", "preview.png", "compare.png", "preprocessed_input.png", "result_meta.json"]
+    print(f"\nDownloading results to {output_dir}/...")
+
+    for fname in download_files:
+        try:
+            data = b""
+            for chunk in output_vol.read_file(fname):
+                data += chunk
+            local_path = os.path.join(output_dir, fname)
+            with open(local_path, "wb") as f:
+                f.write(data)
+            size_str = f"{len(data) / (1024*1024):.1f} MB" if len(data) > 1024*1024 else f"{len(data) / 1024:.0f} KB"
+            print(f"  Downloaded: {fname} ({size_str})")
+        except Exception as e:
+            print(f"  Skip: {fname} ({e})")
+
+    print(f"\nDone. Results in: {os.path.abspath(output_dir)}/")
+    print(f"  avatar.zip  -- ZIPモデルファイル (skin.glb + offset.ply + animation.glb)")
+    print(f"  compare.png -- 入力 vs 出力 比較画像")
