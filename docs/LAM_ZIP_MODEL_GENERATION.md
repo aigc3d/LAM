@@ -392,9 +392,140 @@ LAM_gpro/
 
 ---
 
-## 8. 既知の課題と今後の方針
+## 8. トラブルシューティング: `modal deploy` エラー (2026-02-26)
 
-### 8.1 残存課題
+### 8.1 発生したエラー一覧
+
+`modal deploy concierge_modal.py` 実行時に3つのエラーが連鎖発生した。
+
+| # | エラー | 根本原因 | 対処 |
+|---|--------|----------|------|
+| 1 | `keep_warm` 非推奨警告 | Modal 1.0 APIの破壊的変更 | `min_containers` に移行 |
+| 2 | `can't cd to /root/LAM/external/...` | Image buildでgit clone未実行 | ビルドステップ結合 |
+| 3 | `SyntaxError: '(' was never closed` | エラー2の手動修正で括弧崩壊 | 本リポジトリ版に差替 |
+
+### 8.2 エラー1: `keep_warm` 非推奨 (Modal 1.0移行)
+
+```
+┌─ Modal Deprecation Warning (2025-02-24) ─────────────────────────┐
+│ We have renamed several parameters related to autoscaling.       │
+│ - keep_warm -> min_containers                                    │
+│ Source: concierge_modal.py:599                                   │
+│   @app.cls(..., keep_warm=1, max_containers=1)                   │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**原因**: Modal 1.0 (2025-02-24) で `keep_warm` が `min_containers` に改名された。
+
+**修正**: (本リポジトリでは修正済み)
+
+```python
+# 旧 (ローカル版 行599)
+@app.cls(gpu="L4", image=image, timeout=7200, scaledown_window=300, keep_warm=1, max_containers=1)
+
+# 新 (本リポジトリ版 行743)
+@app.cls(gpu="L4", image=image, timeout=600, scaledown_window=300, min_containers=0, max_containers=1)
+```
+
+**注意**: `min_containers=0` (ゼロスケール) に変更済み。`keep_warm=1` はGPU常駐で
+**$1.20/時 × 24時 = $28.80/日** のコストが発生していた。
+
+### 8.3 エラー2: `cpu_nms` ビルドで `/root/LAM` が見つからない
+
+```
+=> Step 0: FROM base
+=> Step 1: RUN cd /root/LAM/external/landmark_detection/FaceBoxesV2/utils/nms && python setup.py build_ext --inplace
+/bin/sh: 1: cd: can't cd to /root/LAM/external/landmark_detection/FaceBoxesV2/utils/nms
+```
+
+**原因チェーン**:
+
+```
+ローカル版: git clone と cpu_nms ビルドが別々の .run_commands() ブロック
+                        ↓
+Modal Image Cache: git clone ステップがキャッシュから消失
+                        ↓
+cpu_nms ステップ実行時に /root/LAM ディレクトリが存在しない
+                        ↓
+ビルド失敗
+```
+
+**修正**: (本リポジトリでは修正済み)
+
+```python
+# 旧 (ローカル版) -- 2つの別ブロック
+.run_commands("git clone https://github.com/aigc3d/LAM.git /root/LAM")
+.run_commands(
+    "cd /root/LAM/external/.../nms && python setup.py build_ext --inplace"
+)
+
+# 新 (本リポジトリ版 行137-147) -- 同一ブロック + Cython one-liner
+.run_commands(
+    "git clone https://github.com/aigc3d/LAM.git /root/LAM",
+    "cd /root/LAM/external/landmark_detection/FaceBoxesV2/utils/nms && "
+    "python -c \""
+    "from setuptools import setup, Extension; "
+    "from Cython.Build import cythonize; "
+    "import numpy; "
+    "setup(ext_modules=cythonize([Extension('cpu_nms', ['cpu_nms.pyx'])]), "
+    "include_dirs=[numpy.get_include()])\" "
+    "build_ext --inplace",
+)
+```
+
+**技術詳細**: Modal の `.run_commands()` では各引数が独立した `RUN` レイヤーになるが、
+同一ブロック内であれば順序が保証される。別ブロックに分割すると、
+キャッシュ無効化時に前段のレイヤーが再実行されない場合がある。
+
+### 8.4 エラー3: SyntaxError (括弧の不一致)
+
+```
+C:\Users\hamad\LAM\concierge_modal.py:35
+image = (
+        ▲
+SyntaxError: '(' was never closed
+```
+
+**原因**: エラー2を手動で修正した際に、`image = (` の括弧チェーン
+(行38の `(` 〜 行148の `)`) の中で閉じ括弧が欠落した。
+
+**修正**: 本リポジトリの `concierge_modal.py` を丸ごと差し替える。
+
+### 8.5 対処手順
+
+ローカル環境 (`C:\Users\hamad\LAM\`) で以下を実行:
+
+```bash
+# 1. 本リポジトリ版をダウンロード
+git pull origin claude/lam-zip-model-generation-ywuH2
+
+# 2. concierge_modal.py を差し替え
+cp concierge_modal.py C:\Users\hamad\LAM\concierge_modal.py
+
+# 3. 再デプロイ
+modal deploy concierge_modal.py
+```
+
+### 8.6 ローカル版 vs 本リポジトリ版の差分一覧
+
+| 項目 | ローカル版 (旧) | 本リポジトリ版 (修正済み) |
+|------|----------------|------------------------|
+| `keep_warm` | `keep_warm=1` (行599) | `min_containers=0` (行743) |
+| `timeout` | `7200` (2時間) | `600` (10分) |
+| `git clone` + `cpu_nms` | 別ブロック | 同一ブロック (行137-147) |
+| `cpu_nms` ビルド方式 | `setup.py build_ext` | Cython one-liner |
+| コンパイラ | clang | gcc/g++ |
+| nvdiffrast | ShenhanQian fork | NVlabs公式 |
+| TorchDynamo | 無効化なし | `TORCHDYNAMO_DISABLE=1` |
+| nvdiffrast プリコンパイル | なし | `_precompile_nvdiffrast()` |
+| TORCH_CUDA_ARCH_LIST | `8.6` | `8.9` (L4 = Ada Lovelace) |
+| image構文 | 括弧崩壊 (行35) | 正常 (行38-148) |
+
+---
+
+## 9. 既知の課題と今後の方針
+
+### 9.1 残存課題
 
 | 課題 | 状態 | 対策案 |
 |------|------|--------|
@@ -402,7 +533,7 @@ LAM_gpro/
 | 依存関係のバージョンレンジ (`huggingface_hub>=0.24.0`) | 要検討 | `pip-compile` で完全固定を検討 |
 | `shape_scale` の最適値はデータセット依存 | 実験中 | パラメータスイープで経験的に決定 |
 
-### 8.2 今後の実験方針
+### 9.2 今後の実験方針
 
 1. `shape_scale` を 1.0〜1.2 の範囲でスイープし、最適値を特定
 2. 複数モーション (talk, laugh, sing, nod) での品質比較
@@ -411,7 +542,7 @@ LAM_gpro/
 
 ---
 
-## 9. 参考: ChatGPTログの構成 (12,422行)
+## 10. 参考: ChatGPTログの構成 (12,422行)
 
 | 区間 | 内容 |
 |------|------|
