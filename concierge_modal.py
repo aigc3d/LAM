@@ -318,7 +318,22 @@ def _init_lam_pipeline():
         "NUMBA_THREADING_LAYER": "omp",
     })
 
+    # Aggressively disable torch.compile / dynamo
+    os.environ["TORCHDYNAMO_DISABLE"] = "1"
+    os.environ["TORCH_COMPILE_DISABLE"] = "1"
     torch._dynamo.config.disable = True
+    torch._dynamo.config.suppress_errors = True
+    torch._dynamo.reset()
+
+    # Monkey-patch torch.compile to be a pure no-op BEFORE any model import
+    # This ensures @torch.compile decorators have zero effect
+    _original_torch_compile = torch.compile
+    def _noop_compile(fn=None, *args, **kwargs):
+        if fn is not None:
+            return fn
+        return lambda f: f
+    torch.compile = _noop_compile
+    print("[BIRD-FIX] Patched torch.compile -> no-op")
 
     # Parse config
     cfg, _ = parse_configs()
@@ -327,29 +342,50 @@ def _init_lam_pipeline():
     model_cfg = cfg.model
     lam = ModelLAM(**model_cfg)
 
+    # Restore original torch.compile (for other use)
+    torch.compile = _original_torch_compile
+
     ckpt_path = os.path.join(cfg.model_name, "model.safetensors")
     print(f"Loading checkpoint: {ckpt_path}")
-    
-    # --- WEIGHT LOADING FIX ---
+
+    # --- WEIGHT LOADING with verification ---
     ckpt = _load_safetensors(ckpt_path, device="cpu")
     state_dict = lam.state_dict()
     loaded_count = 0
     skipped_count = 0
-    
+    missing_in_ckpt = 0
+
     for k, v in ckpt.items():
         if k in state_dict:
             if state_dict[k].shape == v.shape:
                 state_dict[k].copy_(v)
                 loaded_count += 1
             else:
-                print(f"[WARN] mismatching shape for param {k}: ckpt {v.shape} != model {state_dict[k].shape}, ignored.")
+                print(f"[WARN] shape mismatch: {k}: ckpt {v.shape} != model {state_dict[k].shape}")
                 skipped_count += 1
         else:
             pass
 
-    print(f"Finish loading pretrained weight. Loaded {loaded_count} keys.")
+    # Check for model keys not in checkpoint
+    ckpt_keys = set(ckpt.keys())
+    for k in state_dict.keys():
+        if k not in ckpt_keys:
+            missing_in_ckpt += 1
+
+    total_model_keys = len(state_dict)
+    total_ckpt_keys = len(ckpt)
+    load_ratio = loaded_count / total_model_keys * 100 if total_model_keys > 0 else 0
+
+    print(f"Weight loading summary:")
+    print(f"  Checkpoint keys: {total_ckpt_keys}")
+    print(f"  Model keys:      {total_model_keys}")
+    print(f"  Loaded:          {loaded_count} ({load_ratio:.1f}%)")
+    print(f"  Shape mismatch:  {skipped_count}")
+    print(f"  Missing in ckpt: {missing_in_ckpt}")
+    if load_ratio < 80:
+        print(f"  [CRITICAL] Only {load_ratio:.1f}% of weights loaded! Model may produce garbage output.")
     print("="*100)
-    
+
     lam.to("cuda")
     lam.eval()
 

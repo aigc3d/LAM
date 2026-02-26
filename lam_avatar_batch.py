@@ -86,9 +86,18 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
     from PIL import Image
     from glob import glob
 
-    # Disable torch.compile (bird-monster prevention)
+    # ==========================================
+    # BIRD-MONSTER FIX: Aggressively disable torch.compile
+    # ==========================================
+    # @torch.compile on Dinov2FusionWrapper.forward causes garbled output
+    # (bird-monster artifact) because compiled DINOv2 produces wrong features.
+    # Environment variable alone is NOT sufficient in PyTorch 2.3.0 + CUDA 11.8.
     os.environ["TORCHDYNAMO_DISABLE"] = "1"
+    os.environ["TORCH_COMPILE_DISABLE"] = "1"
     torch._dynamo.config.disable = True
+    torch._dynamo.config.suppress_errors = True
+    # Reset dynamo state to ensure disable takes effect for all future compiles
+    torch._dynamo.reset()
 
     os.chdir("/root/LAM")
     sys.path.insert(0, "/root/LAM")
@@ -121,6 +130,44 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
     print("=" * 80)
     print("Initializing LAM pipeline...")
     cfg, lam, flametracking = _init_lam_pipeline()
+
+    # ==========================================
+    # BIRD-MONSTER FIX: Force-unwrap @torch.compile from DINOv2 encoder
+    # ==========================================
+    _unwrapped = False
+    if hasattr(lam, 'encoder'):
+        encoder = lam.encoder
+        # Method 1: Check for _orig_mod (torch.compile wraps Module)
+        if hasattr(encoder, '_orig_mod'):
+            lam.encoder = encoder._orig_mod
+            _unwrapped = True
+            print("[BIRD-FIX] Unwrapped torch.compile from encoder (Module level)")
+        # Method 2: Check forward method for dynamo wrapper
+        fwd = getattr(encoder, 'forward', None)
+        if fwd is not None:
+            # torch.compile stores original callable in _torchdynamo_orig_callable
+            orig = getattr(fwd, '_torchdynamo_orig_callable', None)
+            if orig is not None:
+                import types
+                lam.encoder.forward = types.MethodType(orig, lam.encoder)
+                _unwrapped = True
+                print("[BIRD-FIX] Unwrapped torch.compile from encoder.forward (dynamo)")
+            # Also check __wrapped__ (functools.wraps pattern)
+            orig2 = getattr(fwd, '__wrapped__', None)
+            if orig2 is not None and not _unwrapped:
+                import types
+                lam.encoder.forward = types.MethodType(orig2, lam.encoder)
+                _unwrapped = True
+                print("[BIRD-FIX] Unwrapped torch.compile from encoder.forward (__wrapped__)")
+    if not _unwrapped:
+        print("[BIRD-FIX] No torch.compile wrapper detected (dynamo may be properly disabled)")
+
+    # Verify weight loading completeness
+    total_params = sum(1 for _ in lam.state_dict())
+    print(f"[DIAG] Model total state_dict keys: {total_params}")
+    print(f"[DIAG] Model device: {next(lam.parameters()).device}")
+    print(f"[DIAG] Encoder type: {type(lam.encoder).__name__}")
+
     print("LAM pipeline ready.")
     print("=" * 80)
 
@@ -194,15 +241,38 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
         print("[Step 4/5] Running LAM inference...")
         motion_seq["flame_params"]["betas"] = shape_param.unsqueeze(0)
         device = "cuda"
+
+        # Diagnostic: input tensor stats
+        inp = image_tensor.unsqueeze(0).to(device, torch.float32)
+        print(f"  [DIAG] Input tensor: shape={inp.shape}, "
+              f"min={inp.min():.4f}, max={inp.max():.4f}, mean={inp.mean():.4f}")
+        print(f"  [DIAG] shape_param: shape={shape_param.shape}, "
+              f"min={shape_param.min():.4f}, max={shape_param.max():.4f}")
+        print(f"  [DIAG] render_c2ws: shape={motion_seq['render_c2ws'].shape}")
+        print(f"  [DIAG] render_intrs: shape={motion_seq['render_intrs'].shape}")
+        print(f"  [DIAG] betas: shape={motion_seq['flame_params']['betas'].shape}")
+
         with torch.no_grad():
             res = lam.infer_single_view(
-                image_tensor.unsqueeze(0).to(device, torch.float32),
+                inp,
                 None, None,
                 render_c2ws=motion_seq["render_c2ws"].to(device),
                 render_intrs=motion_seq["render_intrs"].to(device),
                 render_bg_colors=motion_seq["render_bg_colors"].to(device),
                 flame_params={k: v.to(device) for k, v in motion_seq["flame_params"].items()},
             )
+
+        # Diagnostic: output tensor stats
+        comp_rgb = res["comp_rgb"]
+        comp_mask = res["comp_mask"]
+        print(f"  [DIAG] comp_rgb: shape={comp_rgb.shape}, "
+              f"min={comp_rgb.min():.4f}, max={comp_rgb.max():.4f}, mean={comp_rgb.mean():.4f}")
+        print(f"  [DIAG] comp_mask: shape={comp_mask.shape}, "
+              f"min={comp_mask.min():.4f}, max={comp_mask.max():.4f}, mean={comp_mask.mean():.4f}")
+        if comp_rgb.mean() < 0.01 or comp_rgb.max() < 0.1:
+            print("  [WARN] comp_rgb is nearly black -- model may not have loaded weights correctly")
+        if torch.isnan(comp_rgb).any():
+            print("  [CRITICAL] comp_rgb contains NaN!")
         print("  Inference complete.")
 
         # Step 5: Generate GLB + ZIP
@@ -290,11 +360,19 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
         shutil.copy2(compare_path, os.path.join(vol_out, "compare.png"))
         shutil.copy2(preproc_vis_path, os.path.join(vol_out, "preprocessed_input.png"))
 
-        # Save params for experiment tracking
+        # Save params for experiment tracking (with diagnostics)
         result_meta = {
             "params": params,
             "shape_param_range": [float(shape_param.min()), float(shape_param.max())],
+            "shape_param_dim": int(shape_param.shape[-1]),
             "zip_size_mb": round(zip_size, 2),
+            "comp_rgb_stats": {
+                "mean": float(res["comp_rgb"].mean()),
+                "min": float(res["comp_rgb"].min()),
+                "max": float(res["comp_rgb"].max()),
+                "has_nan": bool(torch.isnan(res["comp_rgb"]).any()),
+            },
+            "bird_fix_applied": True,
         }
         with open(os.path.join(vol_out, "result_meta.json"), "w") as f:
             json.dump(result_meta, f, indent=2)
