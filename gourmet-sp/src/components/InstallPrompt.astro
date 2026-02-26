@@ -1,0 +1,267 @@
+<div id="install-toast" class="install-toast hidden">
+  <div class="monster-icon">
+    <img src="/pwa-192x192.png" alt="App Icon" class="app-icon" />
+  </div>
+  <div class="content">
+    <p class="title">Gourmet SP</p>
+    <div class="stars">★★★★★</div>
+    <p class="desc">アプリを入れてAIとグルメ探索！</p>
+  </div>
+  <button id="install-button" class="install-btn">
+    インストール
+  </button>
+  <button id="close-toast" class="close-btn">×</button>
+</div>
+
+<div id="ios-prompt" class="ios-prompt hidden">
+  <button id="close-ios" class="close-btn-ios">×</button>
+  <div class="ios-content">
+    <p class="ios-title">ホーム画面に追加</p>
+    <p class="ios-desc">
+      画面下、又は右上の「共有」ボタン（四角から矢印）
+      <span class="share-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path>
+          <polyline points="16 6 12 2 8 6"></polyline>
+          <line x1="12" y1="2" x2="12" y2="15"></line>
+        </svg>
+      </span>
+      から<br>
+      <strong>「ホーム画面に追加」</strong>を選択してください
+    </p>
+  </div>
+  <div class="arrow-down"></div>
+</div>
+
+<script>
+  // @ts-nocheck
+  let deferredPrompt;
+  const toast = document.getElementById('install-toast');
+  const iosPrompt = document.getElementById('ios-prompt');
+  const installBtn = document.getElementById('install-button');
+  const closeBtn = document.getElementById('close-toast');
+  const closeIosBtn = document.getElementById('close-ios');
+
+  // --- iOS判定ロジック ---
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  // PWAとして起動しているかチェック (iOS & Android)
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (navigator).standalone;
+
+  // --- Android / PC 用の処理 (beforeinstallprompt) ---
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    // Androidで、かつスタンドアローンでない場合のみ表示
+    if (!isStandalone) {
+      toast.classList.remove('hidden');
+      setTimeout(() => toast.classList.add('show'), 100);
+    }
+  });
+
+  installBtn.addEventListener('click', async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      console.log(`User response: ${outcome}`);
+      deferredPrompt = null;
+      toast.classList.remove('show');
+      setTimeout(() => toast.classList.add('hidden'), 300);
+    }
+  });
+
+  closeBtn.addEventListener('click', () => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.classList.add('hidden'), 300);
+  });
+
+  // --- iOS 用の処理 ---
+  if (isIOS && !isStandalone) {
+    // 少し待ってから表示（ページ読み込み直後は邪魔にならないように）
+    setTimeout(() => {
+      // ユーザーが閉じた履歴がなければ表示（今回は簡易的に常に表示）
+      if (iosPrompt) {
+        iosPrompt.classList.remove('hidden');
+        setTimeout(() => iosPrompt.classList.add('show'), 100);
+      }
+    }, 2000);
+  }
+
+  if (closeIosBtn) {
+    closeIosBtn.addEventListener('click', () => {
+      iosPrompt.classList.remove('show');
+      setTimeout(() => iosPrompt.classList.add('hidden'), 300);
+    });
+  }
+</script>
+
+<style>
+  /* --- 共通: 非表示クラス --- */
+  .hidden {
+    display: none !important;
+  }
+
+  /* --- Android / PC 用スタイル --- */
+  .install-toast {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%) translateY(100px);
+    background: rgba(255, 255, 255, 0.98);
+    backdrop-filter: blur(10px);
+    border: 1px solid #e5e7eb;
+    border-radius: 16px;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+    z-index: 9999;
+    width: 90%;
+    max-width: 400px;
+    transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  }
+
+  .install-toast.show {
+    transform: translateX(-50%) translateY(0);
+  }
+
+  .monster-icon {
+    width: 48px;
+    height: 48px;
+    flex-shrink: 0;
+  }
+  
+  .app-icon {
+    width: 100%;
+    height: 100%;
+    border-radius: 10px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+  }
+
+  .content {
+    flex: 1;
+  }
+
+  .title {
+    font-weight: bold;
+    color: #333;
+    font-size: 0.9rem;
+    margin: 0;
+    line-height: 1.2;
+  }
+  
+  .stars {
+    color: #FFD700;
+    font-size: 0.8rem;
+    line-height: 1;
+    margin: 2px 0;
+  }
+
+  .desc {
+    font-size: 0.7rem;
+    color: #666;
+    margin: 0;
+  }
+
+  .install-btn {
+    background: #FF8C00;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-weight: bold;
+    font-size: 0.8rem;
+    cursor: pointer;
+    white-space: nowrap;
+    box-shadow: 0 2px 5px rgba(255, 140, 0, 0.3);
+  }
+
+  .close-btn {
+    background: none;
+    border: none;
+    color: #999;
+    font-size: 1.2rem;
+    cursor: pointer;
+    padding: 0 4px;
+  }
+
+  /* --- iOS 専用スタイル --- */
+  .ios-prompt {
+    position: fixed;
+    bottom: 40px; /* iPhoneのメニューバーの上に表示されるように調整 */
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    width: 90%;
+    max-width: 320px;
+    background: rgba(255, 255, 255, 0.98);
+    color: #333;
+    padding: 16px;
+    border-radius: 14px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    z-index: 9999;
+    text-align: center;
+    border: 1px solid #e0e0e0;
+    opacity: 0;
+    transition: opacity 0.4s, transform 0.4s;
+    pointer-events: none; /* 表示されるまではクリック無効 */
+  }
+
+  .ios-prompt.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+    pointer-events: auto;
+  }
+
+  .ios-content {
+    font-size: 0.9rem;
+    line-height: 1.6;
+  }
+
+  .ios-title {
+    font-weight: bold;
+    font-size: 1rem;
+    margin: 0 0 8px 0;
+    color: #FF8C00;
+  }
+
+  .ios-desc {
+    margin: 0;
+    font-size: 0.85rem;
+    color: #444;
+  }
+
+  .share-icon {
+    display: inline-block;
+    vertical-align: middle;
+    width: 20px;
+    height: 20px;
+    color: #007AFF; /* iOSのブルー */
+    margin: 0 4px;
+  }
+
+  .close-btn-ios {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    background: none;
+    border: none;
+    font-size: 1.2rem;
+    color: #999;
+    cursor: pointer;
+    padding: 5px;
+  }
+
+  /* 下向きの矢印（吹き出しのしっぽ） */
+  .arrow-down {
+    position: absolute;
+    bottom: -10px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0;
+    height: 0;
+    border-left: 10px solid transparent;
+    border-right: 10px solid transparent;
+    border-top: 10px solid rgba(255, 255, 255, 0.98); /* 背景色と合わせる */
+    filter: drop-shadow(0 4px 2px rgba(0,0,0,0.1));
+  }
+</style>
