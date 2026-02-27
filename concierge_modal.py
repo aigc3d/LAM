@@ -78,11 +78,14 @@ image = (
     .run_commands(
         "pip install chumpy==0.70 --no-build-isolation",
         # Patch chumpy for NumPy 1.24+ (removed numpy.bool/int/float/complex/object/unicode/str)
+        # Patch chumpy source AND delete __pycache__ so Python doesn't use stale bytecode
+        "CHUMPY_INIT=$(python -c \"import importlib.util; print(importlib.util.find_spec('chumpy').origin)\") && "
         "sed -i 's/from numpy import bool, int, float, complex, object, unicode, str, nan, inf/"
         "from numpy import nan, inf; import numpy; bool = numpy.bool_; int = numpy.int_; "
         "float = numpy.float64; complex = numpy.complex128; object = numpy.object_; "
         "unicode = numpy.str_; str = numpy.str_/' "
-        "$(python -c \"import importlib.util; print(importlib.util.find_spec('chumpy').origin)\")",
+        "\"$CHUMPY_INIT\" && "
+        "find $(dirname \"$CHUMPY_INIT\") -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null; true",
         "pip install git+https://github.com/facebookresearch/pytorch3d.git --no-build-isolation",
     )
     # Python dependencies
