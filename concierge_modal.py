@@ -82,7 +82,7 @@ image = (
         "from numpy import nan, inf; import numpy; bool = numpy.bool_; int = numpy.int_; "
         "float = numpy.float64; complex = numpy.complex128; object = numpy.object_; "
         "unicode = numpy.str_; str = numpy.str_/' "
-        "$(python -c \"import chumpy; print(chumpy.__file__)\")",
+        "$(python -c \"import importlib.util; print(importlib.util.find_spec('chumpy').origin)\")",
         "pip install git+https://github.com/facebookresearch/pytorch3d.git --no-build-isolation",
     )
     # Python dependencies
