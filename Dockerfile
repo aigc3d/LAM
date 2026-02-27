@@ -78,10 +78,6 @@ RUN git clone https://github.com/camenduru/simple-knn.git /tmp/simple-knn && \
 # nvdiffrast — JIT compilation at runtime (requires -devel image)
 RUN pip install git+https://github.com/ShenhanQian/nvdiffrast.git@backface-culling --no-build-isolation
 
-# onnxruntime-gpu for CUDA 12 (cuDNN 8.x compatible; PyPI default is CUDA 11)
-RUN pip install onnxruntime-gpu==1.18.1 \
-    --extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/
-
 # ============================================================
 # Python dependencies
 # ============================================================
@@ -96,7 +92,7 @@ RUN pip install \
     "opencv-python-headless==4.9.0.80" \
     "imageio[ffmpeg]" \
     "moviepy==1.0.3" \
-    "rembg[gpu]" \
+    "rembg" \
     "scikit-image" \
     "pillow" \
     "huggingface_hub>=0.24.0" \
@@ -121,6 +117,11 @@ RUN pip install \
     "safetensors" \
     "decord" \
     "numpy==1.26.4"
+
+# onnxruntime-gpu for CUDA 12 — MUST be installed AFTER rembg to prevent
+# rembg from pulling in the PyPI default (CUDA 11) build
+RUN pip install onnxruntime-gpu==1.18.1 \
+    --extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/
 
 # FBX SDK Python bindings (for OBJ -> FBX -> GLB avatar export)
 RUN pip install https://virutalbuy-public.oss-cn-hangzhou.aliyuncs.com/share/aigc3d/data/LAM/fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl

@@ -90,7 +90,7 @@ image = (
         "opencv-python-headless==4.9.0.80",
         "imageio[ffmpeg]",
         "moviepy==1.0.3",
-        "rembg[gpu]",
+        "rembg",
         "scikit-image",
         "pillow",
         "huggingface_hub>=0.24.0",
@@ -138,7 +138,7 @@ image = (
     )
     # nvdiffrast — JIT compilation at runtime (requires -devel image)
     .run_commands(
-        "pip install git+https://github.com/NVlabs/nvdiffrast.git --no-build-isolation",
+        "pip install git+https://github.com/ShenhanQian/nvdiffrast.git@backface-culling --no-build-isolation",
     )
     # FBX SDK
     .run_commands(
@@ -165,9 +165,10 @@ image = (
         "build_ext --inplace",
     )
     # BIRD-MONSTER FIX: Remove @torch.compile from cloned LAM source files.
-    # These decorators cause silent numerical corruption on Modal L4 GPUs
-    # with CUDA 11.8 + PyTorch 2.3.0. Setting TORCHDYNAMO_DISABLE=1 at runtime
-    # is NOT sufficient because the decorator wraps the function at import time.
+    # These decorators cause silent numerical corruption on Modal L4 GPUs.
+    # Confirmed on CUDA 11.8 + PyTorch 2.3.0; retained for CUDA 12.1 + PyTorch 2.4.0
+    # as a safety measure. Setting TORCHDYNAMO_DISABLE=1 at runtime is NOT sufficient
+    # because the decorator wraps the function at import time.
     .run_commands(
         "sed -i 's/^    @torch.compile$/    # @torch.compile  # DISABLED: causes bird-monster on Modal/' "
         "/root/LAM/lam/models/modeling_lam.py",
