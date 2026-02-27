@@ -63,7 +63,7 @@ ENV CXXFLAGS="-std=c++17"
 RUN pip install git+https://github.com/facebookresearch/pytorch3d.git --no-build-isolation
 
 # diff-gaussian-rasterization — patch CUDA 12.1 header issues then build
-RUN git clone https://github.com/ashawkey/diff-gaussian-rasterization.git /tmp/dgr && \
+RUN git clone --recursive https://github.com/ashawkey/diff-gaussian-rasterization.git /tmp/dgr && \
     find /tmp/dgr -name '*.cu' -exec sed -i '1i #include <cfloat>' {} + && \
     find /tmp/dgr -name '*.h' -path '*/cuda_rasterizer/*' -exec sed -i '1i #include <cstdint>' {} + && \
     pip install /tmp/dgr --no-build-isolation && \
