@@ -13,8 +13,8 @@ Design decisions (from ChatGPT consultation 2026-02-26):
 - concierge_modal.py image reuse for proven dependency stability
 
 Usage:
-  modal run lam_avatar_batch.py --image-path ./input/input.png --param-json-path ./input/params.json
-  modal run lam_avatar_batch.py --image-path ./input/input.png  # default params
+  modal run lam_avatar_batch.py --image-path ./input/input.jpg --param-json-path ./input/params.json
+  modal run lam_avatar_batch.py --image-path ./input/input.jpg  # default params
 """
 
 import os
@@ -102,9 +102,8 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
     os.chdir("/root/LAM")
     sys.path.insert(0, "/root/LAM")
 
-    # Setup model paths
-    from concierge_modal import _setup_model_paths, _init_lam_pipeline
-    _setup_model_paths()
+    from concierge_modal import _init_lam_pipeline
+    # NOTE: _setup_model_paths() is called inside _init_lam_pipeline() — no need to call here
 
     # Clean stale FLAME tracking data from previous runs
     tracking_root = os.path.join(os.getcwd(), "output", "tracking")
