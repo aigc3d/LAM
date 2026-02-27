@@ -476,7 +476,9 @@ def _init_lam_pipeline():
     print("="*100)
 
     lam.to("cuda")
+    lam.to(torch.float32)  # CRITICAL: match official inference (lam/runners/infer/lam.py:337-339)
     lam.eval()
+    print(f"[DTYPE-FIX] Model dtype after .to(float32): {next(lam.parameters()).dtype}")
 
     # Initialize FLAME tracking
     from tools.flame_tracking_single_image import FlameTrackingSingleImage
