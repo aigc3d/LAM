@@ -1,0 +1,15 @@
+{
+  "Token":"bpt4JPotFA6bpdknR9ZDCw",
+  "business_flag": "shadow_cv_face",
+  "model_local_file_path": "/apdcephfs_cq3/share_1134483/charlinzhou/Documents/awesome-tools/jizhi/",
+  "host_num": 1,
+  "host_gpu_num": 1,
+  "GPUName": "V100",
+  "is_elasticity": true,
+  "enable_evicted_pulled_up": true,
+  "task_name": "20230312_slpt_star_bb_init_eigen_box_align_smoothl1-1",
+  "task_flag": "20230312_slpt_star_bb_init_eigen_box_align_smoothl1-1",
+  "model_name": "20230312_slpt_star_bb_init_eigen_box_align_smoothl1-1",
+  "image_full_name": "mirrors.tencent.com/haroldzcli/py36-pytorch1.7.1-torchvision0.8.2-cuda10.1-cudnn7.6",
+  "start_cmd": "./start_slpt.sh /apdcephfs_cq3/share_1134483/charlinzhou/Documents/SLPT_Training train.py --loss_func=star --bb_init --eigen_box --dist_func=align_smoothl1" 
+}

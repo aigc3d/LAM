@@ -1,0 +1,571 @@
+
+---
+// index.astro - グルメサポートメインページ
+import GourmetChat from '../components/GourmetChat.astro';
+import ShopCardList from '../components/ShopCardList.astro';
+import ReservationModal from '../components/ReservationModal.astro';
+
+// APIベースURL（Cloud Runのエンドポイント）
+// 本番環境では環境変数から取得
+const apiBaseUrl = import.meta.env.PUBLIC_API_URL || '';
+---
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>グルメサポートAI - お店探しをお手伝い</title>
+  
+  <link rel="manifest" href="/manifest.webmanifest">
+
+  <!-- iOS用アイコン（既存ファイルのみ使用） -->
+  <link rel="apple-touch-icon" sizes="180x180" href="/pwa-192x192.png">
+  <link rel="apple-touch-icon" sizes="152x152" href="/pwa-152x152.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="/pwa-192x192.png">
+  
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="グルメAI">
+  <meta name="mobile-web-app-capable" content="yes">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Noto Sans JP', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .page-container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .page-header {
+      text-align: center;
+      color: white;
+      padding: 20px 0 30px;
+    }
+
+    .page-header h1 {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      font-size: 28px;
+      font-weight: 900;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.2s;
+      user-select: none;
+    }
+
+    .page-header h1:hover {
+      opacity: 0.9;
+      transform: scale(1.02);
+    }
+
+    .page-header h1:active {
+      transform: scale(0.98);
+    }
+
+    :global(.app-logo) {
+      width: 40px;
+      height: 40px;
+      border-radius: 8px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+
+    .page-header p {
+      font-size: 14px;
+      opacity: 0.9;
+    }
+
+    .gourmet-chat-container {
+      max-height: none;
+      height: auto;
+      min-height: 400px;
+    }
+    
+    .main-content {
+      display: grid;
+      gap: 24px;
+      grid-template-columns: 1fr;
+    }
+
+    @media (min-width: 1024px) {
+      .main-content {
+        grid-template-columns: 1fr 1fr;
+        align-items: start;
+      }
+      
+      /* PCのみ高さ制限 */
+      .gourmet-chat-container {
+        max-height: 600px;
+      }
+    }
+
+    .chat-section {
+      order: 1;
+    }
+
+    .shop-list-section {
+      order: 2;
+    }
+
+    .shop-list-header {
+      background: white;
+      border-radius: 16px 16px 0 0;
+      padding: 16px 20px;
+      text-align: center;
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    .shop-list-header h2 {
+      font-size: 16px;
+      font-weight: 700;
+      color: #1f2937;
+      margin: 0 0 4px 0;
+    }
+
+    .shop-list-header p {
+      font-size: 12px;
+      color: #6b7280;
+      margin: 0;
+    }
+
+    #shopCardList {
+      background: white;
+      border-radius: 0 0 16px 16px;
+      padding: 16px;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+
+    .shop-list-section.has-shops .shop-list-header p {
+      display: none;
+    }
+
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .page-footer {
+      text-align: center;
+      color: rgba(255, 255, 255, 0.8);
+      padding: 30px 0;
+      font-size: 13px;
+    }
+
+    /* モバイルでのスタック表示 */
+    @media (max-width: 1023px) {
+      /* ★追加: モバイルで初期状態のショップヘッダーを非表示 */
+      .shop-list-header {
+        display: none;
+      }
+      
+      /* ★追加: ショップが表示されたら表示 */
+      .shop-list-section.has-shops .shop-list-header {
+        display: block;
+      }
+
+      .shop-list-section {
+        order: 1;
+      }
+      
+      .chat-section {
+        order: 2;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page-container">
+    <header class="page-header">
+      <h1 id="pageTitle">
+        <img src="/pwa-152x152.png" alt="Logo" class="app-logo" />
+        グルメサポートAI
+      </h1>
+      <p id="pageSubtitle">AIがあなたにぴったりのお店をご提案します</p>
+    </header>
+
+    <main class="main-content">
+      <section class="chat-section">
+        <GourmetChat apiBaseUrl={apiBaseUrl} />
+      </section>
+
+      <section class="shop-list-section" id="shopListSection">
+        <div class="shop-list-header">
+          <h2 id="shopListTitle">&#127869; おすすめのお店</h2>
+          <p id="shopListEmpty">チャットで検索すると、ここにお店が表示されます</p>
+        </div>
+        <ShopCardList apiBaseUrl={apiBaseUrl} />
+      </section>
+    </main>
+
+    <footer class="page-footer" id="pageFooter">
+      素敵なグルメ体験をお楽しみください &#10024;
+    </footer>
+  </div>
+
+  <ReservationModal apiBaseUrl={apiBaseUrl} />
+
+  <script>
+    // ★★★ ソフトリセット機能 ★★★
+    document.addEventListener('DOMContentLoaded', () => {
+      const pageTitle = document.getElementById('pageTitle');
+      if (pageTitle) {
+        pageTitle.addEventListener('click', () => {
+          console.log('[index.astro] ===== PAGE TITLE CLICKED =====');
+          console.log('[index.astro] Triggering soft reset...');
+          
+          const resetEvent = new CustomEvent('gourmet-app:reset', { 
+            bubbles: true, 
+            cancelable: true 
+          });
+          
+          document.dispatchEvent(resetEvent);
+          
+          console.log('[index.astro] Reset event dispatched');
+        });
+      } else {
+        console.error('[index.astro] pageTitle element not found!');
+      }
+    });
+
+    // ★★★ PWAインストール案内を最優先で登録 ★★★
+    let deferredPrompt: any = null;
+    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const isInStandaloneMode = ('standalone' in window.navigator) && (window.navigator as any).standalone;
+    
+    // iPhone: スタンドアロンモードでない場合、案内を表示
+    if (isIOS && !isInStandaloneMode) {
+      // ページ読み込み後3秒待ってから表示
+      setTimeout(() => {
+        showIOSInstallGuide();
+      }, 3000);
+    }
+    
+    function showIOSInstallGuide() {
+      const modal = document.createElement('div');
+      modal.id = 'ios-install-modal';
+      modal.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10000;
+        animation: fadeIn 0.3s ease;
+        padding: 20px;
+        overflow-y: auto;
+      `;
+      
+      modal.innerHTML = `
+        <div style="
+          background: white;
+          border-radius: 16px;
+          padding: 20px;
+          max-width: 420px;
+          width: 95%;
+          max-height: 90vh;
+          overflow-y: auto;
+          text-align: center;
+          box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+          position: relative;
+        ">
+          <button id="ios-install-close" style="
+            position: sticky;
+            top: 0;
+            float: right;
+            background: #ff3b30;
+            border: none;
+            font-size: 16px;
+            color: white;
+            cursor: pointer;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 700;
+            z-index: 10;
+            box-shadow: 0 2px 8px rgba(255,59,48,0.3);
+            margin-bottom: 10px;
+          ">✕ 閉じる</button>
+          
+          <div style="clear: both;"></div>
+          
+          <img src="/pwa-152x152.png" style="width: 64px; height: 64px; border-radius: 12px; margin-bottom: 12px;">
+          
+          <div style="font-size: 18px; font-weight: 700; margin-bottom: 6px; color: #333;">
+            ホーム画面に追加
+          </div>
+          
+          <div style="font-size: 13px; color: #666; margin-bottom: 16px;">
+            アプリのように快適に使えます
+          </div>
+          
+          <div id="demo-video-container" style="
+            background: #000;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            overflow: hidden;
+            width: 60%;
+            margin-left: auto;
+            margin-right: auto;
+          ">
+            <video 
+              src="/ios-install-demo.mp4" 
+              autoplay 
+              loop 
+              muted 
+              playsinline
+              style="width: 100%; height: auto; display: block;"
+              onloadeddata="this.parentElement.style.display='block'"
+              onerror="this.parentElement.style.display='none'"
+            ></video>
+          </div>
+          
+          <div style="text-align: left; background: #f5f5f5; padding: 12px; border-radius: 8px; margin-bottom: 12px;">
+            <div style="font-size: 12px; color: #333; margin-bottom: 10px; font-weight: 600;">
+              📱 3ステップで追加
+            </div>
+            
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+              <div style="background: #007aff; color: white; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0;">1</div>
+              <div style="font-size: 12px; color: #555;">
+                画面下部、又は右上の <span style="background: #007aff; color: white; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 600;">共有</span> ボタン（四角から↑）をタップ
+              </div>
+            </div>
+            
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+              <div style="background: #007aff; color: white; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0;">2</div>
+              <div style="font-size: 12px; color: #555;">
+                <span style="font-weight: 600;">「ホーム画面に追加」</span> を選択
+              </div>
+            </div>
+            
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <div style="background: #007aff; color: white; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0;">3</div>
+              <div style="font-size: 12px; color: #555;">
+                右上の <span style="font-weight: 600;">「追加」</span> をタップ
+              </div>
+            </div>
+          </div>
+          
+          <div style="font-size: 11px; color: #999;">
+            ※共有ボタンは Safari 画面の一番下にあります
+          </div>
+        </div>
+      `;
+      
+      const style = document.createElement('style');
+      style.textContent = `
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+      `;
+      document.head.appendChild(style);
+      document.body.appendChild(modal);
+      
+      const closeBtn = document.getElementById('ios-install-close');
+      closeBtn?.addEventListener('click', () => {
+        modal.remove();
+      });
+      
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          modal.remove();
+        }
+      });
+    }
+    
+    window.addEventListener('beforeinstallprompt', (e) => {
+      console.log('✅ beforeinstallprompt イベント発火');
+      e.preventDefault();
+      deferredPrompt = e;
+      showInstallPrompt();
+    });
+
+    function showInstallPrompt() {
+      const existingBanner = document.getElementById('install-banner');
+      if (existingBanner) {
+        existingBanner.remove();
+      }
+      
+      const banner = document.createElement('div');
+      banner.id = 'install-banner';
+      banner.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: white;
+        padding: 16px 20px;
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        z-index: 9999;
+        max-width: 90%;
+        width: 400px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        animation: slideUp 0.3s ease;
+      `;
+      
+      banner.innerHTML = `
+        <img src="/pwa-152x152.png" alt="App Icon" style="width: 48px; height: 48px; border-radius: 8px;">
+        <div style="flex: 1;">
+          <div style="font-weight: 700; font-size: 15px; margin-bottom: 4px;">グルメサポートAI</div>
+          <div style="font-size: 13px; color: #666;">ホーム画面に追加して簡単アクセス</div>
+        </div>
+        <button id="install-btn" style="
+          background: #667eea;
+          color: white;
+          border: none;
+          padding: 10px 16px;
+          border-radius: 8px;
+          font-weight: 600;
+          font-size: 14px;
+          cursor: pointer;
+          white-space: nowrap;
+        ">追加</button>
+        <button id="install-close" style="
+          background: transparent;
+          border: none;
+          font-size: 24px;
+          color: #999;
+          cursor: pointer;
+          padding: 0 8px;
+          line-height: 1;
+        ">×</button>
+      `;
+      
+      const style = document.createElement('style');
+      style.textContent = `
+        @keyframes slideUp {
+          from {
+            opacity: 0;
+            transform: translate(-50%, 20px);
+          }
+          to {
+            opacity: 1;
+            transform: translate(-50%, 0);
+          }
+        }
+      `;
+      document.head.appendChild(style);
+      document.body.appendChild(banner);
+      
+      const installBtn = document.getElementById('install-btn');
+      installBtn?.addEventListener('click', async () => {
+        if (deferredPrompt) {
+          deferredPrompt.prompt();
+          const { outcome } = await deferredPrompt.userChoice;
+          console.log(`ユーザーの選択: ${outcome}`);
+          deferredPrompt = null;
+          banner.remove();
+        }
+      });
+      
+      const closeBtn = document.getElementById('install-close');
+      closeBtn?.addEventListener('click', () => {
+        banner.remove();
+      });
+    }
+
+    window.addEventListener('appinstalled', () => {
+      console.log('PWAがインストールされました');
+      deferredPrompt = null;
+      const banner = document.getElementById('install-banner');
+      if (banner) banner.remove();
+    });
+
+    // ========================================
+    // ★★★ Service Worker 適切な設定（修正版）★★★
+    // ========================================
+    import { registerSW } from 'virtual:pwa-register';
+
+    const updateSW = registerSW({
+      immediate: false,
+      
+      onNeedRefresh() {
+        console.log('[PWA] New content available');
+        updateSW(true);
+      },
+      
+      onOfflineReady() {
+        console.log('[PWA] App ready to work offline');
+      },
+      
+      onRegisterError(error) {
+        console.error('[PWA] SW registration error:', error);
+      },
+      
+      onRegistered(registration) {
+        console.log('[PWA] SW registered:', registration);
+        
+        if (registration) {
+          setInterval(() => {
+            registration.update();
+          }, 60 * 60 * 1000);
+        }
+      }
+    });
+
+    window.addEventListener('beforeunload', () => {
+      console.log('[PWA] Page unloading - cleanup');
+    });
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(registrations => {
+        registrations.forEach(registration => {
+          if (registration.active) {
+            console.log('[PWA] Active SW found');
+          }
+        });
+      });
+      
+      if ('caches' in window) {
+        caches.keys().then(cacheNames => {
+          cacheNames.forEach(cacheName => {
+            if (cacheName.includes('socket.io') || cacheName.includes('api')) {
+              console.log('[PWA] Removing invalid cache:', cacheName);
+              caches.delete(cacheName);
+            }
+          });
+        });
+      }
+    }
+
+    window.addEventListener('pagehide', () => {
+      if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({
+          type: 'CLEANUP',
+          timestamp: Date.now()
+        });
+      }
+    });
+  </script>
+</body>
+</html>
