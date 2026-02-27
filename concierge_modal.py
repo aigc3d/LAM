@@ -37,7 +37,7 @@ if not _has_model_zoo and not _has_assets:
 # ============================================================
 image = (
     modal.Image.from_registry(
-        "nvidia/cuda:11.8.0-devel-ubuntu22.04", add_python="3.10"
+        "nvidia/cuda:12.1.0-devel-ubuntu22.04", add_python="3.10"
     )
     .apt_install(
         "git", "libgl1-mesa-glx", "libglib2.0-0", "ffmpeg", "wget", "tree",
@@ -50,17 +50,17 @@ image = (
     # Base Python
     .run_commands(
         "python -m pip install --upgrade pip setuptools wheel",
-        "pip install 'numpy==1.23.5'",
+        "pip install 'numpy==1.26.4'",
     )
-    # PyTorch 2.3.0 + CUDA 11.8
+    # PyTorch 2.4.0 + CUDA 12.1
     .run_commands(
-        "pip install torch==2.3.0 torchvision==0.18.0 torchaudio==2.3.0 "
-        "--index-url https://download.pytorch.org/whl/cu118"
+        "pip install torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 "
+        "--index-url https://download.pytorch.org/whl/cu121"
     )
     # xformers: Required for DINOv2 attention accuracy
     .run_commands(
-        "pip install xformers==0.0.26.post1 "
-        "--index-url https://download.pytorch.org/whl/cu118"
+        "pip install xformers==0.0.27.post2 "
+        "--index-url https://download.pytorch.org/whl/cu121"
     )
     # CUDA build environment
     .env({
@@ -70,12 +70,22 @@ image = (
         "TORCH_CUDA_ARCH_LIST": "8.9",
         "CC": "gcc",
         "CXX": "g++",
+        "CXXFLAGS": "-std=c++17",
         "TORCH_EXTENSIONS_DIR": "/root/.cache/torch_extensions",
         "TORCHDYNAMO_DISABLE": "1",
     })
     # CUDA extensions
     .run_commands(
         "pip install chumpy==0.70 --no-build-isolation",
+        # Patch chumpy for NumPy 1.24+ (removed numpy.bool/int/float/complex/object/unicode/str)
+        # Patch chumpy source AND delete __pycache__ so Python doesn't use stale bytecode
+        "CHUMPY_INIT=$(python -c \"import importlib.util; print(importlib.util.find_spec('chumpy').origin)\") && "
+        "sed -i 's/from numpy import bool, int, float, complex, object, unicode, str, nan, inf/"
+        "from numpy import nan, inf; import numpy; bool = numpy.bool_; int = numpy.int_; "
+        "float = numpy.float64; complex = numpy.complex128; object = numpy.object_; "
+        "unicode = numpy.str_; str = numpy.str_/' "
+        "\"$CHUMPY_INIT\" && "
+        "find $(dirname \"$CHUMPY_INIT\") -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null; true",
         "pip install git+https://github.com/facebookresearch/pytorch3d.git --no-build-isolation",
     )
     # Python dependencies
@@ -86,13 +96,12 @@ image = (
         "omegaconf==2.3.0",
         "pandas",
         "scipy<1.14.0",
-        "opencv-python-headless",
+        "opencv-python-headless==4.9.0.80",
         "imageio[ffmpeg]",
         "moviepy==1.0.3",
-        "rembg[gpu]",
+        "rembg",
         "scikit-image",
         "pillow",
-        "onnxruntime-gpu",
         "huggingface_hub>=0.24.0",
         "filelock",
         "typeguard",
@@ -114,12 +123,31 @@ image = (
         "patool",
         "safetensors",
         "decord",
-        "numpy==1.23.5",
+        "numpy==1.26.4",
     )
-    # More CUDA extensions
+    # onnxruntime-gpu for CUDA 12 (cuDNN 8.x compatible; PyPI default is CUDA 11)
     .run_commands(
-        "pip install git+https://github.com/ashawkey/diff-gaussian-rasterization.git --no-build-isolation",
-        "pip install git+https://github.com/NVlabs/nvdiffrast.git --no-build-isolation",
+        "pip install onnxruntime-gpu==1.18.1 "
+        "--extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/",
+    )
+    # diff-gaussian-rasterization — patch CUDA 12.1 header issues then build
+    .run_commands(
+        "git clone --recursive https://github.com/ashawkey/diff-gaussian-rasterization.git /tmp/dgr && "
+        "find /tmp/dgr -name '*.cu' -exec sed -i '1i #include <cfloat>' {} + && "
+        "find /tmp/dgr -name '*.h' -path '*/cuda_rasterizer/*' -exec sed -i '1i #include <cstdint>' {} + && "
+        "pip install /tmp/dgr --no-build-isolation && "
+        "rm -rf /tmp/dgr",
+    )
+    # simple-knn — patch cfloat for CUDA 12.1 then build
+    .run_commands(
+        "git clone https://github.com/camenduru/simple-knn.git /tmp/simple-knn && "
+        "sed -i '1i #include <cfloat>' /tmp/simple-knn/simple_knn.cu && "
+        "pip install /tmp/simple-knn --no-build-isolation && "
+        "rm -rf /tmp/simple-knn",
+    )
+    # nvdiffrast — JIT compilation at runtime (requires -devel image)
+    .run_commands(
+        "pip install git+https://github.com/ShenhanQian/nvdiffrast.git@backface-culling --no-build-isolation",
     )
     # FBX SDK
     .run_commands(
@@ -136,6 +164,9 @@ image = (
     # Clone LAM and build cpu_nms
     .run_commands(
         "git clone https://github.com/aigc3d/LAM.git /root/LAM",
+        # Patch cpu_nms.pyx: replace deprecated np.int with np.intp for NumPy 1.24+
+        "sed -i 's/dtype=np\\.int)/dtype=np.intp)/' "
+        "/root/LAM/external/landmark_detection/FaceBoxesV2/utils/nms/cpu_nms.pyx",
         "cd /root/LAM/external/landmark_detection/FaceBoxesV2/utils/nms && "
         "python -c \""
         "from setuptools import setup, Extension; "
@@ -144,6 +175,31 @@ image = (
         "setup(ext_modules=cythonize([Extension('cpu_nms', ['cpu_nms.pyx'])]), "
         "include_dirs=[numpy.get_include()])\" "
         "build_ext --inplace",
+    )
+    # BIRD-MONSTER FIX: Remove @torch.compile from cloned LAM source files.
+    # These decorators cause silent numerical corruption on Modal L4 GPUs.
+    # Confirmed on CUDA 11.8 + PyTorch 2.3.0; retained for CUDA 12.1 + PyTorch 2.4.0
+    # as a safety measure. Setting TORCHDYNAMO_DISABLE=1 at runtime is NOT sufficient
+    # because the decorator wraps the function at import time.
+    .run_commands(
+        "sed -i 's/^    @torch.compile$/    # @torch.compile  # DISABLED: causes bird-monster on Modal/' "
+        "/root/LAM/lam/models/modeling_lam.py",
+        "sed -i 's/^    @torch.compile$/    # @torch.compile  # DISABLED: causes bird-monster on Modal/' "
+        "/root/LAM/lam/models/encoders/dinov2_fusion_wrapper.py",
+        "sed -i 's/^    @torch.compile$/    # @torch.compile  # DISABLED: causes bird-monster on Modal/' "
+        "/root/LAM/lam/losses/tvloss.py",
+        "sed -i 's/^    @torch.compile$/    # @torch.compile  # DISABLED: causes bird-monster on Modal/' "
+        "/root/LAM/lam/losses/pixelwise.py",
+        "echo '[BIRD-FIX] Removed all @torch.compile decorators from LAM source'",
+    )
+    # Pre-download DINOv2 pretrained weights during image build to avoid
+    # runtime download dependency from dl.fbaipublicfiles.com
+    .run_commands(
+        "python -c \""
+        "import torch; "
+        "url='https://dl.fbaipublicfiles.com/dinov2/dinov2_vitl14/dinov2_vitl14_reg4_pretrain.pth'; "
+        "torch.hub.load_state_dict_from_url(url, map_location='cpu'); "
+        "print('DINOv2 ViT-L/14 weights cached OK')\"",
     )
 )
 
@@ -251,6 +307,10 @@ if _has_assets:
     image = image.add_local_dir("./assets", remote_path="/root/LAM/assets")
 if os.path.isdir("./tools"):
     image = image.add_local_dir("./tools", remote_path="/root/LAM/tools")
+# Overlay local lam/ directory to ensure code consistency with this repo.
+# The git clone may have a different version than our local fork.
+if os.path.isdir("./lam"):
+    image = image.add_local_dir("./lam", remote_path="/root/LAM/lam")
 
 dl_image = modal.Image.debian_slim(python_version="3.10").pip_install("fastapi")
 ui_image = modal.Image.debian_slim(python_version="3.10").pip_install(
@@ -302,10 +362,30 @@ def _init_lam_pipeline():
     """Initialize FLAME tracking and LAM model. Called once per container."""
     import torch
     import torch._dynamo
-    from safetensors.torch import load_file as _load_safetensors
-    from lam.models import ModelLAM
-    from app_lam import parse_configs
 
+    # ============================================================
+    # CRITICAL: Disable torch.compile/dynamo BEFORE any lam imports.
+    # @torch.compile decorators on ModelLAM.forward_latent_points and
+    # Dinov2FusionWrapper.forward are evaluated at IMPORT time (class
+    # definition). If we monkey-patch torch.compile AFTER the import,
+    # the decorators have already created wrapper objects that can
+    # silently corrupt computation on Modal L4 GPUs.
+    # ============================================================
+    os.environ["TORCHDYNAMO_DISABLE"] = "1"
+    os.environ["TORCH_COMPILE_DISABLE"] = "1"
+    torch._dynamo.config.disable = True
+    torch._dynamo.config.suppress_errors = True
+    torch._dynamo.reset()
+
+    _original_torch_compile = torch.compile
+    def _noop_compile(fn=None, *args, **kwargs):
+        if fn is not None:
+            return fn
+        return lambda f: f
+    torch.compile = _noop_compile
+    print("[BIRD-FIX] torch.compile patched to no-op BEFORE imports")
+
+    # Set up working directory and paths BEFORE importing lam modules
     os.chdir("/root/LAM")
     sys.path.insert(0, "/root/LAM")
     _setup_model_paths()
@@ -318,22 +398,10 @@ def _init_lam_pipeline():
         "NUMBA_THREADING_LAYER": "omp",
     })
 
-    # Aggressively disable torch.compile / dynamo
-    os.environ["TORCHDYNAMO_DISABLE"] = "1"
-    os.environ["TORCH_COMPILE_DISABLE"] = "1"
-    torch._dynamo.config.disable = True
-    torch._dynamo.config.suppress_errors = True
-    torch._dynamo.reset()
-
-    # Monkey-patch torch.compile to be a pure no-op BEFORE any model import
-    # This ensures @torch.compile decorators have zero effect
-    _original_torch_compile = torch.compile
-    def _noop_compile(fn=None, *args, **kwargs):
-        if fn is not None:
-            return fn
-        return lambda f: f
-    torch.compile = _noop_compile
-    print("[BIRD-FIX] Patched torch.compile -> no-op")
+    # NOW import lam modules (with torch.compile safely disabled)
+    from safetensors.torch import load_file as _load_safetensors
+    from lam.models import ModelLAM
+    from app_lam import parse_configs
 
     # Parse config
     cfg, _ = parse_configs()
@@ -342,8 +410,22 @@ def _init_lam_pipeline():
     model_cfg = cfg.model
     lam = ModelLAM(**model_cfg)
 
-    # Restore original torch.compile (for other use)
+    # Restore original torch.compile
     torch.compile = _original_torch_compile
+
+    # Verify torch.compile is truly disabled on critical methods
+    fwd_lp = getattr(lam, 'forward_latent_points', None)
+    if fwd_lp is not None:
+        is_compiled = hasattr(fwd_lp, '_torchdynamo_orig_callable') or \
+                      hasattr(fwd_lp, '__wrapped__') or \
+                      'OptimizedModule' in type(fwd_lp).__name__ or \
+                      '_TorchCompile' in type(fwd_lp).__name__
+        print(f"[BIRD-FIX] forward_latent_points type: {type(fwd_lp).__name__}, compiled={is_compiled}")
+    enc_fwd = getattr(lam.encoder, 'forward', None) if hasattr(lam, 'encoder') else None
+    if enc_fwd is not None:
+        is_compiled = hasattr(enc_fwd, '_torchdynamo_orig_callable') or \
+                      'OptimizedModule' in type(enc_fwd).__name__
+        print(f"[BIRD-FIX] encoder.forward type: {type(enc_fwd).__name__}, compiled={is_compiled}")
 
     ckpt_path = os.path.join(cfg.model_name, "model.safetensors")
     print(f"Loading checkpoint: {ckpt_path}")
@@ -384,6 +466,14 @@ def _init_lam_pipeline():
     print(f"  Missing in ckpt: {missing_in_ckpt}")
     if load_ratio < 80:
         print(f"  [CRITICAL] Only {load_ratio:.1f}% of weights loaded! Model may produce garbage output.")
+
+    # Log key encoder/renderer weight loading status
+    encoder_loaded = sum(1 for k in ckpt_keys if k.startswith("encoder."))
+    renderer_loaded = sum(1 for k in ckpt_keys if k.startswith("renderer."))
+    transformer_loaded = sum(1 for k in ckpt_keys if k.startswith("transformer."))
+    print(f"  Encoder keys in ckpt: {encoder_loaded}")
+    print(f"  Renderer keys in ckpt: {renderer_loaded}")
+    print(f"  Transformer keys in ckpt: {transformer_loaded}")
     print("="*100)
 
     lam.to("cuda")
