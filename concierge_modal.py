@@ -77,6 +77,12 @@ image = (
     # CUDA extensions
     .run_commands(
         "pip install chumpy==0.70 --no-build-isolation",
+        # Patch chumpy for NumPy 1.24+ (removed numpy.bool/int/float/complex/object/unicode/str)
+        "sed -i 's/from numpy import bool, int, float, complex, object, unicode, str, nan, inf/"
+        "from numpy import nan, inf; import numpy; bool = numpy.bool_; int = numpy.int_; "
+        "float = numpy.float64; complex = numpy.complex128; object = numpy.object_; "
+        "unicode = numpy.str_; str = numpy.str_/' "
+        "$(python -c \"import chumpy; print(chumpy.__file__)\")",
         "pip install git+https://github.com/facebookresearch/pytorch3d.git --no-build-isolation",
     )
     # Python dependencies
