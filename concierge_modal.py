@@ -164,6 +164,9 @@ image = (
     # Clone LAM and build cpu_nms
     .run_commands(
         "git clone https://github.com/aigc3d/LAM.git /root/LAM",
+        # Patch cpu_nms.pyx: replace deprecated np.int with np.intp for NumPy 1.24+
+        "sed -i 's/dtype=np\\.int)/dtype=np.intp)/' "
+        "/root/LAM/external/landmark_detection/FaceBoxesV2/utils/nms/cpu_nms.pyx",
         "cd /root/LAM/external/landmark_detection/FaceBoxesV2/utils/nms && "
         "python -c \""
         "from setuptools import setup, Extension; "
