@@ -37,7 +37,7 @@ if not _has_model_zoo and not _has_assets:
 # ============================================================
 image = (
     modal.Image.from_registry(
-        "nvidia/cuda:11.8.0-devel-ubuntu22.04", add_python="3.10"
+        "nvidia/cuda:12.1.0-devel-ubuntu22.04", add_python="3.10"
     )
     .apt_install(
         "git", "libgl1-mesa-glx", "libglib2.0-0", "ffmpeg", "wget", "tree",
@@ -52,22 +52,22 @@ image = (
         "python -m pip install --upgrade pip setuptools wheel",
         "pip install 'numpy==1.26.4'",
     )
-    # PyTorch 2.3.0 + CUDA 11.8 (official LAM recommended versions)
+    # PyTorch 2.4.0 + CUDA 12.1
     .run_commands(
-        "pip install torch==2.3.0 torchvision==0.18.0 torchaudio==2.3.0 "
-        "--index-url https://download.pytorch.org/whl/cu118"
+        "pip install torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 "
+        "--index-url https://download.pytorch.org/whl/cu121"
     )
-    # xformers: Required for DINOv2 attention accuracy (official LAM version)
+    # xformers: Required for DINOv2 attention accuracy
     .run_commands(
-        "pip install xformers==0.0.26.post1 "
-        "--index-url https://download.pytorch.org/whl/cu118"
+        "pip install xformers==0.0.27.post2 "
+        "--index-url https://download.pytorch.org/whl/cu121"
     )
     # CUDA build environment
     .env({
         "FORCE_CUDA": "1",
         "CUDA_HOME": "/usr/local/cuda",
         "MAX_JOBS": "4",
-        "TORCH_CUDA_ARCH_LIST": "7.0;7.5;8.0;8.6;8.9;9.0",
+        "TORCH_CUDA_ARCH_LIST": "8.9",
         "CC": "gcc",
         "CXX": "g++",
         "CXXFLAGS": "-std=c++17",
@@ -99,7 +99,7 @@ image = (
         "opencv-python-headless==4.9.0.80",
         "imageio[ffmpeg]",
         "moviepy==1.0.3",
-        "rembg",
+        "rembg[gpu]",
         "scikit-image",
         "pillow",
         "huggingface_hub>=0.24.0",
@@ -125,13 +125,14 @@ image = (
         "decord",
         "numpy==1.26.4",
     )
-    # onnxruntime-gpu (PyPI default is CUDA 11, matches our CUDA 11.8 base)
+    # onnxruntime-gpu for CUDA 12 (cuDNN 8.x compatible; PyPI default is CUDA 11)
     .run_commands(
-        "pip install onnxruntime-gpu==1.18.1",
+        "pip install onnxruntime-gpu==1.18.1 "
+        "--extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/",
     )
     # diff-gaussian-rasterization — patch CUDA 12.1 header issues then build
     .run_commands(
-        "git clone --recursive https://github.com/ashawkey/diff-gaussian-rasterization.git /tmp/dgr && "
+        "git clone https://github.com/ashawkey/diff-gaussian-rasterization.git /tmp/dgr && "
         "find /tmp/dgr -name '*.cu' -exec sed -i '1i #include <cfloat>' {} + && "
         "find /tmp/dgr -name '*.h' -path '*/cuda_rasterizer/*' -exec sed -i '1i #include <cstdint>' {} + && "
         "pip install /tmp/dgr --no-build-isolation && "
@@ -146,7 +147,7 @@ image = (
     )
     # nvdiffrast — JIT compilation at runtime (requires -devel image)
     .run_commands(
-        "pip install git+https://github.com/ShenhanQian/nvdiffrast.git@backface-culling --no-build-isolation",
+        "pip install git+https://github.com/NVlabs/nvdiffrast.git --no-build-isolation",
     )
     # FBX SDK
     .run_commands(
