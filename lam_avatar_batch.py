@@ -108,7 +108,7 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
     Args:
         image_bytes: Raw bytes of input face image (PNG/JPG)
         params: Dict with optional keys:
-            - motion_name (str): Name of sample motion folder (default "talk")
+            - motion_name (str): Name of sample motion folder (default "GEM")
     """
     import tempfile
     import shutil
@@ -142,7 +142,7 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
                 shutil.rmtree(stale)
 
     # Parse params
-    motion_name = params.get("motion_name", "talk")
+    motion_name = params.get("motion_name", "GEM")
 
     # Save input image to temp file
     tmpdir = tempfile.mkdtemp(prefix="lam_batch_")
@@ -424,6 +424,7 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
 @app.local_entrypoint()
 def main(
     image_path: str,
+    motion_name: str = "GEM",
     param_json_path: str = "",
     output_dir: str = "./output",
 ):
@@ -432,7 +433,8 @@ def main(
 
     Args:
         image_path: Path to input face image (PNG/JPG)
-        param_json_path: Path to params JSON file (optional)
+        motion_name: Motion name (default: GEM)
+        param_json_path: Path to params JSON file (optional, overrides motion_name)
         output_dir: Local directory to download results (default: ./output)
     """
     # Read image as bytes
@@ -446,8 +448,8 @@ def main(
             params = json.load(f)
         print(f"Read params: {param_json_path} -> {params}")
     else:
-        params = {"motion_name": "talk"}
-        print(f"Using default params: {params}")
+        params = {"motion_name": motion_name}
+        print(f"Using params: {params}")
 
     # Execute on remote GPU
     result = generate_avatar_batch.remote(image_bytes, params)
