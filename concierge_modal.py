@@ -345,7 +345,15 @@ def _setup_model_paths():
             if os.path.isdir(src) and not os.path.exists(dst):
                 os.symlink(src, dst)
 
+    # HuggingFace config.json may reference ./pretrained_models/human_model_files
+    # instead of ./model_zoo/human_parametric_models — create symlink to bridge
+    pretrained_models = "/root/LAM/pretrained_models"
+    os.makedirs(pretrained_models, exist_ok=True)
+    human_model_files_link = os.path.join(pretrained_models, "human_model_files")
     hpm = os.path.join(model_zoo, "human_parametric_models")
+    if os.path.isdir(hpm) and not os.path.exists(human_model_files_link):
+        os.symlink(hpm, human_model_files_link)
+
     if os.path.isdir(hpm):
         flame_subdir = os.path.join(hpm, "flame_assets", "flame")
         flame_assets_dir = os.path.join(hpm, "flame_assets")
