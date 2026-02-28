@@ -425,6 +425,20 @@ def _init_lam_pipeline():
     # which correctly maps all keys. Our previous manual safetensors loading
     # may have missed important weight mappings.
     print("Loading LAM model via from_pretrained() (official method)...")
+
+    # HuggingFace config.json has human_model_path="./pretrained_models/human_model_files"
+    # but our layout uses ./model_zoo/human_parametric_models — patch before loading
+    import json as _json
+    _cfg_json = os.path.join(cfg.model_name, "config.json")
+    if os.path.isfile(_cfg_json):
+        with open(_cfg_json) as _f:
+            _hf_cfg = _json.load(_f)
+        if _hf_cfg.get("human_model_path") != "./model_zoo/human_parametric_models":
+            _hf_cfg["human_model_path"] = "./model_zoo/human_parametric_models"
+            with open(_cfg_json, "w") as _f:
+                _json.dump(_hf_cfg, _f, indent=2)
+            print(f"[PATH-FIX] Patched human_model_path in {_cfg_json}")
+
     hf_model_cls = wrap_model_hub(model_dict["lam"])
     lam = hf_model_cls.from_pretrained(cfg.model_name)
 
