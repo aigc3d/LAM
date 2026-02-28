@@ -1,0 +1,10 @@
+# Generated audio samples
+audio_samples/
+
+# A2E inference outputs
+blendshape_outputs/
+
+# Test reports
+test_report.json
+analysis_results.csv
+analysis_results.json
