@@ -219,6 +219,7 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
             render_image_res=cfg.render_size, multiply=16,
             need_mask=False, vis_motion=False, shape_param=shape_param, test_sample=False,
             cross_id=False, src_driven=[src_name, driven_name],
+            max_squen_length=300,  # Match official ModelScope app.py
         )
 
         # Step 4: LAM inference

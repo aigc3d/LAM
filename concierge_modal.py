@@ -57,10 +57,11 @@ image = (
         "pip install torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 "
         "--index-url https://download.pytorch.org/whl/cu121"
     )
-    # xformers: Required for DINOv2 attention accuracy
+    # xformers: Official ModelScope app.py explicitly uninstalls xformers.
+    # Having xformers present can alter DINOv2 attention computation paths,
+    # potentially causing numerical differences that lead to bird-monster artifacts.
     .run_commands(
-        "pip install xformers==0.0.27.post2 "
-        "--index-url https://download.pytorch.org/whl/cu121"
+        "pip uninstall -y xformers 2>/dev/null; true",
     )
     # CUDA build environment
     .env({
@@ -153,9 +154,11 @@ image = (
     .run_commands(
         "pip install https://virutalbuy-public.oss-cn-hangzhou.aliyuncs.com/share/aigc3d/data/LAM/fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl",
     )
-    # Blender 4.2 LTS
+    # Blender 4.0.2 — exact version used by official ModelScope app.py
+    # (blender-4.0.2-linux-x64.tar.xz). Version mismatch can cause
+    # differences in GLB export (skinning, vertex order, coordinate transforms).
     .run_commands(
-        "wget -q https://download.blender.org/release/Blender4.2/blender-4.2.0-linux-x64.tar.xz -O /tmp/blender.tar.xz",
+        "wget -q https://download.blender.org/release/Blender4.0/blender-4.0.2-linux-x64.tar.xz -O /tmp/blender.tar.xz",
         "mkdir -p /opt/blender",
         "tar xf /tmp/blender.tar.xz -C /opt/blender --strip-components=1",
         "ln -sf /opt/blender/blender /usr/local/bin/blender",
@@ -395,20 +398,27 @@ def _init_lam_pipeline():
         "APP_MODEL_NAME": "./model_zoo/lam_models/releases/lam/lam-20k/step_045500/",
         "APP_INFER": "./configs/inference/lam-20k-8gpu.yaml",
         "APP_TYPE": "infer.lam",
-        "NUMBA_THREADING_LAYER": "omp",
+        "NUMBA_THREADING_LAYER": "forseq",  # Match official ModelScope app.py
     })
 
     # NOW import lam modules (with torch.compile safely disabled)
-    from safetensors.torch import load_file as _load_safetensors
-    from lam.models import ModelLAM
+    from lam.models import model_dict
+    from lam.utils.hf_hub import wrap_model_hub
     from app_lam import parse_configs
 
     # Parse config
     cfg, _ = parse_configs()
 
-    print("Loading LAM model...")
-    model_cfg = cfg.model
-    lam = ModelLAM(**model_cfg)
+    # --- WEIGHT LOADING: Use from_pretrained() exactly like official app.py ---
+    # The official ModelScope app.py uses:
+    #   hf_model_cls = wrap_model_hub(model_dict["lam"])
+    #   model = hf_model_cls.from_pretrained(cfg.model_name)
+    # This handles weight loading through HuggingFace's built-in mechanism,
+    # which correctly maps all keys. Our previous manual safetensors loading
+    # may have missed important weight mappings.
+    print("Loading LAM model via from_pretrained() (official method)...")
+    hf_model_cls = wrap_model_hub(model_dict["lam"])
+    lam = hf_model_cls.from_pretrained(cfg.model_name)
 
     # Restore original torch.compile
     torch.compile = _original_torch_compile
@@ -421,65 +431,10 @@ def _init_lam_pipeline():
                       'OptimizedModule' in type(fwd_lp).__name__ or \
                       '_TorchCompile' in type(fwd_lp).__name__
         print(f"[BIRD-FIX] forward_latent_points type: {type(fwd_lp).__name__}, compiled={is_compiled}")
-    enc_fwd = getattr(lam.encoder, 'forward', None) if hasattr(lam, 'encoder') else None
-    if enc_fwd is not None:
-        is_compiled = hasattr(enc_fwd, '_torchdynamo_orig_callable') or \
-                      'OptimizedModule' in type(enc_fwd).__name__
-        print(f"[BIRD-FIX] encoder.forward type: {type(enc_fwd).__name__}, compiled={is_compiled}")
-
-    ckpt_path = os.path.join(cfg.model_name, "model.safetensors")
-    print(f"Loading checkpoint: {ckpt_path}")
-
-    # --- WEIGHT LOADING with verification ---
-    ckpt = _load_safetensors(ckpt_path, device="cpu")
-    state_dict = lam.state_dict()
-    loaded_count = 0
-    skipped_count = 0
-    missing_in_ckpt = 0
-
-    for k, v in ckpt.items():
-        if k in state_dict:
-            if state_dict[k].shape == v.shape:
-                state_dict[k].copy_(v)
-                loaded_count += 1
-            else:
-                print(f"[WARN] shape mismatch: {k}: ckpt {v.shape} != model {state_dict[k].shape}")
-                skipped_count += 1
-        else:
-            pass
-
-    # Check for model keys not in checkpoint
-    ckpt_keys = set(ckpt.keys())
-    for k in state_dict.keys():
-        if k not in ckpt_keys:
-            missing_in_ckpt += 1
-
-    total_model_keys = len(state_dict)
-    total_ckpt_keys = len(ckpt)
-    load_ratio = loaded_count / total_model_keys * 100 if total_model_keys > 0 else 0
-
-    print(f"Weight loading summary:")
-    print(f"  Checkpoint keys: {total_ckpt_keys}")
-    print(f"  Model keys:      {total_model_keys}")
-    print(f"  Loaded:          {loaded_count} ({load_ratio:.1f}%)")
-    print(f"  Shape mismatch:  {skipped_count}")
-    print(f"  Missing in ckpt: {missing_in_ckpt}")
-    if load_ratio < 80:
-        print(f"  [CRITICAL] Only {load_ratio:.1f}% of weights loaded! Model may produce garbage output.")
-
-    # Log key encoder/renderer weight loading status
-    encoder_loaded = sum(1 for k in ckpt_keys if k.startswith("encoder."))
-    renderer_loaded = sum(1 for k in ckpt_keys if k.startswith("renderer."))
-    transformer_loaded = sum(1 for k in ckpt_keys if k.startswith("transformer."))
-    print(f"  Encoder keys in ckpt: {encoder_loaded}")
-    print(f"  Renderer keys in ckpt: {renderer_loaded}")
-    print(f"  Transformer keys in ckpt: {transformer_loaded}")
-    print("="*100)
 
     lam.to("cuda")
-    lam.to(torch.float32)  # CRITICAL: match official inference (lam/runners/infer/lam.py:337-339)
     lam.eval()
-    print(f"[DTYPE-FIX] Model dtype after .to(float32): {next(lam.parameters()).dtype}")
+    print(f"Model loaded. dtype: {next(lam.parameters()).dtype}, device: {next(lam.parameters()).device}")
 
     # Initialize FLAME tracking
     from tools.flame_tracking_single_image import FlameTrackingSingleImage
@@ -754,6 +709,7 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking, mot
             render_image_res=cfg.render_size, multiply=16,
             need_mask=False, vis_motion=False, shape_param=shape_param, test_sample=False,
             cross_id=False, src_driven=[src_name, driven_name],
+            max_squen_length=300,  # Match official ModelScope app.py
         )
 
         yield f"Step 4/{total_steps}: Running LAM inference...", None, None, None, preproc_vis_path
