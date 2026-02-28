@@ -455,7 +455,7 @@ def _init_lam_pipeline():
         print(f"[BIRD-FIX] forward_latent_points type: {type(fwd_lp).__name__}, compiled={is_compiled}")
 
     lam.to("cuda")
-    lam.eval()
+    # NOTE: Official ModelScope app.py does NOT call lam.eval(). Match that behavior.
     print(f"Model loaded. dtype: {next(lam.parameters()).dtype}, device: {next(lam.parameters()).device}")
 
     # Initialize FLAME tracking
@@ -727,7 +727,7 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking, mot
         
         motion_seq = prepare_motion_seqs(
             flame_params_dir, None, save_root=working_dir, fps=30,
-            bg_color=1.0, aspect_standard=1.0, enlarge_ratio=[1.0, 1.0],
+            bg_color=1.0, aspect_standard=1.0, enlarge_ratio=[1.0, 1, 0],
             render_image_res=cfg.render_size, multiply=16,
             need_mask=False, vis_motion=False, shape_param=shape_param, test_sample=False,
             cross_id=False, src_driven=[src_name, driven_name],

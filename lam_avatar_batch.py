@@ -216,7 +216,7 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
 
         motion_seq = prepare_motion_seqs(
             flame_params_dir, None, save_root=tmpdir, fps=30,
-            bg_color=1.0, aspect_standard=1.0, enlarge_ratio=[1.0, 1.0],
+            bg_color=1.0, aspect_standard=1.0, enlarge_ratio=[1.0, 1, 0],
             render_image_res=cfg.render_size, multiply=16,
             need_mask=False, vis_motion=False, shape_param=shape_param, test_sample=False,
             cross_id=False, src_driven=[src_name, driven_name],
