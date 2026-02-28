@@ -8,7 +8,7 @@ official demo at LAM_Large_Avatar_Model/app.py.
 
 Key alignment points (vs official app.py):
 - Same FLAME tracking → preprocess_image → prepare_motion_seqs → infer_single_view flow
-- Same OAC ZIP generation: save_shaped_mesh → generate_glb → offset.ply → animation.glb
+- Same OAC ZIP generation: save_shaped_mesh → offset.ply → generate_glb → animation.glb
 - Same parameter values: max_squen_length=300, render_fps=30, NUMBA_THREADING_LAYER=forseq
 - Video output with audio (matching official save_imgs_2_video + add_audio_to_video)
 - shape_guard retained as safety net (additive, not in official but harmless)
