@@ -395,7 +395,7 @@ def _init_lam_pipeline():
         "APP_MODEL_NAME": "./model_zoo/lam_models/releases/lam/lam-20k/step_045500/",
         "APP_INFER": "./configs/inference/lam-20k-8gpu.yaml",
         "APP_TYPE": "infer.lam",
-        "NUMBA_THREADING_LAYER": "omp",
+        "NUMBA_THREADING_LAYER": "forseq",  # Match official ModelScope app.py
     })
 
     # NOW import lam modules (with torch.compile safely disabled)

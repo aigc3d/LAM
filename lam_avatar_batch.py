@@ -1,16 +1,17 @@
 """
-lam_avatar_batch.py - LAM Avatar Batch Generator (No UI)
-=========================================================
+lam_avatar_batch.py - LAM Avatar Batch Generator (ModelScope-aligned)
+=====================================================================
 
-Single-shot GPU batch execution for LAM ZIP model file generation.
-Reuses the proven image definition from concierge_modal.py.
+Pipeline aligned with the official LAM ModelScope app.py.
+Uses the same initialization, inference, and OAC export flow as the
+official demo at LAM_Large_Avatar_Model/app.py.
 
-Design decisions (from ChatGPT consultation 2026-02-26):
-- No Gradio / No Web UI / No keep_warm -> minimal Modal credit consumption
-- Input: image (bytes) + params (JSON dict) via CLI
-- Output: ZIP (skin.glb + offset.ply + animation.glb) + preview PNG + comparison PNG
-- shape_param guard to detect "bird monster" (vertex explosion) artifacts
-- concierge_modal.py image reuse for proven dependency stability
+Key alignment points (vs official app.py):
+- Same FLAME tracking → preprocess_image → prepare_motion_seqs → infer_single_view flow
+- Same OAC ZIP generation: save_shaped_mesh → generate_glb → offset.ply → animation.glb
+- Same parameter values: max_squen_length=300, render_fps=30, NUMBA_THREADING_LAYER=forseq
+- Video output with audio (matching official save_imgs_2_video + add_audio_to_video)
+- shape_guard retained as safety net (additive, not in official but harmless)
 
 Usage:
   modal run lam_avatar_batch.py --image-path ./input/input.jpg --param-json-path ./input/params.json
@@ -37,6 +38,7 @@ def _shape_guard(shape_param):
     Detect 'bird monster' (vertex explosion) artifacts.
     shape_param in FLAME PCA space should be within [-3, +3] for normal faces.
     NaN or abs > 5.0 indicates FLAME tracking failure.
+    This is a safety net not present in official app.py but harmless.
     """
     import numpy as np
 
@@ -60,6 +62,39 @@ def _shape_guard(shape_param):
     print(f"[shape_guard] OK: range [{arr.min():.3f}, {arr.max():.3f}]")
 
 
+def _save_imgs_2_video(imgs, v_pth, fps=30):
+    """
+    Save image array to video file.
+    Matches official app.py save_imgs_2_video function.
+    """
+    import numpy as np
+    from moviepy.editor import ImageSequenceClip
+
+    images = [image.astype(np.uint8) for image in imgs]
+    clip = ImageSequenceClip(images, fps=fps)
+    clip = clip.subclip(0, len(images) / fps)
+    clip.write_videofile(v_pth, codec='libx264')
+    print(f"Video saved successfully at {v_pth}")
+
+
+def _add_audio_to_video(video_path, out_path, audio_path, fps=30):
+    """
+    Add audio track to video file.
+    Matches official app.py add_audio_to_video function.
+    """
+    from moviepy.editor import VideoFileClip, AudioFileClip
+
+    video_clip = VideoFileClip(video_path)
+    audio_clip = AudioFileClip(audio_path)
+
+    if audio_clip.duration > 10:
+        audio_clip = audio_clip.subclip(0, 10)
+
+    video_clip_with_audio = video_clip.set_audio(audio_clip)
+    video_clip_with_audio.write_videofile(out_path, codec='libx264', audio_codec='aac', fps=fps)
+    print(f"Audio added successfully at {out_path}")
+
+
 @app.function(
     gpu="L4",
     image=concierge_image,
@@ -68,12 +103,11 @@ def _shape_guard(shape_param):
 )
 def generate_avatar_batch(image_bytes: bytes, params: dict):
     """
-    Main batch inference function.
+    Main batch inference function aligned with official ModelScope app.py.
 
     Args:
         image_bytes: Raw bytes of input face image (PNG/JPG)
         params: Dict with optional keys:
-            - shape_scale (float): Scale factor for shape_param identity emphasis (default 1.0)
             - motion_name (str): Name of sample motion folder (default "talk")
     """
     import tempfile
@@ -85,14 +119,9 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
     from pathlib import Path
     from PIL import Image
     from glob import glob
+    from datetime import datetime
 
-    # ==========================================
-    # BIRD-MONSTER FIX v3: Disable torch.compile BEFORE any imports.
-    # The @torch.compile decorators on forward_latent_points and
-    # Dinov2FusionWrapper.forward are evaluated at import time.
-    # The monkey-patch in _init_lam_pipeline now runs BEFORE imports.
-    # These env vars provide an additional safety layer.
-    # ==========================================
+    # Disable torch.compile (safety layer matching concierge_modal.py)
     os.environ["TORCHDYNAMO_DISABLE"] = "1"
     os.environ["TORCH_COMPILE_DISABLE"] = "1"
     torch._dynamo.config.disable = True
@@ -103,7 +132,6 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
     sys.path.insert(0, "/root/LAM")
 
     from concierge_modal import _init_lam_pipeline
-    # NOTE: _setup_model_paths() is called inside _init_lam_pipeline() — no need to call here
 
     # Clean stale FLAME tracking data from previous runs
     tracking_root = os.path.join(os.getcwd(), "output", "tracking")
@@ -114,7 +142,6 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
                 shutil.rmtree(stale)
 
     # Parse params
-    shape_scale = params.get("shape_scale", 1.0)
     motion_name = params.get("motion_name", "talk")
 
     # Save input image to temp file
@@ -123,243 +150,221 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
     with open(image_path, "wb") as f:
         f.write(image_bytes)
     print(f"Input image saved: {image_path} ({len(image_bytes)} bytes)")
-    print(f"Params: shape_scale={shape_scale}, motion_name={motion_name}")
+    print(f"Params: motion_name={motion_name}")
 
     # Initialize LAM pipeline
     print("=" * 80)
     print("Initializing LAM pipeline...")
     cfg, lam, flametracking = _init_lam_pipeline()
-
-    # Verify model state
-    total_params = sum(1 for _ in lam.state_dict())
-    print(f"[DIAG] Model total state_dict keys: {total_params}")
-    print(f"[DIAG] Model device: {next(lam.parameters()).device}")
-    print(f"[DIAG] Encoder type: {type(lam.encoder).__name__}")
-    print(f"[DIAG] forward_latent_points type: {type(lam.forward_latent_points).__name__}")
-
-    # Quick encoder sanity check: feed a dummy image and verify output is not garbage
-    print("[DIAG] Running encoder sanity check...")
-    with torch.no_grad():
-        dummy = torch.randn(1, 3, 504, 504, device="cuda", dtype=torch.float32) * 0.5 + 0.5
-        enc_out = lam.forward_encode_image(dummy)
-        print(f"  Encoder output: shape={enc_out.shape}, "
-              f"min={enc_out.min():.4f}, max={enc_out.max():.4f}, "
-              f"mean={enc_out.mean():.4f}, std={enc_out.std():.4f}")
-        if enc_out.std() < 0.001:
-            print("  [CRITICAL] Encoder output has near-zero variance - weights may not be loaded!")
-        if torch.isnan(enc_out).any():
-            print("  [CRITICAL] Encoder output contains NaN!")
-        del dummy, enc_out
-        torch.cuda.empty_cache()
-
     print("LAM pipeline ready.")
     print("=" * 80)
 
     try:
+        # ============================================================
+        # Official pipeline flow (matching app.py core_fn exactly)
+        # ============================================================
+
         # Step 1: FLAME tracking on source image
-        print("[Step 1/5] FLAME tracking on source image...")
+        # (matches official: preprocess → optimize → export)
+        print("[Step 1/6] FLAME tracking on source image...")
         image_raw = os.path.join(tmpdir, "raw.png")
-        with Image.open(image_path).convert("RGB") as img:
+        with Image.open(image_path).convert('RGB') as img:
             img.save(image_raw)
 
-        ret = flametracking.preprocess(image_raw)
-        assert ret == 0, "FLAME preprocess failed"
-        ret = flametracking.optimize()
-        assert ret == 0, "FLAME optimize failed"
-        ret, output_dir = flametracking.export()
-        assert ret == 0, "FLAME export failed"
+        return_code = flametracking.preprocess(image_raw)
+        assert return_code == 0, "flametracking preprocess failed!"
+        return_code = flametracking.optimize()
+        assert return_code == 0, "flametracking optimize failed!"
+        return_code, output_dir = flametracking.export()
+        assert return_code == 0, "flametracking export failed!"
 
         tracked_image = os.path.join(output_dir, "images/00000_00.png")
         mask_path = os.path.join(output_dir, "fg_masks/00000_00.png")
-        print(f"  Tracked image: {tracked_image}")
+        print(f"  image_path: {tracked_image}")
+        print(f"  mask_path: {mask_path}")
 
-        # Step 2: Prepare motion sequence
-        print(f"[Step 2/5] Preparing motion sequence: {motion_name}...")
-        sample_motions = glob("./model_zoo/sample_motion/export/*/flame_param")
-        if not sample_motions:
-            raise RuntimeError("No motion sequences found in model_zoo/sample_motion/export/")
-
-        flame_params_dir = sample_motions[0]  # default
-        for sp in sample_motions:
-            if os.path.basename(os.path.dirname(sp)) == motion_name:
-                flame_params_dir = sp
+        # Step 2: Resolve motion sequence path
+        # (matches official: ./assets/sample_motion/export/{base_vid}/flame_param)
+        print(f"[Step 2/6] Preparing motion sequence: {motion_name}...")
+        flame_params_dir = None
+        for base in ["./assets/sample_motion/export", "./model_zoo/sample_motion/export"]:
+            candidate = os.path.join(base, motion_name, "flame_param")
+            if os.path.isdir(candidate):
+                flame_params_dir = candidate
                 break
+
+        if flame_params_dir is None:
+            # Fallback: scan all available motions
+            sample_motions = (
+                glob("./assets/sample_motion/export/*/flame_param") +
+                glob("./model_zoo/sample_motion/export/*/flame_param")
+            )
+            if not sample_motions:
+                raise RuntimeError("No motion sequences found")
+            flame_params_dir = sample_motions[0]
+            for sp in sample_motions:
+                if os.path.basename(os.path.dirname(sp)) == motion_name:
+                    flame_params_dir = sp
+                    break
+
+        motion_seqs_dir = flame_params_dir
         print(f"  Using motion: {os.path.dirname(flame_params_dir)}")
 
-        # Step 3: Preprocess image and prepare inference inputs
-        print("[Step 3/5] Preprocessing image for LAM inference...")
+        # Step 3: Preprocess image for LAM inference
+        # (matches official: preprocess_image + prepare_motion_seqs)
+        print("[Step 3/6] Preprocessing image for LAM inference...")
         from lam.runners.infer.head_utils import prepare_motion_seqs, preprocess_image
 
+        aspect_standard = 1.0 / 1.0
+        source_size = cfg.source_size
+        render_size = cfg.render_size
+        render_fps = 30
+
+        motion_img_need_mask = cfg.get("motion_img_need_mask", False)
+        vis_motion = cfg.get("vis_motion", False)
+
+        # Prepare reference image (matching official exactly)
         image_tensor, _, _, shape_param = preprocess_image(
-            tracked_image, mask_path=mask_path, intr=None, pad_ratio=0, bg_color=1.0,
-            max_tgt_size=None, aspect_standard=1.0, enlarge_ratio=[1.0, 1.0],
-            render_tgt_size=cfg.source_size, multiply=14, need_mask=True, get_shape_param=True,
+            tracked_image, mask_path=mask_path, intr=None, pad_ratio=0, bg_color=1.,
+            max_tgt_size=None, aspect_standard=aspect_standard, enlarge_ratio=[1.0, 1.0],
+            render_tgt_size=source_size, multiply=14, need_mask=True, get_shape_param=True,
         )
 
-        # Shape guard: detect bird monster
+        # Shape guard (safety net)
         _shape_guard(shape_param)
 
-        # Apply shape_scale for identity emphasis
-        if shape_scale != 1.0:
-            print(f"  Applying shape_scale={shape_scale} (identity emphasis)")
-            shape_param = shape_param * shape_scale
-            _shape_guard(shape_param)  # re-check after scaling
+        # Save masked image for visualization (matching official)
+        save_ref_img_path = os.path.join(tmpdir, "output.png")
+        vis_ref_img = (image_tensor[0].permute(1, 2, 0).cpu().detach().numpy() * 255).astype(np.uint8)
+        Image.fromarray(vis_ref_img).save(save_ref_img_path)
 
-        # Save preprocessed visualization
-        preproc_vis_path = os.path.join(tmpdir, "preprocessed_input.png")
-        vis_img = (image_tensor[0].permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
-        Image.fromarray(vis_img).save(preproc_vis_path)
-
-        src_name = os.path.splitext(os.path.basename(image_path))[0]
-        driven_name = os.path.basename(os.path.dirname(flame_params_dir))
+        # Prepare motion seq (matching official parameters)
+        # Note: official app.py has enlarge_ratio=[1.0, 1, 0] which is a typo for [1.0, 1.0]
+        src = tracked_image.split('/')[-3]
+        driven = motion_seqs_dir.split('/')[-2]
+        src_driven = [src, driven]
 
         motion_seq = prepare_motion_seqs(
-            flame_params_dir, None, save_root=tmpdir, fps=30,
-            bg_color=1.0, aspect_standard=1.0, enlarge_ratio=[1.0, 1.0],
-            render_image_res=cfg.render_size, multiply=16,
-            need_mask=False, vis_motion=False, shape_param=shape_param, test_sample=False,
-            cross_id=False, src_driven=[src_name, driven_name],
+            motion_seqs_dir, None, save_root=tmpdir, fps=render_fps,
+            bg_color=1., aspect_standard=aspect_standard, enlarge_ratio=[1.0, 1.0],
+            render_image_res=render_size, multiply=16,
+            need_mask=motion_img_need_mask, vis_motion=vis_motion,
+            shape_param=shape_param, test_sample=False, cross_id=False,
+            src_driven=src_driven, max_squen_length=300,
         )
 
         # Step 4: LAM inference
-        print("[Step 4/5] Running LAM inference...")
+        # (matches official: infer_single_view with same inputs)
+        print("[Step 4/6] Running LAM inference...")
         motion_seq["flame_params"]["betas"] = shape_param.unsqueeze(0)
-        device = "cuda"
+        device, dtype = "cuda", torch.float32
 
-        # Diagnostic: input tensor stats
-        inp = image_tensor.unsqueeze(0).to(device, torch.float32)
-        print(f"  [DIAG] Input tensor: shape={inp.shape}, "
-              f"min={inp.min():.4f}, max={inp.max():.4f}, mean={inp.mean():.4f}")
-        print(f"  [DIAG] shape_param: shape={shape_param.shape}, "
-              f"min={shape_param.min():.4f}, max={shape_param.max():.4f}")
-        print(f"  [DIAG] render_c2ws: shape={motion_seq['render_c2ws'].shape}")
-        print(f"  [DIAG] render_intrs: shape={motion_seq['render_intrs'].shape}")
-        print(f"  [DIAG] betas: shape={motion_seq['flame_params']['betas'].shape}")
-
+        print("start to inference...................")
         with torch.no_grad():
             res = lam.infer_single_view(
-                inp,
-                None, None,
+                image_tensor.unsqueeze(0).to(device, dtype), None, None,
                 render_c2ws=motion_seq["render_c2ws"].to(device),
                 render_intrs=motion_seq["render_intrs"].to(device),
                 render_bg_colors=motion_seq["render_bg_colors"].to(device),
                 flame_params={k: v.to(device) for k, v in motion_seq["flame_params"].items()},
             )
 
-        # Diagnostic: output tensor stats
-        comp_rgb = res["comp_rgb"]
-        comp_mask = res["comp_mask"]
-        print(f"  [DIAG] comp_rgb: shape={comp_rgb.shape}, "
-              f"min={comp_rgb.min():.4f}, max={comp_rgb.max():.4f}, mean={comp_rgb.mean():.4f}")
-        print(f"  [DIAG] comp_mask: shape={comp_mask.shape}, "
-              f"min={comp_mask.min():.4f}, max={comp_mask.max():.4f}, mean={comp_mask.mean():.4f}")
-        if comp_rgb.mean() < 0.01 or comp_rgb.max() < 0.1:
-            print("  [WARN] comp_rgb is nearly black -- model may not have loaded weights correctly")
-        if torch.isnan(comp_rgb).any():
-            print("  [CRITICAL] comp_rgb contains NaN!")
-
-        # Diagnostic: Gaussian splat position stats (canonical model)
-        if "cano_gs_lst" in res and len(res["cano_gs_lst"]) > 0:
-            gs_model = res["cano_gs_lst"][0]
-            gs_xyz = gs_model.xyz
-            gs_offset = gs_model.offset if hasattr(gs_model, 'offset') and gs_model.offset is not None else None
-            print(f"  [DIAG] Gaussian XYZ: shape={gs_xyz.shape}, "
-                  f"min=[{gs_xyz.min(0).values[0]:.4f},{gs_xyz.min(0).values[1]:.4f},{gs_xyz.min(0).values[2]:.4f}], "
-                  f"max=[{gs_xyz.max(0).values[0]:.4f},{gs_xyz.max(0).values[1]:.4f},{gs_xyz.max(0).values[2]:.4f}]")
-            if gs_offset is not None:
-                print(f"  [DIAG] Gaussian offset: shape={gs_offset.shape}, "
-                      f"abs_mean={gs_offset.abs().mean():.6f}, abs_max={gs_offset.abs().max():.6f}")
-            gs_scaling = gs_model.scaling
-            if gs_scaling is not None:
-                print(f"  [DIAG] Gaussian scaling: mean={gs_scaling.mean():.6f}, max={gs_scaling.max():.6f}")
-
-        # Diagnostic: Per-frame stats for first 3 frames
-        n_frames = min(3, comp_rgb.shape[0])
-        for fi in range(n_frames):
-            frame = comp_rgb[fi]
-            mask_f = comp_mask[fi]
-            fg_pixels = (mask_f > 0.5).sum().item()
-            total_pixels = mask_f.numel()
-            print(f"  [DIAG] Frame {fi}: mean={frame.mean():.4f}, "
-                  f"fg_pixels={fg_pixels}/{total_pixels} ({100*fg_pixels/total_pixels:.1f}%)")
-
-        # Save first 3 frames as individual diagnostic PNGs
-        diag_dir = os.path.join(tmpdir, "diagnostics")
-        os.makedirs(diag_dir, exist_ok=True)
-        rgb_np = comp_rgb.detach().cpu().numpy()
-        mask_np = comp_mask.detach().cpu().numpy()
-        mask_np[mask_np < 0.5] = 0.0
-        for fi in range(n_frames):
-            frame_rgb = rgb_np[fi] * mask_np[fi] + (1 - mask_np[fi]) * 1
-            frame_rgb = (np.clip(frame_rgb, 0, 1.0) * 255).astype(np.uint8)
-            Image.fromarray(frame_rgb).save(os.path.join(diag_dir, f"frame_{fi:03d}.png"))
-        print(f"  [DIAG] Saved {n_frames} diagnostic frames to {diag_dir}")
         print("  Inference complete.")
 
-        # Step 5: Generate GLB + ZIP
-        print("[Step 5/5] Generating 3D avatar (GLB + ZIP)...")
+        # Step 5: Generate OAC ZIP
+        # (matches official enable_oac_file block exactly)
+        print("[Step 5/6] Generating OAC ZIP (skin.glb + offset.ply + animation.glb)...")
+
         from tools.generateARKITGLBWithBlender import generate_glb
 
-        oac_dir = os.path.join(tmpdir, "oac_export", "avatar")
+        base_iid = 'avatar_' + datetime.now().strftime("%Y%m%d%H%M%S")
+        oac_dir = os.path.join('./', base_iid)
         os.makedirs(oac_dir, exist_ok=True)
 
-        # Save shaped mesh -> GLB via Blender
+        # 1. save_shaped_mesh → OBJ (matching official)
         saved_head_path = lam.renderer.flame_model.save_shaped_mesh(
             shape_param.unsqueeze(0).cuda(), fd=oac_dir,
         )
 
-        generate_glb(
-            input_mesh=Path(saved_head_path),
-            template_fbx=Path("./model_zoo/sample_oac/template_file.fbx"),
-            output_glb=Path(os.path.join(oac_dir, "skin.glb")),
-            blender_exec=Path("/usr/local/bin/blender"),
-        )
-
-        # Save offset PLY (Gaussian splatting)
-        res["cano_gs_lst"][0].save_ply(
+        # 2. offset.ply (matching official)
+        res['cano_gs_lst'][0].save_ply(
             os.path.join(oac_dir, "offset.ply"), rgb2sh=False, offset2xyz=True,
         )
 
-        # Copy animation template
-        shutil.copy(
-            src="./model_zoo/sample_oac/animation.glb",
-            dst=os.path.join(oac_dir, "animation.glb"),
+        # 3. generate_glb → skin.glb (matching official)
+        template_fbx = Path("./assets/sample_oac/template_file.fbx")
+        if not template_fbx.exists():
+            template_fbx = Path("./model_zoo/sample_oac/template_file.fbx")
+
+        blender_exec = Path("./blender-4.0.2-linux-x64/blender")
+        if not blender_exec.exists():
+            blender_exec = Path("/usr/local/bin/blender")
+            if not blender_exec.exists():
+                import shutil as _sh
+                blender_which = _sh.which("blender")
+                if blender_which:
+                    blender_exec = Path(blender_which)
+
+        generate_glb(
+            input_mesh=Path(saved_head_path),
+            template_fbx=template_fbx,
+            output_glb=Path(os.path.join(oac_dir, "skin.glb")),
+            blender_exec=blender_exec,
         )
 
-        # vertex_order.json is already generated by generate_glb step 4
-        # (gen_vertex_order_with_blender) which correctly sorts vertices by Z
-        # coordinate after 90-degree rotation. This matches the downstream
-        # viewer's expectations. DO NOT overwrite it with sequential indices.
+        # 4. animation.glb (matching official)
+        animation_src = './assets/sample_oac/animation.glb'
+        if not os.path.isfile(animation_src):
+            animation_src = './model_zoo/sample_oac/animation.glb'
+        shutil.copy(src=animation_src, dst=os.path.join(oac_dir, 'animation.glb'))
 
-        # Clean up temp mesh (nature.obj)
+        # Clean up temp OBJ (matching official)
         if os.path.exists(saved_head_path):
             os.remove(saved_head_path)
 
-        # Create ZIP
-        output_zip = os.path.join(tmpdir, "avatar.zip")
-        with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-            dir_info = zipfile.ZipInfo("avatar/")
-            zf.writestr(dir_info, "")
-            for root, _, files in os.walk(oac_dir):
-                for fname in files:
-                    fpath = os.path.join(root, fname)
-                    arcname = os.path.relpath(fpath, os.path.dirname(oac_dir))
-                    zf.write(fpath, arcname)
+        # Create ZIP (matching official: zip -r)
+        output_zip = os.path.join('./', base_iid + '.zip')
+        if os.path.exists(output_zip):
+            os.remove(output_zip)
+        os.system('zip -r {} {}'.format(output_zip, oac_dir))
+        shutil.rmtree(oac_dir)
 
         zip_size = os.path.getsize(output_zip) / (1024 * 1024)
         print(f"  ZIP created: {output_zip} ({zip_size:.1f} MB)")
 
-        # Generate preview PNG (first frame)
-        preview_path = os.path.join(tmpdir, "preview.png")
-        rgb = res["comp_rgb"].detach().cpu().numpy()
-        mask = res["comp_mask"].detach().cpu().numpy()
+        # Step 6: Generate video + preview images
+        # (matches official: rgb compositing + save_imgs_2_video + add_audio_to_video)
+        print("[Step 6/6] Generating video and preview images...")
+
+        rgb = res["comp_rgb"].detach().cpu().numpy()  # [Nv, H, W, 3], 0-1
+        mask = res["comp_mask"].detach().cpu().numpy()  # [Nv, H, W, 3], 0-1
         mask[mask < 0.5] = 0.0
         rgb = rgb * mask + (1 - mask) * 1
         rgb = (np.clip(rgb, 0, 1.0) * 255).astype(np.uint8)
-        Image.fromarray(rgb[0]).save(preview_path)
-        print(f"  Preview: {preview_path}")
 
-        # Generate comparison image (input vs output side-by-side)
+        # Video generation (matching official)
+        dump_video_path = os.path.join(tmpdir, "output.mp4")
+        _save_imgs_2_video(rgb, dump_video_path, render_fps)
+
+        # Audio addition (matching official)
+        final_video_path = dump_video_path
+        audio_path = None
+        for base in ["./assets/sample_motion/export", "./model_zoo/sample_motion/export"]:
+            candidate = os.path.join(base, motion_name, motion_name + ".wav")
+            if os.path.isfile(candidate):
+                audio_path = candidate
+                break
+
+        if audio_path:
+            dump_video_path_wa = dump_video_path.replace(".mp4", "_audio.mp4")
+            _add_audio_to_video(dump_video_path, dump_video_path_wa, audio_path, render_fps)
+            final_video_path = dump_video_path_wa
+
+        # Preview image (first frame)
+        preview_path = os.path.join(tmpdir, "preview.png")
+        Image.fromarray(rgb[0]).save(preview_path)
+
+        # Comparison image (input vs output side-by-side)
         compare_path = os.path.join(tmpdir, "compare.png")
         img_in = Image.open(image_path).convert("RGB").resize((256, 256))
         img_out = Image.open(preview_path).convert("RGB").resize((256, 256))
@@ -367,41 +372,34 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
         canvas.paste(img_in, (0, 0))
         canvas.paste(img_out, (256, 0))
         canvas.save(compare_path)
-        print(f"  Comparison: {compare_path}")
 
+        # ============================================================
         # Save results to volume
+        # ============================================================
         vol_out = OUTPUT_VOL_PATH
         os.makedirs(vol_out, exist_ok=True)
 
         shutil.copy2(output_zip, os.path.join(vol_out, "avatar.zip"))
         shutil.copy2(preview_path, os.path.join(vol_out, "preview.png"))
         shutil.copy2(compare_path, os.path.join(vol_out, "compare.png"))
-        shutil.copy2(preproc_vis_path, os.path.join(vol_out, "preprocessed_input.png"))
+        shutil.copy2(save_ref_img_path, os.path.join(vol_out, "preprocessed_input.png"))
+        if os.path.isfile(final_video_path):
+            shutil.copy2(final_video_path, os.path.join(vol_out, "output.mp4"))
 
-        # Save diagnostic frames
-        for fi in range(n_frames):
-            src_diag = os.path.join(diag_dir, f"frame_{fi:03d}.png")
-            if os.path.exists(src_diag):
-                shutil.copy2(src_diag, os.path.join(vol_out, f"frame_{fi:03d}.png"))
-
-        # Save params for experiment tracking (with diagnostics)
+        # Result metadata
         result_meta = {
             "params": params,
             "shape_param_range": [float(shape_param.min()), float(shape_param.max())],
-            "shape_param_dim": int(shape_param.shape[-1]),
             "zip_size_mb": round(zip_size, 2),
-            "comp_rgb_stats": {
-                "mean": float(res["comp_rgb"].mean()),
-                "min": float(res["comp_rgb"].min()),
-                "max": float(res["comp_rgb"].max()),
-                "has_nan": bool(torch.isnan(res["comp_rgb"]).any()),
-            },
-            "bird_fix_applied": True,
         }
         with open(os.path.join(vol_out, "result_meta.json"), "w") as f:
             json.dump(result_meta, f, indent=2)
 
         output_vol.commit()
+
+        # Clean up ZIP from working dir
+        if os.path.exists(output_zip):
+            os.remove(output_zip)
 
         print("=" * 80)
         print("BATCH GENERATION COMPLETE")
@@ -448,7 +446,7 @@ def main(
             params = json.load(f)
         print(f"Read params: {param_json_path} -> {params}")
     else:
-        params = {"shape_scale": 1.0, "motion_name": "talk"}
+        params = {"motion_name": "talk"}
         print(f"Using default params: {params}")
 
     # Execute on remote GPU
@@ -458,8 +456,8 @@ def main(
     # Download results from Modal Volume to local machine
     os.makedirs(output_dir, exist_ok=True)
     download_files = [
-        "avatar.zip", "preview.png", "compare.png", "preprocessed_input.png", "result_meta.json",
-        "frame_000.png", "frame_001.png", "frame_002.png",
+        "avatar.zip", "preview.png", "compare.png", "preprocessed_input.png",
+        "result_meta.json", "output.mp4",
     ]
     print(f"\nDownloading results to {output_dir}/...")
 
@@ -477,5 +475,6 @@ def main(
             print(f"  Skip: {fname} ({e})")
 
     print(f"\nDone. Results in: {os.path.abspath(output_dir)}/")
-    print(f"  avatar.zip  -- ZIPモデルファイル (skin.glb + offset.ply + animation.glb)")
-    print(f"  compare.png -- 入力 vs 出力 比較画像")
+    print(f"  avatar.zip  -- OAC ZIP (skin.glb + offset.ply + animation.glb + vertex_order.json)")
+    print(f"  output.mp4  -- Rendered animation video with audio")
+    print(f"  compare.png -- Input vs output comparison")
