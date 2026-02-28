@@ -1,213 +1,393 @@
-# 修正計画書: Modal版をModelScope公式app.pyに準拠させる
-**作成日**: 2026-02-28
+# 修正計画書 v2: Modal版をModelScope公式app.pyに準拠させる
+**作成日**: 2026-02-28（v2更新）
 **作成者**: ClaudeCode（ユーザー・他AI確認用）
 **対象ブランチ**: `claude/update-lam-modelscope-UQKxj`
 
 ---
 
+## 0. 前提の訂正（v2で追加）
+
+### v1の誤り
+
+v1では「現在のconcierge_modal.pyは既に公式のgenerate_glbを使っており問題ない」と書いたが、
+これはClaudeの過信による誤りだった。
+
+ユーザーから**実際に完走したバージョン**として `app_concierge.py` が提示された。
+このファイルはリポジトリに現存する（コミット `5a1e8bd`）。
+
+### 信頼できるベースライン
+
+| ファイル | 状態 | 説明 |
+|---------|------|------|
+| `LAM_Large_Avatar_Model/app.py` | 正解 | ModelScope公式。正常動作確認済み |
+| `app_concierge.py` | 完走実績あり | HF Spaces/Docker版。ZIPまで生成完了 |
+| `concierge_modal.py` | **要検証** | Claudeが複数回改変＆revertを繰り返したもの。信頼性低 |
+| `lam_avatar_batch.py` | **要検証** | Claudeが作成。concierge_modal.pyに依存 |
+
+### 現在のconcierge_modal.pyの来歴
+
+Claudeがconcierge_modal.pyに対して行った操作の履歴:
+```
+35abf87 Delete concierge_now.zip
+bd8ca68 fix: disable torch.compile + Gaussian diagnostics
+d5a62e2 fix: format string error
+bd54b56 Replace manual weight loading with load_state_dict
+90828ed Add encoder feature sanity check
+13453e8 Add --smoke-test
+b8bf7b1 Fix bird monster: add xformers
+9c14d1f Add PyTorch/xformers version to DIAGNOSTICS
+17afde2 Update concierge_modal.py
+ff0cd19 Finalize fixes for GLB export
+3d0e991 Replace inline Blender script with official generate_glb pipeline  ← ★ここで方式変更
+73aa5ae Fix stale output
+33718c5 Redesign Gradio UI
+8becf54 Finalize concierge_modal.py with fixes and optimizations
+...（さらにbird-monster fix、CUDA migration、revert等が続く）...
+391e477 revert: restore to last working version  ← 1回目のrevert
+da39749 refactor: align with official app.py pipeline  ← またClaude改変
+fb784b7 revert: restore to pre-session state (da39749)  ← 2回目のrevert
+```
+
+**revertが2回行われており、正しく戻せた保証がない。**
+
+---
+
 ## 1. 修正目的
 
-ModelScope公式の `LAM_Large_Avatar_Model/app.py`（正常動作確認済み）のロジックを、
+ModelScope公式の `LAM_Large_Avatar_Model/app.py`（正常動作確認済み）のOAC ZIP生成ロジックを、
 Modal実行環境の `concierge_modal.py` と `lam_avatar_batch.py` に正確に移植する。
 
 ---
 
-## 2. Geminiコメントの独自検証結果
+## 2. 3つのGLB生成パイプラインの比較
 
-### Geminiの主張
-> 「自作Blenderスクリプト (convert_and_order.py) が鳥のばけもの化の元凶」
+### 2.1 比較表
 
-### 検証結果: 現在のコードでは**既に修正済み**
+現在、3つの異なるGLB生成方法が存在する。
 
-現在の `concierge_modal.py:784` と `lam_avatar_batch.py:308` は、
-いずれも公式の `tools.generateARKITGLBWithBlender.generate_glb` を使用しています。
-Geminiのコメントは**過去の `app_concierge.py`**（現存しない古いファイル）に対する分析です。
+#### (A) 公式 `app.py`（ModelScope）— 正解
 
-ただし、Geminiの指摘の核心（「公式の generate_glb 関数を使え」）は正しく、
-現在のコードは既にその方針に沿っています。
+```python
+# app.py 402-427行目
+from generateARKITGLBWithBlender import generate_glb
+
+generate_glb(
+    input_mesh=Path(saved_head_path),
+    template_fbx=Path("./assets/sample_oac/template_file.fbx"),
+    output_glb=Path(os.path.join(oac_dir, "skin.glb")),
+    blender_exec=Path(cfg.blender_path)
+)
+```
+
+`generate_glb` 内部の処理:
+1. `update_flame_shape()` — OBJの頂点をFBXテンプレートに注入 → ASCII FBX
+2. `convert_ascii_to_binary()` — FBX SDK で ASCII → Binary 変換
+3. `convert_with_blender()` — `convertFBX2GLB.py` 経由でFBX→GLB（マテリアル除去なし）
+4. `gen_vertex_order_with_blender()` — `generateVertexIndices.py` 経由でOBJインポート→90°回転→Z座標ソート
+
+ZIPに入るファイル: `offset.ply`, `skin.glb`, `vertex_order.json`, `animation.glb`
+
+#### (B) `app_concierge.py`（完走バージョン）
+
+```python
+# app_concierge.py
+from tools.generateARKITGLBWithBlender import update_flame_shape, convert_ascii_to_binary
+
+# Step 1-2は公式と同じ
+update_flame_shape(Path(saved_head_path), temp_ascii, template_fbx)
+convert_ascii_to_binary(temp_ascii, temp_binary)
+
+# Step 3-4は自作Blenderスクリプト（convert_and_order.py）で一括処理
+cmd = [str(blender_exec), "--background", "--python", str(convert_script),
+       "--", str(temp_binary), str(skin_glb_path), str(vertex_order_path)]
+subprocess.run(cmd, ...)
+```
+
+自作スクリプトの特徴:
+- `strip_materials()` でマテリアルを完全除去
+- `export_materials='NONE'` 指定
+- `world_matrix @ v.co` でワールド座標変換してからvertex_order生成
+- FBX→GLB変換とvertex_order生成を **1回のBlenderセッション** で実行
+- `export_morph_normal=False` 追加（公式にはない）
+
+ZIPに入るファイル: `offset.ply`, `skin.glb`, `vertex_order.json`, `animation.glb`
+
+#### (C) 現在の `concierge_modal.py`（Claude改変版）
+
+```python
+# concierge_modal.py 684行目
+from tools.generateARKITGLBWithBlender import generate_glb
+
+generate_glb(
+    input_mesh=Path(saved_head_path),
+    template_fbx=Path("./model_zoo/sample_oac/template_file.fbx"),
+    output_glb=Path(os.path.join(oac_dir, "skin.glb")),
+    blender_exec=Path("/usr/local/bin/blender")
+)
+```
+
+公式の `generate_glb` をそのまま呼び出し。方式(A)と同一。
+
+### 2.2 方式間の差異
+
+| 項目 | (A) 公式 app.py | (B) app_concierge.py（完走） | (C) concierge_modal.py（現在） |
+|------|----------------|---------------------------|------------------------------|
+| skin.glb生成 | convertFBX2GLB.py | 自作スクリプト | convertFBX2GLB.py |
+| vertex_order生成 | generateVertexIndices.py | 自作スクリプト（同一セッション） | generateVertexIndices.py |
+| マテリアル除去 | なし | あり（strip_materials） | なし |
+| Blender起動回数 | 2回 | 1回 | 2回 |
+| 90°回転適用 | あり（vertex_order時のみ） | なし（world_matrix使用） | あり（vertex_order時のみ） |
+| CWD依存 | `convertFBX2GLB.py`パス | 明示パス指定 | パスは`tools/`内 |
+
+### 2.3 判断が必要な点
+
+**(C)は(A)と方式は同一だが、「完走実績」がない。**
+
+完走実績があるのは(B)のみ。(A)はModelScopeで正常動作確認済みだが、
+Modal環境では未検証。(C)はClaude改変を経ており信頼性が低い。
+
+**選択肢**:
+1. **(B)に戻す**: 完走実績を優先。GLB方式はapp_concierge.pyの自作スクリプトに戻す
+2. **(A)に合わせる**: 公式準拠を優先。generate_glb を使い続けるが、Modal環境差異を検証
+3. **ハイブリッド**: OAC生成部分のみ(B)から移植し、それ以外は(A)に合わせる
+
+→ **ユーザー/Geminiに判断を委ねる**
 
 ---
 
-## 3. 公式app.pyとModal版の差異一覧（行単位比較）
-
-以下は、公式 `LAM_Large_Avatar_Model/app.py` と現在の Modal版を
-行単位で比較して発見した**実際の差異**です。
+## 3. 公式app.pyと各版の差異一覧（行単位比較）
 
 ### 3.1 `prepare_motion_seqs` の `enlarge_ratio` パラメータ
 
-| 項目 | 公式 app.py (382行目) | concierge_modal.py (753行目) | lam_avatar_batch.py (249行目) |
-|------|----------------------|------------------------------|-------------------------------|
+| 項目 | 公式 app.py (382行) | concierge_modal.py (753行) | app_concierge.py |
+|------|---------------------|---------------------------|-----------------|
 | enlarge_ratio | `[1.0, 1, 0]` | `[1.0, 1.0]` | `[1.0, 1.0]` |
 
 **分析**:
-- 公式の `[1.0, 1, 0]` は **Python構文上 `[1.0, 1, 0]` = 3要素のリスト** です。
-- これはタイプミスの可能性が高い（`[1.0, 1.0]` の意図で `1.0` を `1, 0` と書き損じ）
-- 仮に意図的な3要素だとしても、`prepare_motion_seqs`の内部実装次第で挙動が変わる
+- 公式の `[1.0, 1, 0]` はPython構文上 **3要素のリスト** `[1.0, 1, 0]`
+- `1.0` を `1, 0`（カンマ前後にスペースなし）と書き損じた**タイプミスの可能性が高い**
+- `prepare_motion_seqs` の内部実装で `enlarge_ratio[:2]` 等のスライスで使っている場合、
+  3要素でも2要素でも同じ結果になる可能性あり
 
-**対応方針**:
-要確認事項。公式がこの値で正常動作しているなら、`[1.0, 1, 0]` に合わせるべきか判断が必要。
-→ **ユーザー/Geminiに判断を委ねる**
+→ **要確認: `prepare_motion_seqs`の内部実装を確認してから判断**
 
 ### 3.2 `prepare_motion_seqs` の `max_squen_length` パラメータ
 
-| 項目 | 公式 app.py (386行目) | concierge_modal.py | lam_avatar_batch.py (253行目) |
-|------|----------------------|---------------------|-------------------------------|
-| max_squen_length | `300` | **指定なし（デフォルト値に依存）** | `300` |
+| 項目 | 公式 app.py (386行) | concierge_modal.py | app_concierge.py |
+|------|---------------------|---------------------|-----------------|
+| max_squen_length | `300` | **指定なし** | **指定なし** |
 
-**分析**: concierge_modal.py の `prepare_motion_seqs` 呼び出し（753行目付近）に `max_squen_length=300` が**ない**。
+→ **修正**: 両方に `max_squen_length=300` を追加する
 
-**対応方針**: concierge_modal.py に `max_squen_length=300` を追加する。
+### 3.3 offset.ply の保存順序
 
-### 3.3 `save_imgs_2_video` のフレーム数検証
+| 項目 | 公式 app.py (411行) | concierge_modal.py (794行) | app_concierge.py |
+|------|---------------------|---------------------------|-----------------|
+| 順序 | mesh → **ply → glb** → anim | mesh → **glb → ply** → anim | mesh → **glb → ply** → anim |
 
-| 項目 | 公式 app.py (207-222行目) | concierge_modal.py | lam_avatar_batch.py |
-|------|--------------------------|---------------------|---------------------|
-| フレーム数検証 | `cv2.VideoCapture` で保存後のフレーム数を検証 | なし | なし |
+→ **修正**: 公式と同じ **mesh → ply → glb → anim** の順序に変更
 
-**分析**: 公式はビデオ保存後に `cv2.VideoCapture` でフレーム数が一致するか確認している。
+### 3.4 `base_iid` の命名
 
-**対応方針**: 品質検証として有用だが、ロジックの正確性には影響なし。低優先度。
+| 項目 | 公式 app.py (318行) | concierge_modal.py (687行) | app_concierge.py |
+|------|---------------------|---------------------------|-----------------|
+| base_iid | `'chatting_avatar_' + datetime(YYYYMMDDHHMMSS)` | `"concierge"` (固定) | `"concierge"` (固定) |
 
-### 3.4 `add_audio_to_video` の10秒制限
-
-| 項目 | 公式 app.py (236-237行目) | concierge_modal.py (app_lam.py経由) | lam_avatar_batch.py (90-91行目) |
-|------|--------------------------|--------------------------------------|-------------------------------|
-| audio_clip 10秒制限 | `if audio_clip.duration > 10: audio_clip = audio_clip.subclip(0, 10)` | **なし** (app_lam.py:108-124 にはこの制限がない) | **あり** |
-
-**分析**:
-- 公式は音声を10秒にクリップしている
-- concierge_modal.py は `app_lam.py:add_audio_to_video` を使っており、この制限がない
-- lam_avatar_batch.py は独自実装で10秒制限あり
-
-**対応方針**: concierge_modal.pyで公式に合わせて10秒制限を追加するか検討。
+→ **修正**: 公式に合わせて `chatting_avatar_YYYYMMDDHHMMSS` にする
 
 ### 3.5 ZIP作成方法
 
-| 項目 | 公式 app.py (427行目) | concierge_modal.py (809行目) | lam_avatar_batch.py (329行目) |
-|------|----------------------|------------------------------|-------------------------------|
-| ZIP作成 | `os.system('zip -r ...')` | `zipfile.ZipFile` (Python) | `os.system('zip -r ...')` |
+| 項目 | 公式 app.py (427行) | concierge_modal.py (809行) | app_concierge.py |
+|------|---------------------|---------------------------|-----------------|
+| ZIP作成 | `os.system('zip -r ...')` | Python `zipfile.ZipFile` | Python `zipfile.ZipFile` |
+
+→ **要確認**: Chatting AvatarのZIPパーサーが構造に厳密か
+
+### 3.6 モデルロード方法
+
+| 項目 | 公式 app.py (641-648行) | concierge_modal.py (401-481行) | app_concierge.py |
+|------|------------------------|-------------------------------|-----------------|
+| ロード方法 | `wrap_model_hub().from_pretrained()` | `ModelLAM(**cfg.model)` + 手動safetensors | `ModelLAM(**cfg.model)` + `load_state_dict` |
 
 **分析**:
-- 公式は `os.system('zip -r {output_zip} {oac_dir}')` でシステムのzipコマンドを使用
-- concierge_modal.py は Python の `zipfile` モジュールを使用
-- lam_avatar_batch.py は公式と同じ `os.system('zip -r ...')`
+- 公式は `from_pretrained` を使用
+- app_concierge.py（完走版）は `ModelLAM(**cfg.model)` + `load_state_dict(strict=False)`
+- concierge_modal.py は `ModelLAM(**cfg.model)` + 手動key-by-keyコピー（より冗長）
 
-**対応方針**:
-機能的には同等だが、ZIPの内部構造（ディレクトリエントリの有無、圧縮レベル）が微妙に異なる可能性。
-Chatting Avatar のパーサーがZIP構造に厳密なら問題になりうる。
-→ **公式と同じ `os.system('zip -r ...')` に統一するか検討**
+→ **app_concierge.py方式（load_state_dict）で統一すれば、完走実績と合致する**
 
-### 3.6 OAC ZIPの出力パス
+### 3.7 `add_audio_to_video` の10秒制限
 
-| 項目 | 公式 app.py (409-410行目) | concierge_modal.py (776行目) | lam_avatar_batch.py (281行目) |
-|------|--------------------------|------------------------------|-------------------------------|
-| oac_dir | `os.path.join('./', base_iid)` (カレントディレクトリ直下) | `os.path.join(working_dir, "oac_export", base_iid)` | `os.path.join('./', base_iid)` |
+| 項目 | 公式 app.py (236行) | concierge_modal.py | app_concierge.py |
+|------|---------------------|---------------------|-----------------|
+| 10秒制限 | あり | なし | なし |
 
-**分析**:
-- 公式はカレントディレクトリ直下に `chatting_avatar_YYYYMMDDHHMMSS/` を作成
-- concierge_modal.py は `working_dir/oac_export/concierge/` に作成
-- ZIPの中身のフォルダ名が変わるため、Chatting Avatar パーサーに影響する可能性
+→ **低優先度**: 音声クリップの長さであり、ZIP品質には無関係
 
-**対応方針**:
-ZIPの中身のフォルダ名（arcname）が正しければパスは問題ない。要確認。
+### 3.8 `NUMBA_THREADING_LAYER`
 
-### 3.7 `base_iid` の命名
+| 項目 | 公式 app.py (658行) | concierge_modal.py (398行) | app_concierge.py |
+|------|---------------------|---------------------------|-----------------|
+| 値 | `forseq` | `forseq` ✓ | `omp` |
 
-| 項目 | 公式 app.py (318行目) | concierge_modal.py (687行目) | lam_avatar_batch.py (280行目) |
-|------|----------------------|------------------------------|-------------------------------|
-| base_iid | `'chatting_avatar_' + datetime.now().strftime("%Y%m%d%H%M%S")` | `"concierge"` (固定) | `'avatar_' + datetime.now().strftime("%Y%m%d%H%M%S")` |
+→ concierge_modal.py は既に正しい
 
-**分析**: ZIPの中身のフォルダ名に影響。Chatting Avatarがフォルダ名に依存しなければ無害。
+### 3.9 convertFBX2GLB.py vs 自作スクリプトの差異
 
-**対応方針**: 公式に合わせて `chatting_avatar_YYYYMMDDHHMMSS` にする。
+公式 `convertFBX2GLB.py`:
+```python
+bpy.ops.export_scene.gltf(
+    filepath=str(output_glb),
+    export_format='GLB',
+    export_skins=True,
+    export_texcoords=False,
+    export_normals=False,
+    export_colors=False,
+)
+```
 
-### 3.8 app_lam.py の `NUMBA_THREADING_LAYER`
+app_concierge.py 自作スクリプト:
+```python
+strip_materials()  # ← 公式にはない
+bpy.ops.export_scene.gltf(
+    filepath=str(output_glb),
+    export_format='GLB',
+    export_skins=True,
+    export_materials='NONE',     # ← 公式にはない
+    export_normals=False,
+    export_texcoords=False,
+    export_morph_normal=False,   # ← 公式にはない
+)
+```
 
-| 項目 | 公式 app.py (658行目) | app_lam.py (533行目) |
-|------|----------------------|----------------------|
-| NUMBA_THREADING_LAYER | `forseq` | `omp` |
+**差異**: `strip_materials`, `export_materials='NONE'`, `export_morph_normal=False`
 
-**分析**: 公式は `forseq`、ローカルの app_lam.py は `omp`。
-concierge_modal.py は既に `forseq` を使用（正しい）。
+→ **要確認**: この差異がChatting Avatarの表示に影響するか
 
-**対応方針**: app_lam.py は今回のスコープ外（Modal版のみが対象）。
+### 3.10 generateVertexIndices.py vs 自作vertex_order生成の差異
 
-### 3.9 `_build_model` のモデルロード方法
+公式 `generateVertexIndices.py`:
+```python
+import_obj(str(input_mesh))        # OBJインポート
+apply_rotation(base_obj)           # 90°回転（X軸）を適用
+vertices = [(i, v.co.z) for ...]   # ローカル座標のZ値
+sorted_vertices = sorted(vertices, key=lambda x: x[1])
+```
 
-| 項目 | 公式 app.py (641-648行目) | concierge_modal.py (401-481行目) |
-|------|--------------------------|----------------------------------|
-| ロード方法 | `wrap_model_hub(model_dict["lam"]).from_pretrained(cfg.model_name)` | `ModelLAM(**cfg.model)` + 手動safetensorsロード |
+app_concierge.py 自作:
+```python
+bpy.ops.import_scene.fbx(...)      # FBXインポート（OBJではない）
+world_matrix = mesh_obj.matrix_world
+vertices = [(i, (world_matrix @ v.co).z) for ...]  # ワールド座標のZ値
+sorted_vertices = sorted(vertices, key=lambda x: x[1])
+```
 
-**分析**:
-- 公式は `from_pretrained` を使う（HuggingFace Hub形式）
-- concierge_modal.py は `ModelLAM(**cfg.model)` で構築後、手動でsafetensorsをロード
-- 機能的には同等だが、`from_pretrained` が内部でdtype設定などを行っている可能性
+**差異**:
+1. 入力形式: OBJ vs FBX（同じ頂点データだが、インポーターが異なる）
+2. 座標系: ローカル座標+90°回転 vs ワールド座標変換
+3. 結果: **頂点のインデックス順序が異なる可能性あり**
 
-**対応方針**:
-これは重大な差異の可能性あり。`from_pretrained` と手動ロードで
-重みの精度やデフォルトパラメータが異なる可能性を調査する必要がある。
-→ **ユーザー/Geminiに判断を委ねる**
-
-### 3.10 offset.ply の保存順序
-
-| 項目 | 公式 app.py (411行目) | concierge_modal.py (794行目) |
-|------|----------------------|------------------------------|
-| 順序 | save_shaped_mesh → save_ply (offset) → generate_glb → animation copy | save_shaped_mesh → generate_glb → save_ply (offset) → animation copy |
-
-**分析**:
-- 公式: save_shaped_mesh → offset.ply → generate_glb → animation
-- concierge_modal.py: save_shaped_mesh → generate_glb → offset.ply → animation
-- 順序が異なる。generate_glb が内部で OBJ ファイルを読むため、offset.ply の生成順序自体は無関係のはず
-- ただし、generate_glb の中で vertex_order.json が生成されるが、offset.ply の後か前かで影響があるかは要確認
-
-**対応方針**: 公式と同じ順序に揃える（リスクなし）。
+→ **これは重大な差異。vertex_orderが異なると、offset.plyとskin.glbの頂点対応がずれ、
+   アニメーション適用時に「鳥のばけもの」が発生する可能性がある**
 
 ---
 
-## 4. 修正計画（優先度順）
+## 4. 修正方針の選択肢（ユーザー/Gemini判断必要）
 
-### 高優先度（ロジック差異・出力に影響する可能性）
+### 選択肢A: 公式app.py完全準拠
 
-| # | 対象ファイル | 修正内容 | 根拠 |
-|---|-------------|---------|------|
-| H1 | concierge_modal.py | `prepare_motion_seqs` に `max_squen_length=300` を追加 | 3.2: 公式との差異 |
-| H2 | concierge_modal.py | offset.ply の保存順序を公式に合わせる | 3.10: 公式との差異 |
-| H3 | concierge_modal.py | `base_iid` を `chatting_avatar_YYYYMMDDHHMMSS` に変更 | 3.7: 公式との差異 |
+concierge_modal.py を公式 `generate_glb` に完全準拠させる。
 
-### 中優先度（動作に微妙な影響の可能性）
+**メリット**:
+- 公式と完全に同じ出力が期待できる
+- ModelScopeで正常動作確認済みのコードパスを使う
 
-| # | 対象ファイル | 修正内容 | 根拠 |
-|---|-------------|---------|------|
-| M1 | concierge_modal.py | ZIP作成を `os.system('zip -r ...')` に変更するか検討 | 3.5: ZIP構造差異 |
-| M2 | 全体 | `enlarge_ratio` パラメータの公式値 `[1.0, 1, 0]` について判断 | 3.1: 不明確 |
-| M3 | concierge_modal.py | `_build_model` を公式の `from_pretrained` 方式に合わせるか検討 | 3.9: 重要だが影響範囲大 |
+**リスク**:
+- Modal環境では未検証（完走実績なし）
+- CWDやBlenderパスの違いで`convertFBX2GLB.py`が見つからない等の環境問題の可能性
 
-### 低優先度（品質改善、動作には影響なし）
+**修正内容**:
+1. 現在のgenerate_glb呼び出しは維持（既に公式準拠）
+2. offset.plyの保存順序を修正
+3. max_squen_length=300を追加
+4. base_iidの命名を修正
+5. モデルロード方法は現状維持（手動ロード）
 
-| # | 対象ファイル | 修正内容 | 根拠 |
-|---|-------------|---------|------|
-| L1 | concierge_modal.py | `add_audio_to_video` に10秒制限追加 | 3.4: 公式との差異 |
-| L2 | concierge_modal.py | ビデオ保存後のフレーム数検証追加 | 3.3: 品質チェック |
+### 選択肢B: 完走バージョン(app_concierge.py)のロジックに戻す
+
+concierge_modal.pyのOAC生成部分を app_concierge.py の自作スクリプト方式に戻す。
+
+**メリット**:
+- 完走実績がある
+- 環境問題が少ない（Blenderスクリプトを動的生成するため、CWD依存がない）
+
+**リスク**:
+- 自作スクリプトのGLB出力が公式と異なる可能性
+- Geminiが「自作スクリプトが鳥の化け物の原因」と指摘している
+
+**修正内容**:
+1. GLB生成部分をapp_concierge.pyのロジックに差し替え
+2. 公式との差異（max_squen_length等）は追加で修正
+
+### 選択肢C: ハイブリッド（推奨検討案）
+
+公式の `generate_glb` を使いつつ、Modal環境での動作を保証する。
+
+**修正内容**:
+1. `generate_glb` を使い続けるが、内部で呼ぶ `convertFBX2GLB.py` と
+   `generateVertexIndices.py` のパスをModal環境に合わせて修正
+2. offset.plyの保存順序を公式に合わせる
+3. max_squen_length=300を追加
+4. base_iidの命名を公式に合わせる
+5. 動作確認後、app_concierge.pyの自作スクリプトは廃止
 
 ---
 
-## 5. 判断を委ねる事項（ユーザー/Gemini確認必要）
+## 5. 全修正項目一覧（方針決定後に実施）
 
-1. **`enlarge_ratio` の値**: 公式の `[1.0, 1, 0]` はタイプミスか意図的か？
-   - タイプミスなら現在の `[1.0, 1.0]` のままでOK
-   - 意図的なら `[1.0, 1, 0]` に変更する
+### 確定修正（方針に関わらず実施）
 
-2. **`_build_model` 方式**: `from_pretrained` vs 手動ロード
-   - `from_pretrained` に合わせると、内部のdtype設定等も公式に準拠する
-   - ただし、現在の手動ロード + 明示的な `torch.float32` 設定で問題なければ変更不要
+| # | 対象ファイル | 修正内容 | 根拠 |
+|---|-------------|---------|------|
+| F1 | concierge_modal.py | `prepare_motion_seqs` に `max_squen_length=300` を追加 | 3.2 |
+| F2 | concierge_modal.py | offset.ply の保存順序を公式に合わせる（ply → glb の順） | 3.3 |
+| F3 | concierge_modal.py | `base_iid` を `chatting_avatar_YYYYMMDDHHMMSS` に変更 | 3.4 |
 
-3. **ZIP作成方法**: `zipfile.ZipFile` vs `os.system('zip -r ...')`
-   - Chatting AvatarのZIPパーサーが構造に厳密か不明
-   - 安全策は公式に合わせること
+### 方針依存の修正
+
+| # | 対象ファイル | 修正内容 | 依存 |
+|---|-------------|---------|------|
+| D1 | concierge_modal.py | GLB生成方式の選択 (generate_glb vs 自作スクリプト) | 選択肢A/B/C |
+| D2 | concierge_modal.py | モデルロード方法の変更（手動key-by-key → load_state_dict） | 選択肢B/C |
+| D3 | concierge_modal.py | ZIP作成方法の変更 | 選択肢A |
+
+### 低優先度
+
+| # | 対象ファイル | 修正内容 |
+|---|-------------|---------|
+| L1 | concierge_modal.py | `add_audio_to_video` に10秒制限追加 |
+| L2 | concierge_modal.py | ビデオ保存後のフレーム数検証追加 |
 
 ---
 
-## 6. 修正しない項目（理由付き）
+## 6. 判断を委ねる事項（ユーザー/Gemini確認必要）
+
+1. **GLB生成方式**: 選択肢A/B/Cのどれを採用するか？
+   - 公式generate_glb (A) vs 完走実績のある自作スクリプト (B) vs ハイブリッド (C)
+
+2. **`enlarge_ratio` の値**: 公式の `[1.0, 1, 0]` はタイプミスか意図的か？
+   - `prepare_motion_seqs` の内部実装を確認してから判断
+
+3. **vertex_orderの差異**: 公式(OBJ+90°回転+ローカルZ) vs 完走版(FBX+ワールドZ)
+   - どちらの vertex_order が Chatting Avatar で正しく動作するか？
+
+4. **マテリアル除去**: 完走版の `strip_materials()` は必要か不要か？
+   - Chatting Avatar がマテリアル情報を読むなら不要（むしろ有害）
+   - 読まないなら無害
+
+---
+
+## 7. 修正しない項目（理由付き）
 
 | 項目 | 理由 |
 |------|------|
@@ -218,8 +398,10 @@ concierge_modal.py は既に `forseq` を使用（正しい）。
 
 ---
 
-## 7. 次のステップ
+## 8. 次のステップ
 
-1. ユーザーと他のAI（Gemini/ChatGPT）がこの計画書を確認
-2. 判断委託事項（セクション5）について方針決定
-3. 方針決定後、ClaudeCodeが高優先度の修正から順に実装
+1. **ユーザー**: この計画書をGemini/ChatGPTに共有
+2. **Gemini/ChatGPT**: セクション6の判断事項について方針提示
+3. **ユーザー**: 選択肢A/B/Cを決定
+4. **ClaudeCode**: 決定に従い、確定修正 (F1-F3) + 方針依存修正 (D1-D3) を実装
+5. **ユーザー**: Modal環境で動作確認
