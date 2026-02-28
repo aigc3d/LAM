@@ -13,8 +13,9 @@ Design decisions (from ChatGPT consultation 2026-02-26):
 - concierge_modal.py image reuse for proven dependency stability
 
 Usage:
-  modal run lam_avatar_batch.py --image-path ./input/input.jpg --param-json-path ./input/params.json
-  modal run lam_avatar_batch.py --image-path ./input/input.jpg  # default params
+  modal run lam_avatar_batch.py --image-path ./input/input --param-json-path ./input/params.json
+  modal run lam_avatar_batch.py --image-path ./input/input  # default params
+  (拡張子は省略可。png/jpg/jpegを自動検出する)
 """
 
 import os
@@ -438,7 +439,19 @@ def main(
         param_json_path: Path to params JSON file (optional)
         output_dir: Local directory to download results (default: ./output)
     """
-    # Read image as bytes
+    # Read image as bytes (auto-detect extension if not found)
+    if not os.path.isfile(image_path):
+        base, ext = os.path.splitext(image_path)
+        if not ext or not os.path.isfile(image_path):
+            for try_ext in [".png", ".jpg", ".jpeg", ".PNG", ".JPG", ".JPEG"]:
+                candidate = base + try_ext
+                if os.path.isfile(candidate):
+                    image_path = candidate
+                    break
+    if not os.path.isfile(image_path):
+        print(f"Error: image not found: {image_path}")
+        print(f"  Looked for: {image_path}, {base}.png, {base}.jpg, {base}.jpeg")
+        return
     with open(image_path, "rb") as f:
         image_bytes = f.read()
     print(f"Read image: {image_path} ({len(image_bytes)} bytes)")
