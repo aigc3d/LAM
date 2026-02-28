@@ -277,7 +277,7 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
 
         from tools.generateARKITGLBWithBlender import generate_glb
 
-        base_iid = 'avatar_' + datetime.now().strftime("%Y%m%d%H%M%S")
+        base_iid = 'chatting_avatar_' + datetime.now().strftime("%Y%m%d%H%M%S")
         oac_dir = os.path.join('./', base_iid)
         os.makedirs(oac_dir, exist_ok=True)
 
