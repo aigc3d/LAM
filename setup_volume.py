@@ -184,13 +184,11 @@ def setup():
         print("\n[5/5] OAC templates (template_file.fbx): already present, skipping.")
     else:
         print("\n[5/5] Downloading OAC templates (sample_oac.tar from Alibaba OSS)...")
+        import urllib.request
         oac_tar = os.path.join(lam_root, "sample_oac.tar")
-        subprocess.run(
-            ["wget", "-q",
-             "https://virutalbuy-public.oss-cn-hangzhou.aliyuncs.com/share/aigc3d/data/LAM/sample_oac.tar",
-             "-O", oac_tar],
-            check=True,
-        )
+        oac_url = "https://virutalbuy-public.oss-cn-hangzhou.aliyuncs.com/share/aigc3d/data/LAM/sample_oac.tar"
+        print(f"  Fetching {oac_url} ...")
+        urllib.request.urlretrieve(oac_url, oac_tar)
         os.makedirs(oac_dir, exist_ok=True)
         print("  Extracting sample_oac.tar...")
         subprocess.run(["tar", "-xf", oac_tar, "-C", os.path.join(lam_root, "model_zoo")], check=True)
