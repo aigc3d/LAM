@@ -6,6 +6,7 @@ Replicates the official app.py launch_pretrained() function:
   2. Human model files (FLAME)   (3DAIGC/LAM-assets → LAM_human_model.tar)
   3. LAM-20K weights             (3DAIGC/LAM-20K → config.json + model.safetensors)
   4. LAM assets (motions, OAC)   (3DAIGC/LAM-assets → LAM_assets.tar)
+  5. OAC templates (FBX/GLB)     (Alibaba OSS → sample_oac.tar)
 
 Also extracts any unextracted tar files already on the volume (tmp_assets/).
 
@@ -50,9 +51,9 @@ def setup():
     # ================================================================
     flame_marker = os.path.join(lam_root, "model_zoo", "flame_tracking_models", "FaceBoxesV2.pth")
     if os.path.isfile(flame_marker):
-        print("\n[1/4] FLAME tracking models: already present, skipping.")
+        print("\n[1/5] FLAME tracking models: already present, skipping.")
     else:
-        print("\n[1/4] Downloading FLAME tracking models...")
+        print("\n[1/5] Downloading FLAME tracking models...")
         hf_hub_download(
             repo_id="yuandong513/flametracking_model",
             repo_type="model",
@@ -79,9 +80,9 @@ def setup():
     found_flame = any(os.path.isfile(c) for c in flame2023_candidates)
 
     if found_flame:
-        print("\n[2/4] Human model files (flame2023.pkl): already present, skipping.")
+        print("\n[2/5] Human model files (flame2023.pkl): already present, skipping.")
     else:
-        print("\n[2/4] Downloading human model files (LAM_human_model.tar)...")
+        print("\n[2/5] Downloading human model files (LAM_human_model.tar)...")
         hf_hub_download(
             repo_id="3DAIGC/LAM-assets",
             repo_type="model",
@@ -112,9 +113,9 @@ def setup():
     official_safetensors = os.path.join(official_weights_dir, "model.safetensors")
 
     if os.path.isfile(weights_safetensors) or os.path.isfile(official_safetensors):
-        print("\n[3/4] LAM-20K weights: already present, skipping.")
+        print("\n[3/5] LAM-20K weights: already present, skipping.")
     else:
-        print("\n[3/4] Downloading LAM-20K model weights...")
+        print("\n[3/5] Downloading LAM-20K model weights...")
         os.makedirs(weights_dir, exist_ok=True)
 
         for fname in ["config.json", "model.safetensors", "README.md"]:
@@ -140,9 +141,9 @@ def setup():
     oac_marker = os.path.join(lam_root, "assets", "sample_oac", "template_file.fbx")
 
     if os.path.isdir(motion_marker) and os.path.isfile(oac_marker):
-        print("\n[4/4] LAM assets (motions + OAC): already present, skipping.")
+        print("\n[4/5] LAM assets (motions + OAC): already present, skipping.")
     else:
-        print("\n[4/4] Downloading LAM assets...")
+        print("\n[4/5] Downloading LAM assets...")
 
         # Check if LAM_assets.tar already exists in tmp_assets
         tar_path = os.path.join(lam_root, "tmp_assets", "LAM_assets.tar")
@@ -169,6 +170,38 @@ def setup():
             print(f"  Motions extracted: {motions}")
         else:
             print("  WARNING: assets/sample_motion/export not found after extraction!")
+
+    # ================================================================
+    # 5. OAC templates (template_file.fbx + animation.glb)
+    #    These are NOT in LAM_assets.tar — separate download from Alibaba OSS
+    # ================================================================
+    oac_dir = os.path.join(lam_root, "model_zoo", "sample_oac")
+    oac_fbx = os.path.join(oac_dir, "template_file.fbx")
+    # Also check assets path
+    oac_fbx_alt = os.path.join(lam_root, "assets", "sample_oac", "template_file.fbx")
+
+    if os.path.isfile(oac_fbx) or os.path.isfile(oac_fbx_alt):
+        print("\n[5/5] OAC templates (template_file.fbx): already present, skipping.")
+    else:
+        print("\n[5/5] Downloading OAC templates (sample_oac.tar from Alibaba OSS)...")
+        oac_tar = os.path.join(lam_root, "sample_oac.tar")
+        subprocess.run(
+            ["wget", "-q",
+             "https://virutalbuy-public.oss-cn-hangzhou.aliyuncs.com/share/aigc3d/data/LAM/sample_oac.tar",
+             "-O", oac_tar],
+            check=True,
+        )
+        os.makedirs(oac_dir, exist_ok=True)
+        print("  Extracting sample_oac.tar...")
+        subprocess.run(["tar", "-xf", oac_tar, "-C", os.path.join(lam_root, "model_zoo")], check=True)
+        os.remove(oac_tar)
+
+        # List what was extracted
+        if os.path.isdir(oac_dir):
+            files = os.listdir(oac_dir)
+            print(f"  Extracted to model_zoo/sample_oac/: {files}")
+        else:
+            print("  WARNING: model_zoo/sample_oac/ not found after extraction!")
 
     # ================================================================
     # Also extract thirdparty_models.tar if present
@@ -202,6 +235,7 @@ def setup():
             "assets/sample_motion/export/GEM/flame_param",
         ],
         "template_file.fbx": [
+            "model_zoo/sample_oac/template_file.fbx",
             "assets/sample_oac/template_file.fbx",
         ],
     }
