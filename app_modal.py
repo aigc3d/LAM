@@ -434,3 +434,16 @@ def web():
         btn.click(predict, [input_img, motion_choice, enable_oac], [out_video, out_zip])
     
     return demo
+
+
+# --- バッチ処理用エントリーポイント ---
+
+@app.local_entrypoint()
+def main(image_path: str, motion: str = "Speeding_Scandal", oac: bool = True):
+    with open(image_path, "rb") as f:
+        img_bytes = f.read()
+    print(f"Sending {image_path} (motion={motion}, oac={oac}) ...")
+    video_name, zip_name = Generator().generate.remote(img_bytes, motion, oac)
+    print(f"Done! Video: {video_name}")
+    if zip_name:
+        print(f"ZIP: {zip_name}")
