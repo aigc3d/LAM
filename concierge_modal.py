@@ -22,15 +22,9 @@ app = modal.App("concierge-zip-generator")
 output_vol = modal.Volume.from_name("concierge-output", create_if_missing=True)
 OUTPUT_VOL_PATH = "/vol/output"
 
-# Detect which local directories contain model files.
-_has_model_zoo = os.path.isdir("./model_zoo")
-_has_assets = os.path.isdir("./assets")
-
-if not _has_model_zoo and not _has_assets:
-    print(
-        "WARNING: Neither ./model_zoo/ nor ./assets/ found.\n"
-        "Run `modal serve concierge_modal.py` from your LAM repo root."
-    )
+# Model weights storage (uploaded from official ModelScope)
+storage_vol = modal.Volume.from_name("lam-storage")
+STORAGE_VOL_PATH = "/vol/lam-storage"
 
 # ============================================================
 # Modal Image Build
@@ -299,12 +293,9 @@ def _download_missing_models():
     print("Model downloads complete.")
 
 
-image = image.run_function(_download_missing_models)
+# Model weights are served from lam-storage volume at runtime (no image bake-in needed).
+# image = image.run_function(_download_missing_models)
 
-if _has_model_zoo:
-    image = image.add_local_dir("./model_zoo", remote_path="/root/LAM/model_zoo")
-if _has_assets:
-    image = image.add_local_dir("./assets", remote_path="/root/LAM/assets")
 if os.path.isdir("./tools"):
     image = image.add_local_dir("./tools", remote_path="/root/LAM/tools")
 # Overlay local lam/ directory to ensure code consistency with this repo.
@@ -316,11 +307,6 @@ dl_image = modal.Image.debian_slim(python_version="3.10").pip_install("fastapi")
 ui_image = modal.Image.debian_slim(python_version="3.10").pip_install(
     "gradio>=4.0", "fastapi", "uvicorn",
 )
-if os.path.isdir("./model_zoo/sample_motion"):
-    ui_image = ui_image.add_local_dir(
-        "./model_zoo/sample_motion",
-        remote_path="/root/LAM/model_zoo/sample_motion",
-    )
 
 
 # ============================================================
@@ -328,20 +314,35 @@ if os.path.isdir("./model_zoo/sample_motion"):
 # ============================================================
 
 def _setup_model_paths():
-    """Create symlinks to bridge local directory layout to what LAM code expects."""
-    import subprocess
-    model_zoo = "/root/LAM/model_zoo"
-    assets = "/root/LAM/assets"
+    """Symlink model_zoo/assets/tmp_assets from lam-storage volume into /root/LAM."""
+    import shutil as _shutil
+    lam_root = "/root/LAM"
+    vol_lam = os.path.join(STORAGE_VOL_PATH, "LAM")
 
-    if not os.path.exists(model_zoo) and os.path.isdir(assets):
-        os.symlink(assets, model_zoo)
-    elif os.path.isdir(model_zoo) and os.path.isdir(assets):
-        for subdir in os.listdir(assets):
-            src = os.path.join(assets, subdir)
-            dst = os.path.join(model_zoo, subdir)
-            if os.path.isdir(src) and not os.path.exists(dst):
-                os.symlink(src, dst)
+    # Link top-level dirs from volume
+    for subdir in ["model_zoo", "assets", "tmp_assets"]:
+        src = os.path.join(vol_lam, subdir)
+        dst = os.path.join(lam_root, subdir)
+        if not os.path.isdir(src):
+            continue
+        # Remove stale dir/link from git clone or previous run
+        if os.path.islink(dst):
+            os.unlink(dst)
+        elif os.path.isdir(dst):
+            _shutil.rmtree(dst)
+        os.symlink(src, dst)
+        print(f"  [volume] {dst} -> {src}")
 
+    # Bridge official model path (exps/) if weights live there on the volume
+    vol_exps_model = os.path.join(vol_lam, "exps", "releases", "lam", "lam-20k", "step_045500")
+    our_model_dir = os.path.join(lam_root, "model_zoo", "lam_models", "releases", "lam", "lam-20k", "step_045500")
+    if os.path.isdir(vol_exps_model) and not os.path.exists(our_model_dir):
+        os.makedirs(os.path.dirname(our_model_dir), exist_ok=True)
+        os.symlink(vol_exps_model, our_model_dir)
+        print(f"  [volume] {our_model_dir} -> {vol_exps_model}")
+
+    # FLAME subdirectory structure bridging
+    model_zoo = os.path.join(lam_root, "model_zoo")
     hpm = os.path.join(model_zoo, "human_parametric_models")
     if os.path.isdir(hpm):
         flame_subdir = os.path.join(hpm, "flame_assets", "flame")
@@ -835,7 +836,7 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking, mot
         yield f"Error: {str(e)}\n\nTraceback:\n{tb}", None, None, None, None
 
 
-@app.cls(gpu="L4", image=image, volumes={OUTPUT_VOL_PATH: output_vol}, timeout=600, scaledown_window=300, min_containers=0, max_containers=1)
+@app.cls(gpu="L4", image=image, volumes={OUTPUT_VOL_PATH: output_vol, STORAGE_VOL_PATH: storage_vol}, timeout=600, scaledown_window=300, min_containers=0, max_containers=1)
 class Generator:
     @modal.enter()
     def setup(self):
@@ -893,7 +894,7 @@ class Generator:
             shutil.rmtree(upload_dir, ignore_errors=True)
 
 
-@app.function(image=ui_image, timeout=7200, volumes={OUTPUT_VOL_PATH: output_vol})
+@app.function(image=ui_image, timeout=7200, volumes={OUTPUT_VOL_PATH: output_vol, STORAGE_VOL_PATH: storage_vol})
 @modal.concurrent(max_inputs=100)
 @modal.asgi_app()
 def web():
@@ -908,8 +909,12 @@ def web():
     _gc_utils._json_schema_to_python_type = _safe_jst
 
     lam_root = "/root/LAM"
-    if os.path.isdir(lam_root): os.chdir(lam_root)
-    sample_motions = sorted(glob(f"{lam_root}/model_zoo/sample_motion/export/*/*.mp4"))
+    vol_lam = os.path.join(STORAGE_VOL_PATH, "LAM")
+    # Scan sample motions from the storage volume
+    sample_motions = sorted(
+        glob(f"{vol_lam}/model_zoo/sample_motion/export/*/*.mp4") +
+        glob(f"{vol_lam}/assets/sample_motion/export/*/*.mp4")
+    )
 
     def process(image_path, video_path, motion_choice):
         import time, json, threading, uuid
