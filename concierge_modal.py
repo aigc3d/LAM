@@ -360,9 +360,15 @@ def _setup_model_paths():
 
 
 def _init_lam_pipeline():
-    """Initialize FLAME tracking and LAM model. Called once per container."""
+    """Initialize FLAME tracking and LAM model. Called once per container.
+
+    Based on official ModelScope app.py (launch_gradio_app + _build_model + parse_configs).
+    No dependency on app_lam.py.
+    """
+    import argparse
     import torch
     import torch._dynamo
+    from omegaconf import OmegaConf
 
     # ============================================================
     # CRITICAL: Disable torch.compile/dynamo BEFORE any lam imports.
@@ -391,66 +397,73 @@ def _init_lam_pipeline():
     sys.path.insert(0, "/root/LAM")
     _setup_model_paths()
 
+    # Match official app.py launch_gradio_app environment
     os.environ.update({
         "APP_ENABLED": "1",
         "APP_MODEL_NAME": "./model_zoo/lam_models/releases/lam/lam-20k/step_045500/",
         "APP_INFER": "./configs/inference/lam-20k-8gpu.yaml",
         "APP_TYPE": "infer.lam",
-        "NUMBA_THREADING_LAYER": "forseq",  # Match official ModelScope app.py
+        "NUMBA_THREADING_LAYER": "forseq",
     })
 
-    # NOW import lam modules (with torch.compile safely disabled)
-    from safetensors.torch import load_file as _load_safetensors
-    from lam.models import ModelLAM
-    from app_lam import parse_configs
+    # ============================================================
+    # parse_configs (inlined from official app.py — no app_lam.py)
+    # ============================================================
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str)
+    parser.add_argument("--infer", type=str)
+    args, unknown = parser.parse_known_args()
 
-    # Parse config
-    cfg, _ = parse_configs()
+    cfg = OmegaConf.create()
+    cli_cfg = OmegaConf.from_cli(unknown)
 
-    print("Loading LAM model...")
-    model_cfg = cfg.model
-    lam = ModelLAM(**model_cfg)
+    if os.environ.get("APP_INFER"):
+        args.infer = os.environ["APP_INFER"]
+    if os.environ.get("APP_MODEL_NAME"):
+        cli_cfg.model_name = os.environ["APP_MODEL_NAME"]
+
+    args.config = args.infer if args.config is None else args.config
+
+    if args.config is not None:
+        cfg_train = OmegaConf.load(args.config)
+        cfg.source_size = cfg_train.dataset.source_image_res
+        try:
+            cfg.src_head_size = cfg_train.dataset.src_head_size
+        except Exception:
+            cfg.src_head_size = 112
+        cfg.render_size = cfg_train.dataset.render_image.high
+
+    if args.infer is not None:
+        cfg_infer = OmegaConf.load(args.infer)
+        cfg.merge_with(cfg_infer)
+
+    cfg.motion_video_read_fps = 30
+    cfg.merge_with(cli_cfg)
+    cfg.setdefault("logger", "INFO")
+    assert cfg.model_name is not None, "model_name is required"
+
+    print(f"Config parsed: source_size={cfg.source_size}, render_size={cfg.render_size}")
+    print(f"  model_name={cfg.model_name}")
+
+    # ============================================================
+    # _build_model (official app.py: from_pretrained)
+    # ============================================================
+    print("Building LAM model (from_pretrained)...")
+    from lam.models import model_dict
+    from lam.utils.hf_hub import wrap_model_hub
+
+    hf_model_cls = wrap_model_hub(model_dict["lam"])
+    lam = hf_model_cls.from_pretrained(cfg.model_name)
 
     # Restore original torch.compile
     torch.compile = _original_torch_compile
 
-    # Verify torch.compile is truly disabled on critical methods
-    fwd_lp = getattr(lam, 'forward_latent_points', None)
-    if fwd_lp is not None:
-        is_compiled = hasattr(fwd_lp, '_torchdynamo_orig_callable') or \
-                      hasattr(fwd_lp, '__wrapped__') or \
-                      'OptimizedModule' in type(fwd_lp).__name__ or \
-                      '_TorchCompile' in type(fwd_lp).__name__
-        print(f"[BIRD-FIX] forward_latent_points type: {type(fwd_lp).__name__}, compiled={is_compiled}")
-    enc_fwd = getattr(lam.encoder, 'forward', None) if hasattr(lam, 'encoder') else None
-    if enc_fwd is not None:
-        is_compiled = hasattr(enc_fwd, '_torchdynamo_orig_callable') or \
-                      'OptimizedModule' in type(enc_fwd).__name__
-        print(f"[BIRD-FIX] encoder.forward type: {type(enc_fwd).__name__}, compiled={is_compiled}")
-
-    ckpt_path = os.path.join(cfg.model_name, "model.safetensors")
-    print(f"Loading checkpoint: {ckpt_path}")
-
-    # --- WEIGHT LOADING: use load_state_dict (matches app_concierge.py working version) ---
-    ckpt = _load_safetensors(ckpt_path, device="cpu")
-    missing, unexpected = lam.load_state_dict(ckpt, strict=False)
-    print(f"Weight loading summary:")
-    print(f"  Checkpoint keys: {len(ckpt)}")
-    print(f"  Model keys:      {len(lam.state_dict())}")
-    print(f"  Missing in model (not in ckpt): {len(missing)}")
-    print(f"  Unexpected (in ckpt, not in model): {len(unexpected)}")
-    if missing:
-        print(f"  Missing keys (first 10): {missing[:10]}")
-    if unexpected:
-        print(f"  Unexpected keys (first 10): {unexpected[:10]}")
-    print("=" * 100)
-
     lam.to("cuda")
-    lam.to(torch.float32)  # CRITICAL: match official inference (lam/runners/infer/lam.py:337-339)
+    lam.to(torch.float32)
     lam.eval()
-    print(f"[DTYPE-FIX] Model dtype after .to(float32): {next(lam.parameters()).dtype}")
+    print(f"LAM model loaded. dtype={next(lam.parameters()).dtype}")
 
-    # Initialize FLAME tracking
+    # Initialize FLAME tracking (matching official launch_gradio_app)
     from tools.flame_tracking_single_image import FlameTrackingSingleImage
     print("Initializing FLAME tracking...")
     flametracking = FlameTrackingSingleImage(
@@ -795,8 +808,11 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking, mot
         rgb = rgb * mask + (1 - mask) * 1
         rgb = (np.clip(rgb, 0, 1.0) * 255).astype(np.uint8)
         
-        from app_lam import save_images2video, add_audio_to_video
-        save_images2video(rgb, preview_path, 30)
+        from moviepy.editor import ImageSequenceClip
+        images = [frame.astype(np.uint8) for frame in rgb]
+        clip = ImageSequenceClip(images, fps=30)
+        clip.write_videofile(preview_path, codec='libx264')
+        print(f"Video saved: {preview_path}")
 
         # Re-encode for browser
         preview_browser = os.path.join(working_dir, "preview_browser.mp4")
@@ -808,7 +824,12 @@ def _generate_concierge_zip(image_path, video_path, cfg, lam, flametracking, mot
         if video_path and os.path.isfile(video_path):
             try:
                 preview_with_audio = os.path.join(working_dir, "preview_audio.mp4")
-                add_audio_to_video(preview_path, preview_with_audio, video_path)
+                from moviepy.editor import VideoFileClip, AudioFileClip
+                vc = VideoFileClip(preview_path)
+                ac = AudioFileClip(video_path)
+                if ac.duration > 10:
+                    ac = ac.subclip(0, 10)
+                vc.set_audio(ac).write_videofile(preview_with_audio, codec='libx264', audio_codec='aac', fps=30)
                 preview_audio_browser = os.path.join(working_dir, "preview_audio_browser.mp4")
                 subprocess.run(["ffmpeg", "-y", "-i", preview_with_audio, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "faststart", preview_audio_browser])
                 if os.path.isfile(preview_audio_browser) and os.path.getsize(preview_audio_browser) > 0:
