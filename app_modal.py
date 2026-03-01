@@ -123,7 +123,7 @@ image = (
         "sed -i 's/^    @torch.compile$/    # @torch.compile  # DISABLED/' "
         "/root/LAM/lam/losses/tvloss.py",
         "sed -i 's/^    @torch.compile$/    # @torch.compile  # DISABLED/' "
-        "/root/LAM/lam/losses/pixlwise.py",
+        "/root/LAM/lam/losses/pixelwise.py",
     )
     .run_commands(
         "python -c \""
