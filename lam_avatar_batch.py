@@ -17,9 +17,9 @@ import modal
 
 app = modal.App("lam-avatar-batch")
 
-# Modal image + volume definitions from concierge_modal.py
-from concierge_modal import image as concierge_image
-from concierge_modal import storage_vol, STORAGE_VOL_PATH
+# Modal image + volume definitions from app_modal.py
+from app_modal import image as app_image
+from app_modal import storage_vol, STORAGE_VOL_PATH
 
 # Output volume for results
 output_vol = modal.Volume.from_name("lam-batch-output", create_if_missing=True)
@@ -84,7 +84,7 @@ def _add_audio_to_video(video_path, out_path, audio_path, fps=30):
 
 @app.function(
     gpu="L4",
-    image=concierge_image,
+    image=app_image,
     volumes={OUTPUT_VOL_PATH: output_vol, STORAGE_VOL_PATH: storage_vol},
     timeout=7200,
 )
@@ -105,7 +105,7 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
     from PIL import Image
     from datetime import datetime
 
-    from concierge_modal import _init_lam_pipeline
+    from app_modal import _init_lam_pipeline
 
     # Parse params
     motion_name = params.get("motion_name", "GEM")
