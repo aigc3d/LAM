@@ -124,7 +124,7 @@ image = (
         "sed -i 's/^    @torch.compile$/    # @torch.compile  # DISABLED/' "
         "/root/LAM/lam/losses/tvloss.py",
         "sed -i 's/^    @torch.compile$/    # @torch.compile  # DISABLED/' "
-        "/root/LAM/lam/losses/pixelwise.py",
+        "/root/LAM/lam/losses/pixlwise.py",
     )
     .run_commands(
         "python -c \""
@@ -141,12 +141,6 @@ def _precompile_nvdiffrast():
     print("nvdiffrast pre-compiled OK")
 
 image = image.run_function(_precompile_nvdiffrast)
-
-# Overlay local directories to ensure code consistency with this repo
-if os.path.isdir("./tools"):
-    image = image.add_local_dir("./tools", remote_path="/root/LAM/tools")
-if os.path.isdir("./lam"):
-    image = image.add_local_dir("./lam", remote_path="/root/LAM/lam")
 
 # --- 写経セクション: app.py ヘルパー関数 ---
 
@@ -238,30 +232,11 @@ def _build_model(cfg):
     model = hf_model_cls.from_pretrained(cfg.model_name)
     return model
 
-STORAGE_VOL_PATH = "/vol/lam-storage"
-
 def _init_lam_pipeline():
     """app.pyのlaunch_gradio_app()を写経"""
-    import torch._dynamo
-
     os.chdir("/root/LAM")
     sys.path.insert(0, "/root/LAM")
     _setup_model_paths()
-
-    # BIRD-MONSTER FIX: torch.compile を完全無効化（Modal L4 GPU対策）
-    os.environ["TORCHDYNAMO_DISABLE"] = "1"
-    os.environ["TORCH_COMPILE_DISABLE"] = "1"
-    torch._dynamo.config.disable = True
-    torch._dynamo.config.suppress_errors = True
-    torch._dynamo.reset()
-    _orig_compile = torch.compile
-    def _noop_compile(fn=None, *args, **kwargs):
-        if fn is not None:
-            return fn
-        return lambda f: f
-    torch.compile = _noop_compile
-    print("[BIRD-FIX] torch.compile patched to no-op BEFORE imports")
-
     # app.py 652-672行の写経
     os.environ.update({
         'APP_ENABLED': '1',
@@ -273,8 +248,6 @@ def _init_lam_pipeline():
     cfg, _ = parse_configs()
     lam = _build_model(cfg)
     lam.to('cuda')
-    lam.eval()
-    print(f"LAM model loaded. dtype={next(lam.parameters()).dtype}")
     sys.path.insert(0, "/root/LAM/tools") # [MODAL変更] importパス解決
     from flame_tracking_single_image import FlameTrackingSingleImage
     flametracking = FlameTrackingSingleImage(
@@ -357,7 +330,7 @@ class Generator:
         src_driven = [src, driven]
         motion_seq = prepare_motion_seqs(
             motion_seqs_dir, None, save_root=dump_tmp_dir, fps=render_fps,
-            bg_color=1., aspect_standard=aspect_standard, enlarge_ratio=[1.0, 1.0],
+            bg_color=1., aspect_standard=aspect_standard, enlarge_ratio=[1.0, 1, 0],
             render_image_res=render_size, multiply=16,
             need_mask=motion_img_need_mask, vis_motion=vis_motion,
             shape_param=shape_param, test_sample=False, cross_id=False,
@@ -416,14 +389,48 @@ class Generator:
         
         return os.path.basename(dump_video_path_wa), (base_iid + '.zip' if enable_oac_file else None)
 
-# --- バッチ処理用エントリーポイント ---
+# --- Gradio UI (CPU) ---
 
-@app.local_entrypoint()
-def main(image_path: str, motion: str = "Speeding_Scandal", oac: bool = True):
-    with open(image_path, "rb") as f:
-        img_bytes = f.read()
-    print(f"Sending {image_path} (motion={motion}, oac={oac}) ...")
-    video_name, zip_name = Generator().generate.remote(img_bytes, motion, oac)
-    print(f"Done! Video: {video_name}")
-    if zip_name:
-        print(f"ZIP: {zip_name}")
+@app.function(image=image, volumes={"/vol/output": output_vol})
+@modal.web_endpoint(method="GET", label="lam-ui")
+def web():
+    import gradio as gr
+    
+    def predict(image_file, motion_video, enable_oac):
+        if image_file is None: return None, None
+        with open(image_file, "rb") as f:
+            img_bytes = f.read()
+        
+        # モーションファイル名を取得
+        motion_name = os.path.basename(motion_video).replace(".mp4", "")
+        
+        video_name, zip_name = Generator().generate.remote(img_bytes, motion_name, enable_oac)
+        
+        video_path = f"/vol/output/{video_name}"
+        zip_path = f"/vol/output/{zip_name}" if zip_name else None
+        return video_path, zip_path
+
+    # app.pyのUI構成を簡略化して再現
+    with gr.Blocks() as demo:
+        gr.Markdown("# LAM: Large Avatar Model (Modal Edition)")
+        with gr.Row():
+            with gr.Column():
+                input_img = gr.Image(type="filepath", label="Input Image")
+                # app.pyのモーションリストを再現
+                motion_choice = gr.Dropdown(
+                    choices=[
+                        "Speeding_Scandal", "Look_In_My_Eyes", "D_ANgelo_Dinero", 
+                        "Michael_Wayne_Rosen", "I_Am_Iron_Man", "Anti_Drugs", 
+                        "Pen_Pineapple_Apple_Pen", "Taylor_Swift", "GEM", "The_Shawshank_Redemption"
+                    ],
+                    value="Speeding_Scandal", label="Motion Template"
+                )
+                enable_oac = gr.Checkbox(label="Export ZIP for Chatting Avatar")
+                btn = gr.Button("Generate", variant="primary")
+            with gr.Column():
+                out_video = gr.Video(label="Rendered Video")
+                out_zip = gr.File(label="Output ZIP")
+        
+        btn.click(predict, [input_img, motion_choice, enable_oac], [out_video, out_zip])
+    
+    return demo
