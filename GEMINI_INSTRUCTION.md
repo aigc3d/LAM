@@ -496,7 +496,7 @@ image = (
         "sed -i 's/^    @torch.compile$/    # @torch.compile  # DISABLED/' "
         "/root/LAM/lam/losses/tvloss.py",
         "sed -i 's/^    @torch.compile$/    # @torch.compile  # DISABLED/' "
-        "/root/LAM/lam/losses/pixlwise.py",
+        "/root/LAM/lam/losses/pixelwise.py",
     )
     # DINOv2事前ダウンロード
     .run_commands(
