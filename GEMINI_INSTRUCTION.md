@@ -3,7 +3,7 @@
 ## 目的
 
 ModelScope上で正常動作している`app.py`を、Modal（https://modal.com）上で動くように移植する。
-出力ファイル名: `concierge_modal.py`
+出力ファイル名: `app_modal.py`
 
 ---
 
@@ -218,7 +218,7 @@ with torch.no_grad():
 
 ### Image Build
 
-既存の`concierge_modal.py`の`image = (...)` 定義（32-199行目）をそのまま流用する。
+既存の`app_modal.py`の`image = (...)` 定義（32-199行目）をそのまま流用する。
 これはModelScopeの`app.py`冒頭の`os.system("pip install ...")`群に相当する。
 
 ただし以下の点に注意:
@@ -528,7 +528,7 @@ image = image.run_function(_precompile_nvdiffrast)
 
 ## 成果物
 
-`concierge_modal.py` 1ファイル。以下の構造:
+`app_modal.py` 1ファイル。以下の構造:
 
 1. Modal Image Build定義（上記をそのまま）
 2. `_setup_model_paths()` — Volume→/root/LAMリンク
