@@ -389,53 +389,6 @@ class Generator:
         
         return os.path.basename(dump_video_path_wa), (base_iid + '.zip' if enable_oac_file else None)
 
-# --- Gradio UI (CPU) ---
-
-@app.function(image=image, volumes={"/vol/output": output_vol})
-@modal.web_endpoint(method="GET", label="lam-ui")
-def web():
-    import gradio as gr
-    
-    def predict(image_file, motion_video, enable_oac):
-        if image_file is None: return None, None
-        with open(image_file, "rb") as f:
-            img_bytes = f.read()
-        
-        # モーションファイル名を取得
-        motion_name = os.path.basename(motion_video).replace(".mp4", "")
-        
-        video_name, zip_name = Generator().generate.remote(img_bytes, motion_name, enable_oac)
-        
-        video_path = f"/vol/output/{video_name}"
-        zip_path = f"/vol/output/{zip_name}" if zip_name else None
-        return video_path, zip_path
-
-    # app.pyのUI構成を簡略化して再現
-    with gr.Blocks() as demo:
-        gr.Markdown("# LAM: Large Avatar Model (Modal Edition)")
-        with gr.Row():
-            with gr.Column():
-                input_img = gr.Image(type="filepath", label="Input Image")
-                # app.pyのモーションリストを再現
-                motion_choice = gr.Dropdown(
-                    choices=[
-                        "Speeding_Scandal", "Look_In_My_Eyes", "D_ANgelo_Dinero", 
-                        "Michael_Wayne_Rosen", "I_Am_Iron_Man", "Anti_Drugs", 
-                        "Pen_Pineapple_Apple_Pen", "Taylor_Swift", "GEM", "The_Shawshank_Redemption"
-                    ],
-                    value="Speeding_Scandal", label="Motion Template"
-                )
-                enable_oac = gr.Checkbox(label="Export ZIP for Chatting Avatar")
-                btn = gr.Button("Generate", variant="primary")
-            with gr.Column():
-                out_video = gr.Video(label="Rendered Video")
-                out_zip = gr.File(label="Output ZIP")
-        
-        btn.click(predict, [input_img, motion_choice, enable_oac], [out_video, out_zip])
-    
-    return demo
-
-
 # --- バッチ処理用エントリーポイント ---
 
 @app.local_entrypoint()
