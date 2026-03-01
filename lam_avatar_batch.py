@@ -280,11 +280,10 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
         if os.path.exists(saved_head_path):
             os.remove(saved_head_path)
 
-        # Create ZIP (matching official: zip -r)
-        output_zip = os.path.join('./', base_iid + '.zip')
-        if os.path.exists(output_zip):
-            os.remove(output_zip)
-        os.system('zip -r {} {}'.format(output_zip, oac_dir))
+        # Create ZIP (using shutil; the container may not have the zip CLI)
+        output_zip = shutil.make_archive(
+            os.path.join('./', base_iid), 'zip', root_dir='./', base_dir=base_iid,
+        )
         shutil.rmtree(oac_dir)
 
         zip_size = os.path.getsize(output_zip) / (1024 * 1024)
