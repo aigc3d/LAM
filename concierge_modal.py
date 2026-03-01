@@ -520,6 +520,26 @@ def _init_lam_pipeline():
     # ============================================================
     # _build_model (official app.py: from_pretrained)
     # ============================================================
+    # Belt-and-suspenders: ensure pretrained_models/human_model_files bridge
+    # exists. The model config.json from HuggingFace hardcodes
+    # human_model_path="./pretrained_models/human_model_files" but our volume
+    # stores the files under model_zoo/human_parametric_models.
+    _pretrained_hm = os.path.join("/root/LAM", "pretrained_models", "human_model_files")
+    _model_zoo_hpm = os.path.join("/root/LAM", "model_zoo", "human_parametric_models")
+    if not os.path.exists(_pretrained_hm) and os.path.isdir(_model_zoo_hpm):
+        os.makedirs(os.path.dirname(_pretrained_hm), exist_ok=True)
+        os.symlink(_model_zoo_hpm, _pretrained_hm)
+        print(f"  [bridge] {_pretrained_hm} -> {_model_zoo_hpm}")
+    # Verify the critical file is reachable
+    _flame_pkl = os.path.join(_pretrained_hm, "flame_assets", "flame", "flame2023.pkl")
+    if os.path.isfile(_flame_pkl):
+        print(f"  [OK] flame2023.pkl reachable at {_flame_pkl}")
+    else:
+        print(f"  [WARN] flame2023.pkl NOT found at {_flame_pkl}")
+        print(f"    pretrained_hm exists={os.path.exists(_pretrained_hm)} islink={os.path.islink(_pretrained_hm)}")
+        if os.path.islink(_pretrained_hm):
+            print(f"    -> {os.readlink(_pretrained_hm)}")
+
     print("Building LAM model (from_pretrained)...")
     from lam.models import model_dict
     from lam.utils.hf_hub import wrap_model_hub
