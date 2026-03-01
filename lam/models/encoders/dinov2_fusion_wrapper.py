@@ -114,7 +114,7 @@ class Dinov2FusionWrapper(nn.Module):
         dinov2_hub = import_module(".dinov2.hub.backbones", package=__package__)
         model_fn = getattr(dinov2_hub, model_name)
         # logger.debug(f"Modulation dim for Dinov2 is {modulation_dim}.")
-        model = model_fn(modulation_dim=modulation_dim, pretrained=False)
+        model = model_fn(modulation_dim=modulation_dim, pretrained=pretrained)
         return model
 
     # @torch.compile  # DISABLED: causes bird-monster on Modal L4 GPU

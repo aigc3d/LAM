@@ -540,18 +540,42 @@ def _init_lam_pipeline():
         if os.path.islink(_pretrained_hm):
             print(f"    -> {os.readlink(_pretrained_hm)}")
 
-    print("Building LAM model (from_pretrained)...")
-    from lam.models import model_dict
-    from lam.utils.hf_hub import wrap_model_hub
+    # Official _build_model approach (matching app_lam.py exactly)
+    print("Building LAM model (_build_model)...")
+    from lam.models import ModelLAM
+    from safetensors.torch import load_file
 
-    hf_model_cls = wrap_model_hub(model_dict["lam"])
-    lam = hf_model_cls.from_pretrained(cfg.model_name)
+    model_config = OmegaConf.to_container(cfg.model, resolve=True) if hasattr(cfg, 'model') else {}
+    print(f"  model_config keys: {list(model_config.keys())}")
+    lam = ModelLAM(**model_config)
+
+    resume = os.path.join(cfg.model_name, "model.safetensors")
+    print(f"  Loading weights from: {resume}")
+    print(f"  File exists: {os.path.isfile(resume)}")
+    ckpt = load_file(resume, device='cpu')
+
+    state_dict = lam.state_dict()
+    loaded, mismatched, unexpected = 0, 0, 0
+    for k, v in ckpt.items():
+        if k in state_dict:
+            if state_dict[k].shape == v.shape:
+                state_dict[k].copy_(v)
+                loaded += 1
+            else:
+                print(f"  [WARN] shape mismatch: {k}: ckpt {v.shape} != model {state_dict[k].shape}")
+                mismatched += 1
+        else:
+            unexpected += 1
+    missing = len(state_dict) - loaded - mismatched
+    print(f"  Weight loading: {loaded} loaded, {mismatched} mismatched, {unexpected} unexpected, {missing} missing")
+    if missing > 0:
+        missing_keys = [k for k in state_dict if k not in ckpt]
+        print(f"  Missing keys (first 10): {missing_keys[:10]}")
 
     # Restore original torch.compile
     torch.compile = _original_torch_compile
 
     lam.to("cuda")
-    lam.to(torch.float32)
     lam.eval()
     print(f"LAM model loaded. dtype={next(lam.parameters()).dtype}")
 

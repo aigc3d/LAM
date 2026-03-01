@@ -15,27 +15,19 @@ inverse_sigmoid = lambda x: np.log(x / (1 - x))
 
 
 class GaussianModel:
-    def __init__(self, xyz=None, opacity=None, rotation=None, scaling=None, shs=None, offset=None, ply_path=None, sh2rgb=False, albedo=None, lights=None) -> None:
+    def __init__(self, xyz=None, opacity=None, rotation=None, scaling=None, shs=None, offset=None, ply_path=None, sh2rgb=False) -> None:
         self.xyz: Tensor = xyz
         self.opacity: Tensor = opacity
         self.rotation: Tensor = rotation
         self.scaling: Tensor = scaling
         self.shs: Tensor = shs
-        self.albedo: Tensor = albedo
         self.offset: Tensor = offset
-        self.lights: Tensor = lights
         if ply_path is not None:
             self.load_ply(ply_path, sh2rgb=sh2rgb)
 
-    def update_lights(self, lights):
-        self.lights = lights
-
-    def update_albedo(self, albedo):
-        self.albedo = albedo
-
     def update_shs(self, shs):
         self.shs = shs
-
+        
     def to_cuda(self):
         self.xyz = self.xyz.cuda()
         self.opacity = self.opacity.cuda()
@@ -43,7 +35,6 @@ class GaussianModel:
         self.scaling = self.scaling.cuda()
         self.shs = self.shs.cuda()
         self.offset = self.offset.cuda()
-        self.albedo = self.albedo.cuda()
 
     def construct_list_of_attributes(self):
         l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
@@ -64,9 +55,7 @@ class GaussianModel:
             l.append('rot_{}'.format(i))
         return l
 
-    def save_ply(self, path, rgb2sh=False, offset2xyz=False, albedo2rgb=False):
-        if albedo2rgb:
-            self.shs = self.albedo
+    def save_ply(self, path, rgb2sh=False, offset2xyz=False):
         if offset2xyz:
             xyz = self.offset.detach().cpu().float().numpy()
         else:
@@ -95,9 +84,7 @@ class GaussianModel:
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
 
-    def save_ply_nodeact(self, path, rgb2sh=False, albedo2rgb=False):
-        if albedo2rgb:
-            self.shs = self.albedo
+    def save_ply_nodeact(self, path, rgb2sh=False):
         xyz = self.xyz.detach().cpu().float().numpy()
         normals = np.zeros_like(xyz)
         if len(self.shs.shape) == 2:
@@ -171,8 +158,5 @@ class GaussianModel:
         if sh2rgb:
             self.opacity = nn.functional.sigmoid(self.opacity)
             self.scaling = trunc_exp(self.scaling)
-
-        self.albedo = nn.Parameter(torch.zeros_like(self.shs).requires_grad_(False))
-        self.lights = nn.Parameter(torch.zeros_like(self.shs).requires_grad_(False))
 
         self.active_sh_degree = self.sh_degree

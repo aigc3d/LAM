@@ -615,12 +615,10 @@ class GS3DRenderer(nn.Module):
         gs_attr_list = []                                                                  
         for i in range(num_view):
             gs_attr_copy = GaussianModel(xyz=mean_3d[i],
-                                    opacity=gs_attr.opacity,
-                                    rotation=gs_attr.rotation,
+                                    opacity=gs_attr.opacity, 
+                                    rotation=gs_attr.rotation, 
                                     scaling=gs_attr.scaling,
                                     shs=gs_attr.shs,
-                                    albedo=gs_attr.albedo,
-                                    lights=gs_attr.lights,
                                     offset=gs_attr.offset) # [N, 3]
             gs_attr_list.append(gs_attr_copy)
         
@@ -739,8 +737,6 @@ class GS3DRenderer(nn.Module):
                                                 x_fine=query_gs_features["fine"][b], vtx_sym_idxs=None)
             else:
                 ret_gs = self.forward_gs_attr(query_gs_features[b], query_points[b], None, debug, vtx_sym_idxs=None)
-
-            ret_gs.update_albedo(ret_gs.shs.clone())
 
             gs_model_list.append(ret_gs)
 
