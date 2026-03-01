@@ -315,13 +315,24 @@ ui_image = modal.Image.debian_slim(python_version="3.10").pip_install(
 # ============================================================
 
 def _setup_model_paths():
-    """Symlink model_zoo/assets/tmp_assets from lam-storage volume into /root/LAM."""
+    """Symlink volume dirs into /root/LAM. Also bridge pretrained_models paths."""
     import shutil as _shutil
+    import subprocess
     lam_root = "/root/LAM"
     vol_lam = os.path.join(STORAGE_VOL_PATH, "LAM")
 
-    # Link top-level dirs from volume
-    for subdir in ["model_zoo", "assets", "tmp_assets"]:
+    # Diagnostic: show volume top-level structure
+    print("  [diag] Volume top-level:")
+    if os.path.isdir(vol_lam):
+        for entry in sorted(os.listdir(vol_lam)):
+            full = os.path.join(vol_lam, entry)
+            kind = "dir" if os.path.isdir(full) else "file"
+            print(f"    {entry}/ ({kind})" if os.path.isdir(full) else f"    {entry}")
+    else:
+        print(f"    WARNING: {vol_lam} does not exist!")
+
+    # Link top-level dirs from volume (includes pretrained_models if present)
+    for subdir in ["model_zoo", "assets", "tmp_assets", "pretrained_models"]:
         src = os.path.join(vol_lam, subdir)
         dst = os.path.join(lam_root, subdir)
         if not os.path.isdir(src):
@@ -360,7 +371,7 @@ def _setup_model_paths():
                     break
 
     # Bridge ./pretrained_models/human_model_files/ (required by config.json from_pretrained)
-    # The model config.json hardcodes this path, but our volume uses model_zoo/ structure.
+    # The model config.json hardcodes human_model_path="./pretrained_models/human_model_files"
     pretrained_hm = os.path.join(lam_root, "pretrained_models", "human_model_files")
     if not os.path.exists(pretrained_hm):
         candidates = [
@@ -373,6 +384,51 @@ def _setup_model_paths():
                 os.symlink(cand, pretrained_hm)
                 print(f"  [bridge] {pretrained_hm} -> {cand}")
                 break
+        else:
+            # Diagnostic: find flame2023.pkl anywhere on the volume
+            print("  [WARN] pretrained_models/human_model_files not found! Searching volume...")
+            try:
+                result = subprocess.run(
+                    ["find", STORAGE_VOL_PATH, "-name", "flame2023.pkl", "-type", "f"],
+                    capture_output=True, text=True, timeout=30,
+                )
+                found = result.stdout.strip()
+                if found:
+                    print(f"  [diag] flame2023.pkl found at:\n{found}")
+                    # Auto-bridge: derive human_model_files dir from first found path
+                    # Expected: .../human_model_files/flame_assets/flame/flame2023.pkl
+                    first_path = found.split("\n")[0]
+                    # Walk up to find human_model_files or equivalent root
+                    parts = first_path.split("/")
+                    for i, part in enumerate(parts):
+                        if part in ("human_model_files", "human_parametric_models"):
+                            root_dir = "/".join(parts[:i+1])
+                            os.makedirs(os.path.join(lam_root, "pretrained_models"), exist_ok=True)
+                            os.symlink(root_dir, pretrained_hm)
+                            print(f"  [bridge-auto] {pretrained_hm} -> {root_dir}")
+                            break
+                    else:
+                        # Last resort: symlink parent 3 levels up from flame2023.pkl
+                        # flame2023.pkl is at .../flame_assets/flame/flame2023.pkl
+                        import pathlib
+                        pkl_parent = str(pathlib.Path(first_path).parent.parent.parent)
+                        os.makedirs(os.path.join(lam_root, "pretrained_models"), exist_ok=True)
+                        os.symlink(pkl_parent, pretrained_hm)
+                        print(f"  [bridge-fallback] {pretrained_hm} -> {pkl_parent}")
+                else:
+                    print("  [WARN] flame2023.pkl NOT FOUND anywhere on volume!")
+                    # List model_zoo contents for debugging
+                    mz = os.path.join(vol_lam, "model_zoo")
+                    if os.path.isdir(mz):
+                        for root, dirs, files in os.walk(mz):
+                            depth = root.replace(mz, "").count(os.sep)
+                            if depth < 3:
+                                for d in dirs:
+                                    print(f"    {os.path.join(root, d)}/")
+                                for f in files[:5]:
+                                    print(f"    {os.path.join(root, f)}")
+            except Exception as diag_err:
+                print(f"  [diag] Error searching volume: {diag_err}")
 
 
 def _init_lam_pipeline():
