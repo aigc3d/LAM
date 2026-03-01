@@ -93,8 +93,9 @@ image = (
     .run_commands(
         "pip install git+https://github.com/NVlabs/nvdiffrast.git --no-build-isolation",
     )
-    # FBX SDK: Volume内のwhlからランタイムでインストール (Alibaba CDN到達不可のため)
-    # Volume /vol/lam-storage/wheels/fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl
+    .run_commands(
+        "pip install https://virutalbuy-public.oss-cn-hangzhou.aliyuncs.com/share/aigc3d/data/LAM/fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl",
+    )
     .run_commands(
         "wget -q https://download.blender.org/release/Blender4.2/blender-4.2.0-linux-x64.tar.xz -O /tmp/blender.tar.xz",
         "mkdir -p /opt/blender",
@@ -123,7 +124,7 @@ image = (
         "sed -i 's/^    @torch.compile$/    # @torch.compile  # DISABLED/' "
         "/root/LAM/lam/losses/tvloss.py",
         "sed -i 's/^    @torch.compile$/    # @torch.compile  # DISABLED/' "
-        "/root/LAM/lam/losses/pixelwise.py",
+        "/root/LAM/lam/losses/pixlwise.py",
     )
     .run_commands(
         "python -c \""
@@ -224,49 +225,15 @@ def parse_configs():
     return cfg, cfg_train
 
 def _build_model(cfg):
-    # 原本 app_lam.py _build_model() と完全一致させる
-    from lam.models import ModelLAM
-    from safetensors.torch import load_file
-
-    model = ModelLAM(**cfg.model)
-    resume = os.path.join(cfg.model_name, "model.safetensors")
-    print("=" * 100)
-    print("loading pretrained weight from:", resume)
-    if resume.endswith('safetensors'):
-        ckpt = load_file(resume, device='cpu')
-    else:
-        ckpt = torch.load(resume, map_location='cpu')
-    state_dict = model.state_dict()
-    for k, v in ckpt.items():
-        if k in state_dict:
-            if state_dict[k].shape == v.shape:
-                state_dict[k].copy_(v)
-            else:
-                print(f"WARN] mismatching shape for param {k}: ckpt {v.shape} != model {state_dict[k].shape}, ignored.")
-        else:
-            print(f"WARN] unexpected param {k}: {v.shape}")
-    print("finish loading pretrained weight from:", resume)
-    print("=" * 100)
+    # app.py 641-648行をそのままコピー
+    from lam.models import model_dict
+    from lam.utils.hf_hub import wrap_model_hub
+    hf_model_cls = wrap_model_hub(model_dict["lam"])
+    model = hf_model_cls.from_pretrained(cfg.model_name)
     return model
-
-def _install_fbx_from_volume():
-    """Volume内のFBX SDK whlをランタイムでインストール"""
-    try:
-        import fbx
-        return  # already installed
-    except ImportError:
-        pass
-    whl_path = "/vol/lam-storage/wheels/fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl"
-    if os.path.isfile(whl_path):
-        import subprocess
-        subprocess.check_call([sys.executable, "-m", "pip", "install", whl_path, "--quiet"])
-        print(f"[FBX SDK] Installed from {whl_path}")
-    else:
-        print(f"[FBX SDK] WARNING: {whl_path} not found in volume. OAC generation may fail.")
 
 def _init_lam_pipeline():
     """app.pyのlaunch_gradio_app()を写経"""
-    _install_fbx_from_volume()
     os.chdir("/root/LAM")
     sys.path.insert(0, "/root/LAM")
     _setup_model_paths()
@@ -281,7 +248,6 @@ def _init_lam_pipeline():
     cfg, _ = parse_configs()
     lam = _build_model(cfg)
     lam.to('cuda')
-    lam.eval()  # 原本 app_lam.py:538 と同じ - eval()がないとDropout/BNがtrain挙動→bird-monster
     sys.path.insert(0, "/root/LAM/tools") # [MODAL変更] importパス解決
     from flame_tracking_single_image import FlameTrackingSingleImage
     flametracking = FlameTrackingSingleImage(
