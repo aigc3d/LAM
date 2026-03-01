@@ -140,7 +140,7 @@ def _precompile_nvdiffrast():
     import nvdiffrast.torch as dr
     print("nvdiffrast pre-compiled OK")
 
-image = image.run_function(_precompile_nvdiffrast)
+image = image.run_function(_precompile_nvdiffrast).force_build()
 
 # --- 写経セクション: app.py ヘルパー関数 ---
 
