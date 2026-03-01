@@ -359,6 +359,21 @@ def _setup_model_paths():
                     os.symlink(candidate, flame_vhap)
                     break
 
+    # Bridge ./pretrained_models/human_model_files/ (required by config.json from_pretrained)
+    # The model config.json hardcodes this path, but our volume uses model_zoo/ structure.
+    pretrained_hm = os.path.join(lam_root, "pretrained_models", "human_model_files")
+    if not os.path.exists(pretrained_hm):
+        candidates = [
+            os.path.join(lam_root, "model_zoo", "human_parametric_models"),
+            os.path.join(vol_lam, "pretrained_models", "human_model_files"),
+        ]
+        for cand in candidates:
+            if os.path.isdir(cand):
+                os.makedirs(os.path.join(lam_root, "pretrained_models"), exist_ok=True)
+                os.symlink(cand, pretrained_hm)
+                print(f"  [bridge] {pretrained_hm} -> {cand}")
+                break
+
 
 def _init_lam_pipeline():
     """Initialize FLAME tracking and LAM model. Called once per container.
