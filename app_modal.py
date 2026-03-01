@@ -93,9 +93,8 @@ image = (
     .run_commands(
         "pip install git+https://github.com/NVlabs/nvdiffrast.git --no-build-isolation",
     )
-    .run_commands(
-        "pip install https://virutalbuy-public.oss-cn-hangzhou.aliyuncs.com/share/aigc3d/data/LAM/fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl",
-    )
+    # FBX SDK: Volume内のwhlからランタイムでインストール (Alibaba CDN到達不可のため)
+    # Volume /vol/lam-storage/wheels/fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl
     .run_commands(
         "wget -q https://download.blender.org/release/Blender4.2/blender-4.2.0-linux-x64.tar.xz -O /tmp/blender.tar.xz",
         "mkdir -p /opt/blender",
@@ -232,8 +231,24 @@ def _build_model(cfg):
     model = hf_model_cls.from_pretrained(cfg.model_name)
     return model
 
+def _install_fbx_from_volume():
+    """Volume内のFBX SDK whlをランタイムでインストール"""
+    try:
+        import fbx
+        return  # already installed
+    except ImportError:
+        pass
+    whl_path = "/vol/lam-storage/wheels/fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl"
+    if os.path.isfile(whl_path):
+        import subprocess
+        subprocess.check_call([sys.executable, "-m", "pip", "install", whl_path, "--quiet"])
+        print(f"[FBX SDK] Installed from {whl_path}")
+    else:
+        print(f"[FBX SDK] WARNING: {whl_path} not found in volume. OAC generation may fail.")
+
 def _init_lam_pipeline():
     """app.pyのlaunch_gradio_app()を写経"""
+    _install_fbx_from_volume()
     os.chdir("/root/LAM")
     sys.path.insert(0, "/root/LAM")
     _setup_model_paths()
