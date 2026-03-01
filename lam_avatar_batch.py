@@ -226,6 +226,18 @@ def generate_avatar_batch(image_bytes: bytes, params: dict):
         motion_seq["flame_params"]["betas"] = shape_param.unsqueeze(0)
         device, dtype = "cuda", torch.float32
 
+        # BIRD-MONSTER FIX: Ensure torch.compile stays disabled before inference.
+        # _init_lam_pipeline() used to restore torch.compile after model loading,
+        # allowing dynamo to activate during the first forward pass on L4 GPUs.
+        import torch._dynamo
+        torch._dynamo.config.disable = True
+        torch._dynamo.reset()
+        _orig = torch.compile
+        def _noop(fn=None, *a, **kw):
+            return fn if fn is not None else (lambda f: f)
+        torch.compile = _noop
+        print("[BIRD-FIX] torch.compile re-confirmed as no-op before inference")
+
         print("start to inference...................")
         with torch.no_grad():
             res = lam.infer_single_view(

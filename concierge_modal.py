@@ -572,8 +572,11 @@ def _init_lam_pipeline():
         missing_keys = [k for k in state_dict if k not in ckpt]
         print(f"  Missing keys (first 10): {missing_keys[:10]}")
 
-    # Restore original torch.compile
-    torch.compile = _original_torch_compile
+    # NEVER restore torch.compile — keep it as no-op for the entire session.
+    # Restoring it allows PyTorch dynamo to kick in during the first
+    # infer_single_view() call, which causes "bird monster" artifacts
+    # on Modal L4 GPUs (CUDA 12.1 + PyTorch 2.4.0).
+    # torch.compile = _original_torch_compile  # REMOVED: root cause of bird-monster
 
     lam.to("cuda")
     lam.eval()
