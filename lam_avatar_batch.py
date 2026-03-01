@@ -20,8 +20,9 @@ app = modal.App("lam-avatar-batch")
 # Modal image + volume definitions from app_modal.py
 # force_build=True: キャッシュを全て無視してゼロからイメージをビルドし直す
 from app_modal import image as _app_image
-from app_modal import storage_vol, STORAGE_VOL_PATH
+from app_modal import storage_vol
 app_image = _app_image.force_build()
+STORAGE_VOL_PATH = "/vol/lam-storage"
 
 # Output volume for results
 output_vol = modal.Volume.from_name("lam-batch-output", create_if_missing=True)
