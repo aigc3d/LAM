@@ -12,8 +12,15 @@ import logging
 from datetime import datetime
 from google import genai
 from google.genai import types
-from google.cloud import storage
 import google.generativeai as genai_legacy
+
+# GCS (プロンプト読み込み用、オプション)
+try:
+    from google.cloud import storage
+    _GCS_AVAILABLE = True
+except ImportError:
+    storage = None
+    _GCS_AVAILABLE = False
 
 # api_integrations から必要な関数をインポート
 from support_base.core.api_integrations import extract_shops_from_response
@@ -28,10 +35,20 @@ except Exception as e:
     logger.warning(f"[LTM] 長期記憶モジュールのインポート失敗: {e}")
     LONG_TERM_MEMORY_ENABLED = False
 
-# Gemini クライアント初期化
-gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-genai_legacy.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai_legacy.GenerativeModel('gemini-2.5-flash')
+# Gemini クライアント初期化 (API キーが未設定でも起動は可能にする)
+_gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+gemini_client = None
+model = None
+try:
+    if _gemini_api_key:
+        gemini_client = genai.Client(api_key=_gemini_api_key)
+        genai_legacy.configure(api_key=_gemini_api_key)
+        model = genai_legacy.GenerativeModel('gemini-2.5-flash')
+        logger.info("[Core] Gemini クライアント初期化完了")
+    else:
+        logger.warning("[Core] GEMINI_API_KEY 未設定 — REST チャット機能は無効")
+except Exception as e:
+    logger.error(f"[Core] Gemini クライアント初期化失敗: {e}")
 
 # ========================================
 # RAMベースのセッション管理 (Firestore完全廃止)
@@ -49,6 +66,10 @@ def load_prompts_from_gcs():
     - concierge_{lang}.txt: コンシェルジュモード用
     """
     try:
+        if not _GCS_AVAILABLE:
+            logger.warning("[Prompt] google-cloud-storage 未インストール。ローカルファイルを使用します。")
+            return None
+
         bucket_name = os.getenv('PROMPTS_BUCKET_NAME')
         if not bucket_name:
             logger.warning("[Prompt] PROMPTS_BUCKET_NAME が設定されていません。ローカルファイルを使用します。")
