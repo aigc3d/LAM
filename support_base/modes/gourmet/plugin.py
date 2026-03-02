@@ -8,7 +8,7 @@ Live API 経路での使用を前提に設計。
        ここでは基本的な骨格を実装する。
 """
 
-from lam_platform.modes.base_mode import BaseModePlugin
+from support_base.modes.base_mode import BaseModePlugin
 
 
 class GourmetModePlugin(BaseModePlugin):

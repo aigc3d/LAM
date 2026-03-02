@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from lam_platform.config.settings import A2E_SERVICE_URL, A2E_TIMEOUT_SECONDS
+from support_base.config.settings import A2E_SERVICE_URL, A2E_TIMEOUT_SECONDS
 
 logger = logging.getLogger(__name__)
 
