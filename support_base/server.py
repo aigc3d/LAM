@@ -4,11 +4,21 @@
 エントリーポイント。WebSocket (Live API中継) と REST エンドポイントを提供する。
 
 エンドポイント:
-  POST /api/v2/session/start    - セッション開始
-  POST /api/v2/session/end      - セッション終了
-  WS   /api/v2/live/{session_id} - Live API WebSocket 中継
-  GET  /api/v2/modes            - 利用可能モード一覧
-  GET  /api/v2/health           - ヘルスチェック
+  POST /api/v2/session/start          - セッション開始 (Live API 用)
+  POST /api/v2/session/end            - セッション終了
+  WS   /api/v2/live/{session_id}      - Live API WebSocket 中継
+  GET  /api/v2/modes                  - 利用可能モード一覧
+  GET  /api/v2/health                 - ヘルスチェック
+
+  --- REST API (gourmet-support 互換) ---
+  POST /api/v2/rest/session/start     - REST セッション開始
+  POST /api/v2/rest/chat              - チャット処理
+  POST /api/v2/rest/finalize          - セッション完了
+  POST /api/v2/rest/cancel            - 処理中止
+  POST /api/v2/rest/tts/synthesize    - 音声合成
+  POST /api/v2/rest/stt/transcribe    - 音声認識
+  POST /api/v2/rest/stt/stream        - 音声認識 (Streaming)
+  GET  /api/v2/rest/session/{id}      - セッション取得
 """
 
 import logging
@@ -25,6 +35,7 @@ from support_base.modes.gourmet.plugin import GourmetModePlugin
 from support_base.services.a2e_client import A2EClient
 from support_base.session.manager import SessionManager
 from support_base.live.relay import LiveRelay
+from support_base.rest.router import router as rest_router
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +94,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# REST API ルーター (gourmet-support 互換)
+app.include_router(rest_router)
 
 
 # === リクエスト/レスポンスモデル ===

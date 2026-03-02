@@ -32,5 +32,19 @@ HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8080"))
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
 
+# --- REST モード (gourmet-support 互換) ---
+# GCS プロンプト
+PROMPTS_BUCKET_NAME = os.getenv("PROMPTS_BUCKET_NAME", "")
+
+# 外部 API キー
+GOOGLE_PLACES_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY", "")
+GOOGLE_GEOCODING_API_KEY = os.getenv("GOOGLE_GEOCODING_API_KEY", GOOGLE_PLACES_API_KEY)
+HOTPEPPER_API_KEY = os.getenv("HOTPEPPER_API_KEY", "")
+TRIPADVISOR_API_KEY = os.getenv("TRIPADVISOR_API_KEY", "")
+
+# Supabase (長期記憶)
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+
 # 既存 gourmet-support (Phase 1 プロキシ用)
 LEGACY_BACKEND_URL = os.getenv("LEGACY_BACKEND_URL", "")
