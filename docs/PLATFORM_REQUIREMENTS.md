@@ -237,7 +237,66 @@ Response: { status: "healthy"|"loading", engine_ready: bool, mode: "infer"|"fall
 | FR-AVT-04 | Three.js + GLBメッシュによる軽量レンダリング（フォールバック） | P3 |
 | FR-AVT-05 | レンダリング方式の動的切替（デバイス性能に応じて） | P3 |
 
-### 4.7 既存サービス共存
+### 4.7 多言語対応
+
+#### 4.7.1 現状の実装状況（確認済み）
+
+gourmet-sp / gourmet-support には多言語対応が既に実装されている:
+
+**フロントエンド（`concierge-controller.ts` から確認済み）**:
+
+| 機能 | 実装箇所 | 詳細 |
+|------|---------|------|
+| 言語状態管理 | `this.currentLanguage` | 現在の表示・対話言語を保持 |
+| UI翻訳 | `this.t('key')` | `CoreController` 基底クラスの翻訳関数。UIラベル・メッセージを多言語化 |
+| TTS言語マッピング | `this.LANGUAGE_CODE_MAP[this.currentLanguage]` | 言語→TTS設定（`langConfig.tts`: 言語コード, `langConfig.voice`: 音声名）のマッピング |
+| 言語別文分割 | `splitIntoSentences(text, language)` L526-546 | 日本語・中国語は`。`、英語・韓国語は`. `で分割 |
+| UI言語動的切替 | `updateUILanguage()` L479-497 | 言語切替時にUIラベルを再描画 |
+| セッション開始 | `initializeSession()` L177-182 | `language: this.currentLanguage` をバックエンドに送信 |
+| チャット送信 | `sendMessage()` L844-846 | `language: this.currentLanguage` をバックエンドに送信 |
+| TTS合成 | `speakTextGCP()` L285-296 | `language_code`, `voice_name` をバックエンドに送信 |
+| ショップ表示 | `displayShops` イベント | `language` を渡して多言語表示に対応 |
+
+**対応言語（`splitIntoSentences` と `LANGUAGE_CODE_MAP` から推定）**:
+
+| 言語 | コード | 文分割ルール | TTS設定 |
+|------|--------|------------|---------|
+| 日本語 | `ja` | `。`で分割 | [推定] `ja-JP`, `ja-JP-Wavenet-D` 等 |
+| 英語 | `en` | `. `で分割 | [推定] `en-US`, Wavenet系 |
+| 韓国語 | `ko` | `. `で分割 | [推定] `ko-KR`, Wavenet系 |
+| 中国語 | `zh` | `。`で分割 | [推定] `cmn-CN`, Wavenet系 |
+
+> **注意**: `LANGUAGE_CODE_MAP` の完全な定義は `CoreController`（gourmet-sp リポジトリ）にあり、直接確認できていない。上記の言語リストは `splitIntoSentences()` の分岐条件から推定。
+
+**バックエンド（`SYSTEM_ARCHITECTURE.md` から確認済み）**:
+
+| 機能 | 実装箇所 | 詳細 |
+|------|---------|------|
+| 対話言語 | `support_core.process_message()` | `language` パラメータを受け取りLLMに渡す |
+| TTS合成 | `/api/tts/synthesize` | `language_code`, `voice_name` で言語・音声を指定 |
+| セッション開始 | `/api/session/start` | `language` パラメータでセッション言語を設定 |
+
+**stt_stream.py（確認済み — 日本語のみ）**:
+
+| 機能 | 実装箇所 | 詳細 |
+|------|---------|------|
+| Live API 音声言語 | `_build_config()` L446 | `language_code: "ja-JP"` にハードコード |
+| TTS音声 | `TTSPlayer.__init__()` L220-222 | `ja-JP-Wavenet-D` にハードコード |
+| 発話途切れ検知 | `_is_speech_incomplete()` L501-529 | 日本語パターンのみ（「が」「で」「を」等） |
+
+#### 4.7.2 機能要件
+
+| ID | 要件 | 優先度 | 備考 |
+|----|------|--------|------|
+| FR-I18N-01 | 既存の4言語対応（ja/en/ko/zh）をプラットフォームでも維持する | P1 | 既存機能の温存 |
+| FR-I18N-02 | UI翻訳機能を共通基盤に組み込む（`t()` 関数相当） | P1 | `CoreController` から抽出 |
+| FR-I18N-03 | TTS言語マッピングをプラットフォーム設定に統合する | P1 | `LANGUAGE_CODE_MAP` 相当 |
+| FR-I18N-04 | Live API の音声言語をセッション言語に連動させる | P2 | 現状は `ja-JP` ハードコード |
+| FR-I18N-05 | 発話途切れ検知を多言語対応にする | P3 | 現状は日本語パターンのみ |
+| FR-I18N-06 | 文分割ロジックを言語別に拡張可能にする | P3 | 現状は ja/zh と en/ko の2パターン |
+| FR-I18N-07 | 新言語の追加が設定ファイルの追加のみで完了する | P4 | 言語マスター + 翻訳ファイル |
+
+### 4.8 既存サービス共存
 
 | ID | 要件 | 優先度 |
 |----|------|--------|

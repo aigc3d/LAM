@@ -16,11 +16,12 @@
 4. [バックエンド設計](#4-バックエンド設計)
 5. [Live API 統合設計](#5-live-api-統合設計)
 6. [記憶機能の統一設計](#6-記憶機能の統一設計)
-7. [フロントエンド設計](#7-フロントエンド設計)
-8. [API設計](#8-api設計)
-9. [既存サービスとの共存戦略](#9-既存サービスとの共存戦略)
-10. [iPhone SE 対応戦略](#10-iphone-se-対応戦略)
-11. [開発ロードマップ](#11-開発ロードマップ)
+7. [多言語対応設計](#7-多言語対応設計)
+8. [フロントエンド設計](#8-フロントエンド設計)
+9. [API設計](#9-api設計)
+10. [既存サービスとの共存戦略](#10-既存サービスとの共存戦略)
+11. [iPhone SE 対応戦略](#11-iphone-se-対応戦略)
+12. [開発ロードマップ](#12-開発ロードマップ)
 
 ---
 
@@ -240,6 +241,16 @@ platform/
 │   ├── __init__.py
 │   ├── rest_dialogue.py       # REST API対話
 │   └── hybrid_dialogue.py     # Live/REST ハイブリッド切替
+│
+├── i18n/
+│   ├── __init__.py
+│   ├── language_config.py     # 言語マスター (LANGUAGE_CODE_MAP 相当)
+│   ├── speech_rules.py        # 言語別文分割・途切れ検知ルール
+│   └── translations/          # UI翻訳ファイル
+│       ├── ja.json
+│       ├── en.json
+│       ├── ko.json
+│       └── zh.json
 │
 ├── services/
 │   ├── __init__.py
@@ -741,7 +752,242 @@ class SupabaseBackend(StorageBackend): ...  # 必要に応じて実装
 
 ---
 
-## 7. フロントエンド設計
+## 7. 多言語対応設計
+
+### 7.1 現状の多言語実装の整理
+
+gourmet-sp / gourmet-support には4言語対応（ja/en/ko/zh）が既に実装されている。プラットフォーム化でこれを共通基盤に組み込む。
+
+**既存実装の所在と状態**:
+
+| レイヤー | 機能 | 実装箇所 | 多言語対応状態 |
+|---------|------|---------|-------------|
+| フロントエンド | UI翻訳 | `CoreController.t()` [推定] | 4言語対応 (ja/en/ko/zh) |
+| フロントエンド | TTS言語マッピング | `CoreController.LANGUAGE_CODE_MAP` [推定] | 4言語対応 |
+| フロントエンド | 文分割 | `ConciergeController.splitIntoSentences()` [確認済み] | ja/zh と en/ko の2パターン |
+| バックエンド | 対話言語 | `support_core.process_message(language=)` [推定] | パラメータとして受け取り |
+| バックエンド | TTS合成 | `/api/tts/synthesize` [確認済み: SYSTEM_ARCHITECTURE.md] | `language_code`, `voice_name` 指定可能 |
+| Live API | 音声言語 | `stt_stream.py` L446 | **日本語のみ** (`ja-JP` ハードコード) |
+| Live API | 発話途切れ検知 | `stt_stream.py` L501-529 | **日本語のみ** (日本語文末パターン) |
+
+### 7.2 バックエンド i18n 設計
+
+#### LanguageConfig（言語マスター）
+
+```python
+# platform/i18n/language_config.py
+
+@dataclass
+class LanguageProfile:
+    """1言語の設定プロファイル"""
+    code: str                    # "ja", "en", "ko", "zh"
+    tts_language_code: str       # "ja-JP", "en-US", "ko-KR", "cmn-CN"
+    tts_voice_name: str          # "ja-JP-Wavenet-D", etc.
+    live_api_language_code: str  # Gemini Live API の speech_config.language_code
+    sentence_splitter: str       # "cjk" (。で分割) or "latin" (. で分割)
+
+# [確認済み] concierge-controller.ts L526-546 の splitIntoSentences() から
+# ja/zh → 。分割、en/ko → . 分割 の2パターンが判明
+LANGUAGE_PROFILES: dict[str, LanguageProfile] = {
+    "ja": LanguageProfile(
+        code="ja",
+        tts_language_code="ja-JP",
+        tts_voice_name="ja-JP-Wavenet-D",       # [確認済み] stt_stream.py L221
+        live_api_language_code="ja-JP",           # [確認済み] stt_stream.py L446
+        sentence_splitter="cjk",
+    ),
+    "en": LanguageProfile(
+        code="en",
+        tts_language_code="en-US",                # [推定] LANGUAGE_CODE_MAP の値
+        tts_voice_name="en-US-Wavenet-D",         # [推定]
+        live_api_language_code="en-US",
+        sentence_splitter="latin",
+    ),
+    "ko": LanguageProfile(
+        code="ko",
+        tts_language_code="ko-KR",                # [推定]
+        tts_voice_name="ko-KR-Wavenet-D",         # [推定]
+        live_api_language_code="ko-KR",
+        sentence_splitter="latin",
+    ),
+    "zh": LanguageProfile(
+        code="zh",
+        tts_language_code="cmn-CN",               # [推定]
+        tts_voice_name="cmn-CN-Wavenet-D",        # [推定]
+        live_api_language_code="cmn-CN",
+        sentence_splitter="cjk",
+    ),
+}
+```
+
+> **注意**: `tts_voice_name` の正確な値は `CoreController.LANGUAGE_CODE_MAP`（gourmet-sp リポジトリ）の確認が必要。上記は推定値。
+
+#### SpeechRules（言語別文分割・途切れ検知）
+
+```python
+# platform/i18n/speech_rules.py
+
+class SpeechRules:
+    """言語別の文分割・発話途切れ検知ルール"""
+
+    # [確認済み] concierge-controller.ts L526-546
+    @staticmethod
+    def split_sentences(text: str, language: str) -> list[str]:
+        profile = LANGUAGE_PROFILES.get(language)
+        if not profile:
+            return [text]
+
+        if profile.sentence_splitter == "cjk":
+            # 日本語・中国語: 。で分割
+            return [s + "。" for s in text.split("。") if s.strip()]
+        else:
+            # 英語・韓国語: . で分割
+            import re
+            parts = re.split(r'\.\s+', text)
+            return [s + ". " for s in parts if s.strip()]
+
+    # [確認済み] stt_stream.py L501-529
+    # 現状は日本語のみ。他言語は段階的に追加
+    INCOMPLETE_RULES: dict[str, dict] = {
+        "ja": {
+            "normal_endings": ['。', '？', '?', '！', '!', 'ます', 'です', 'ね', 'よ', 'した', 'ください'],
+            "incomplete_patterns": ['、', 'の', 'を', 'が', 'は', 'に', 'で', 'と', 'も', 'や'],
+        },
+        # TODO: 他言語ルールを追加
+        # "en": { "normal_endings": ['.', '?', '!'], "incomplete_patterns": [',', 'and', 'but', 'or'] },
+        # "ko": { ... },
+        # "zh": { ... },
+    }
+
+    @staticmethod
+    def is_speech_incomplete(text: str, language: str) -> bool:
+        """発話が途中で切れているかチェック（言語対応版）"""
+        rules = SpeechRules.INCOMPLETE_RULES.get(language)
+        if not rules:
+            return False  # ルール未定義の言語はfalse（安全側）
+
+        text = text.strip()
+        if not text:
+            return False
+
+        for ending in rules["normal_endings"]:
+            if text.endswith(ending):
+                return False
+
+        for pattern in rules["incomplete_patterns"]:
+            if text.endswith(pattern):
+                return True
+
+        return False
+```
+
+### 7.3 Live API の多言語対応
+
+**設計判断**: Live API の `speech_config.language_code` をセッション開始時の言語パラメータに連動させる。
+
+```python
+# platform/live/relay.py 内
+
+def _build_live_config(self, context: str = None) -> dict:
+    """Live API設定を構築（多言語対応）"""
+    # セッションの言語からプロファイルを取得
+    lang_profile = LANGUAGE_PROFILES.get(self.session.language, LANGUAGE_PROFILES["ja"])
+
+    config = {
+        "response_modalities": ["AUDIO"],
+        "system_instruction": self.mode_plugin.get_system_prompt(context),
+        "input_audio_transcription": {},
+        "output_audio_transcription": {},
+        "speech_config": {
+            "language_code": lang_profile.live_api_language_code,  # 動的に設定
+        },
+        "realtime_input_config": {
+            "automatic_activity_detection": {
+                "disabled": False,
+                "start_of_speech_sensitivity": "START_SENSITIVITY_HIGH",
+                "end_of_speech_sensitivity": "END_SENSITIVITY_HIGH",
+                "prefix_padding_ms": 100,
+                "silence_duration_ms": 500,
+            }
+        },
+        "context_window_compression": {
+            "sliding_window": {
+                "target_tokens": 32000,
+            }
+        },
+    }
+    return config
+```
+
+### 7.4 フロントエンド i18n 設計
+
+```typescript
+// src/scripts/platform/i18n.ts
+
+interface LanguageConfig {
+  code: string;           // "ja", "en", "ko", "zh"
+  tts: string;            // "ja-JP"
+  voice: string;          // "ja-JP-Wavenet-D"
+  sentenceSplitter: 'cjk' | 'latin';
+}
+
+// [確認済み] CoreController.LANGUAGE_CODE_MAP の構造を再現
+// 値は gourmet-sp リポジトリの確認後に正確な値で埋める
+const LANGUAGE_CONFIG_MAP: Record<string, LanguageConfig> = {
+  ja: { code: 'ja', tts: 'ja-JP', voice: 'ja-JP-Wavenet-D', sentenceSplitter: 'cjk' },
+  en: { code: 'en', tts: 'en-US', voice: 'en-US-Wavenet-D', sentenceSplitter: 'latin' },
+  ko: { code: 'ko', tts: 'ko-KR', voice: 'ko-KR-Wavenet-D', sentenceSplitter: 'latin' },
+  zh: { code: 'zh', tts: 'cmn-CN', voice: 'cmn-CN-Wavenet-D', sentenceSplitter: 'cjk' },
+};
+
+// [確認済み] CoreController.t() 相当の翻訳関数
+// 翻訳データは JSON ファイルから読み込み
+class I18n {
+  private translations: Record<string, string> = {};
+  private currentLang: string = 'ja';
+
+  async loadLanguage(lang: string): Promise<void> {
+    const res = await fetch(`/i18n/${lang}.json`);
+    this.translations = await res.json();
+    this.currentLang = lang;
+  }
+
+  t(key: string): string {
+    return this.translations[key] || key;
+  }
+
+  getLanguageConfig(): LanguageConfig {
+    return LANGUAGE_CONFIG_MAP[this.currentLang] || LANGUAGE_CONFIG_MAP['ja'];
+  }
+}
+```
+
+### 7.5 Session への言語統合
+
+```python
+# platform/session/manager.py（Session クラスに language フィールド追加）
+
+class Session:
+    session_id: str
+    user_id: str | None
+    mode: str
+    language: str                      # ★ "ja", "en", "ko", "zh"
+    dialogue_type: str
+    created_at: datetime
+    memory: SessionMemory
+    live_state: LiveSessionState | None
+```
+
+**影響箇所**: セッション開始時に `language` を受け取り、以下に伝播させる:
+1. Live API 設定の `speech_config.language_code`
+2. TTS 合成の `language_code`, `voice_name`
+3. 発話途切れ検知の言語別ルール選択
+4. 文分割ロジックの言語別パターン選択
+5. モードプラグインのシステムプロンプト（言語に応じた指示）
+
+---
+
+## 8. フロントエンド設計
 
 ### 7.1 現状の構成（確認済み + 推定）
 
@@ -870,9 +1116,9 @@ class ExpressionSync {
 
 ---
 
-## 8. API設計
+## 9. API設計
 
-### 8.1 新プラットフォーム API (`/api/v2/`)
+### 9.1 新プラットフォーム API (`/api/v2/`)
 
 #### セッション管理
 
@@ -889,9 +1135,11 @@ Response:
   {
     "session_id": "sess_xyz789",
     "mode": "gourmet",
+    "language": "ja",                                              // セッション言語
     "dialogue_type": "live",
     "initial_message": "いらっしゃいませ！前回はイタリアンを...",  // 長期記憶ベース
-    "ws_url": "wss://host/api/v2/live/sess_xyz789"               // Live API用WebSocket URL
+    "ws_url": "wss://host/api/v2/live/sess_xyz789",              // Live API用WebSocket URL
+    "supported_languages": ["ja", "en", "ko", "zh"]              // このモードの対応言語
   }
 
 POST /api/v2/session/end
@@ -947,7 +1195,7 @@ WebSocket /api/v2/live/{session_id}
 { "type": "tool_result",   "data": { ... } }  // Function Calling結果
 ```
 
-### 8.2 既存互換 API (`/api/`)
+### 9.2 既存互換 API (`/api/`)
 
 Phase 1 では、既存の gourmet-support エンドポイントをそのまま維持する。
 
@@ -965,9 +1213,9 @@ GET  /api/health            → 既存 gourmet-support にプロキシ
 
 ---
 
-## 9. 既存サービスとの共存戦略
+## 10. 既存サービスとの共存戦略
 
-### 9.1 Phase 1: 並行稼働
+### 10.1 Phase 1: 並行稼働
 
 ```
                     ┌─────────────────────────┐
@@ -997,7 +1245,7 @@ GET  /api/health            → 既存 gourmet-support にプロキシ
 - audio2exp-service は両方から呼び出される（変更なし）
 - フロントエンドは URL パスまたはサブドメインで切り分け
 
-### 9.2 Phase 2: 段階的移行
+### 10.2 Phase 2: 段階的移行
 
 ```
 1. グルメモードを新プラットフォーム上で再現
@@ -1007,7 +1255,7 @@ GET  /api/health            → 既存 gourmet-support にプロキシ
 3. 全トラフィック移行完了後、既存 gourmet-support を退役
 ```
 
-### 9.3 フロントエンドの共存
+### 10.3 フロントエンドの共存
 
 **設計判断**: 既存の gourmet-sp と新フロントエンドは別デプロイとする。
 
@@ -1020,9 +1268,9 @@ GET  /api/health            → 既存 gourmet-support にプロキシ
 
 ---
 
-## 10. iPhone SE 対応戦略
+## 11. iPhone SE 対応戦略
 
-### 10.1 レンダリング方式の選択肢
+### 11.1 レンダリング方式の選択肢
 
 | 方式 | 技術 | 品質 | iPhone SE 動作 | 状態 |
 |------|------|------|----------------|------|
@@ -1030,7 +1278,7 @@ GET  /api/health            → 既存 gourmet-support にプロキシ
 | B | Three.js + GLB メッシュ + ブレンドシェイプ | 中〜高 | 動作実績あり（TalkingHead等） | 未実装 |
 | C | 2Dアニメーション + 口パク | 低〜中 | 軽量 | フォールバック |
 
-### 10.2 判断基準
+### 11.2 判断基準
 
 **設計判断**: 方式A を第一候補とし、iPhone SE 実機テストの結果で判断する。
 
@@ -1053,7 +1301,7 @@ iPhone SE 実機テスト結果
 - iPhone SE (A13/A15) は iPhone 16 (A18) より GPU性能が低い
 - [確認済み] `LAMAvatar.astro` L337-339 にフォールバック画像表示の仕組みが既にある
 
-### 10.3 方式B の実装指針（フォールバック）
+### 11.3 方式B の実装指針（フォールバック）
 
 方式B を採用する場合:
 1. LAM で生成したアバターの FLAME メッシュを GLB 形式でエクスポート
@@ -1065,7 +1313,7 @@ iPhone SE 実機テスト結果
 
 ---
 
-## 11. 開発ロードマップ
+## 12. 開発ロードマップ
 
 ### Phase 0: 技術検証（前提条件の確認）
 
