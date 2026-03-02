@@ -76,11 +76,13 @@ Gemini Live API はこれらを根本的に解決する:
 
 ### 3.1 リポジトリ構成
 
-| レイヤー | リポジトリ | 技術スタック | デプロイ先 |
-|---------|-----------|-------------|-----------|
-| **フロントエンド** | [mirai-gpro/gourmet-sp](https://github.com/mirai-gpro/gourmet-sp) | Astro + TypeScript | Vercel |
-| **バックエンド** | [mirai-gpro/support-base](https://github.com/mirai-gpro/support-base) | FastAPI + Python | Cloud Run |
-| **A2Eサービス** | LAM_gpro/services/audio2exp-service | Flask + PyTorch | Cloud Run |
+| レイヤー | リポジトリ | 技術スタック | デプロイ先 | 状態 |
+|---------|-----------|-------------|-----------|------|
+| **フロントエンド** | [mirai-gpro/gourmet-sp2](https://github.com/mirai-gpro/gourmet-sp2) | Astro + TypeScript | Vercel (**未連携**) | アバターリップシンク実装・テスト済 |
+| **バックエンド** | [mirai-gpro/support-base](https://github.com/mirai-gpro/support-base) | FastAPI + Python | Cloud Run | LiveAPI対応・プラットフォーム化済 |
+| **A2Eサービス** | LAM_gpro/services/audio2exp-service | Flask + PyTorch | Cloud Run | デプロイ済・ヘルスチェックOK |
+
+> **注意**: `gourmet-sp` (旧リポジトリ) はアバター対応なし。アバター付きリップシンクの実装・テストは `gourmet-sp2` で実施済み。今回のプラットフォーム化は `gourmet-sp2` をベースとする。
 
 ### 3.2 バックエンド (support-base) モジュール構成 [確認済み]
 
@@ -117,12 +119,75 @@ support_base/
     └── language_config.py       # 言語マスター設定 (LanguageProfile)
 ```
 
-### 3.3 全体アーキテクチャ図
+### 3.3 フロントエンド (gourmet-sp2) モジュール構成 [確認済み]
+
+```
+gourmet-sp2/
+├── astro.config.mjs                # Astro設定 (SSG, PWA, COOP/COEP, WASM対応)
+├── package.json                    # 依存: three, gaussian-splat-renderer-for-lam, onnxruntime-web
+├── gs.ts                           # Gaussian Splatting ビューアー (Three.js, LBS skinning)
+├── gvrm.ts                         # GVRM アバターシステム (bone texture, lip-sync API)
+├── src/
+│   ├── pages/
+│   │   ├── index.astro             # グルメモード (Chat) ページ
+│   │   ├── concierge.astro         # コンシェルジュモード (3Dアバター) ページ
+│   │   └── 404.astro
+│   ├── components/
+│   │   ├── GourmetChat.astro       # チャットUIコンポーネント
+│   │   ├── Concierge.astro         # コンシェルジュUIコンポーネント (アバターステージ+チャット)
+│   │   ├── LAMAvatar.astro         # LAM 3Dアバター (Gaussian Splatting WebGL レンダリング)
+│   │   ├── ShopCardList.astro      # 店舗カードリスト
+│   │   ├── ReservationModal.astro  # 予約モーダル
+│   │   ├── ProposalCard.astro      # 提案カード
+│   │   └── InstallPrompt.astro     # PWA インストールプロンプト (iOS/Android対応)
+│   ├── scripts/
+│   │   ├── chat/
+│   │   │   ├── core-controller.ts          # 基底コントローラー (セッション, TTS, STT, 多言語)
+│   │   │   ├── chat-controller.ts          # グルメモード (テキスト/音声チャット)
+│   │   │   ├── concierge-controller.ts     # コンシェルジュモード (アバター+A2E+並行TTS)
+│   │   │   └── audio-manager.ts            # マイク入力 (iOS/Android/PC分岐, AudioWorklet, VAD)
+│   │   ├── lam/
+│   │   │   ├── lam-websocket-manager.ts    # OpenAvatarChat WebSocket (JBIN形式受信)
+│   │   │   └── audio-sync-player.ts        # 音声再生 精密タイミング同期
+│   │   └── avatar/
+│   │       └── concierge-interface.ts      # アバターインターフェース
+│   ├── constants/
+│   │   └── i18n.ts                 # 多言語定義 (ja/en/zh/ko) + LANGUAGE_CODE_MAP
+│   ├── styles/
+│   └── layouts/
+│       └── Layout.astro
+├── public/
+│   ├── avatar/
+│   │   └── concierge/              # LAMアバターアセット (skin.glb, offset.ply)
+│   ├── ort-wasm/                   # ONNX Runtime WASM
+│   └── manifest.webmanifest        # PWA マニフェスト
+└── docs/
+    └── backend-integration.md      # API統合ドキュメント
+```
+
+### 3.4 コントローラー階層 [確認済み]
+
+```
+CoreController (core-controller.ts)
+├── セッション管理, TTS再生, Socket.IO STT, 多言語切替, ショップカード表示
+│
+├── ChatController (chat-controller.ts)
+│   └── グルメモード。テキスト/音声チャット。モード切替トグル
+│
+└── ConciergeController (concierge-controller.ts)
+    ├── LAMAvatar との TTS プレーヤー連携
+    ├── applyExpressionFromTts() — 52次元ブレンドシェイプのキュー投入
+    ├── speakResponseInChunks() — 文分割→並行TTS合成→順次再生
+    ├── __testLipSync() — リップシンク診断テスト (ブラウザコンソール)
+    └── 無音検出タイムアウト: 8000ms (chatモードは4500ms)
+```
+
+### 3.5 全体アーキテクチャ図
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│                      フロントエンド (gourmet-sp)                        │
-│                        Astro + TypeScript + Vercel                    │
+│                      フロントエンド (gourmet-sp2)                       │
+│                    Astro + TypeScript + Vercel (予定)                 │
 │  ┌────────────────┐  ┌──────────────┐  ┌──────────────────────────┐  │
 │  │ ModeRouter     │  │ AudioIO      │  │ AvatarRenderer           │  │
 │  │ (モード切替)    │  │ (WebAudio)   │  │ (LAM WebGL / Three.js)   │  │
@@ -484,49 +549,122 @@ response = gemini_client.models.generate_content(
 | Android スマホ | Android 10+ | Chrome | |
 | PC | Windows/Mac | Chrome / Safari / Firefox | |
 
-### 9.2 フロントエンド技術スタック
+### 9.2 フロントエンド技術スタック [確認済み — gourmet-sp2]
 
-| 技術 | 用途 |
-|------|------|
-| **Astro** | SSG フレームワーク (Vercel デプロイ) |
-| **TypeScript** | アプリロジック |
-| **WebSocket API** | Live API 中継接続 |
-| **Web Audio API** | マイク入力 (AudioWorklet → PCM 16kHz) + 音声再生 |
-| **WebGL 2.0** | アバターレンダリング |
-| **PWA (将来)** | ホーム画面追加、オフラインサポート |
+| 技術 | 用途 | 状態 |
+|------|------|------|
+| **Astro 4.0** | SSG フレームワーク (`output: 'static'`) | 実装済 |
+| **TypeScript** | アプリロジック | 実装済 |
+| **Three.js** (v0.182) | 3D レンダリング | 実装済 |
+| **gaussian-splat-renderer-for-lam** (v0.0.9-alpha) | LAM アバター SDK | 実装済 |
+| **onnxruntime-web** (v1.23) | ニューラルネット推論 (DINOv2等) | 実装済 |
+| **Socket.IO** | STT ストリーミング | 実装済 |
+| **WebSocket API** | Live API 中継接続 | **未実装 (今回追加)** |
+| **Web Audio API** | マイク入力 (AudioWorklet → PCM 16kHz) + 音声再生 | 実装済 |
+| **WebGL 2.0** | Gaussian Splatting レンダリング | 実装済 |
+| **PWA** | ホーム画面追加 (iOS手動ガイド / Android自動プロンプト) | 実装済 |
 
-### 9.3 モバイル固有の考慮事項
+**主要依存パッケージ (package.json):**
+```json
+{
+  "@huggingface/transformers": "^3.8.1",
+  "@mkkellogg/gaussian-splats-3d": "^0.4.7",
+  "gaussian-splat-renderer-for-lam": "^0.0.9-alpha.1",
+  "gsplat": "^1.2.9",
+  "onnxruntime-web": "^1.23.2",
+  "three": "^0.182.0",
+  "@vite-pwa/astro": "^1.2.0",
+  "astro": "^4.0.0"
+}
+```
 
-| 項目 | 対策 |
-|------|------|
-| **マイク権限** | ユーザー操作起点で `getUserMedia()` を呼ぶ (iOS Safari 制約) |
-| **AudioContext** | ユーザー操作後に `resume()` (iOS Safari autoplay policy) |
-| **WebSocket 切断** | バックグラウンド遷移時の自動切断 → 復帰時に再接続 |
-| **メモリ制約** | iPhone SE (3-4GB RAM) でのアバターレンダリング最適化 |
-| **画面サイズ** | レスポンシブレイアウト (アバター + チャットUI) |
+### 9.3 Vercel デプロイ設定 [要実施]
+
+`gourmet-sp2` は現在ローカルホストでテスト中。スマホテストのため Vercel 連携を新規設定する。
+
+**必要な設定:**
+
+| 項目 | 設定内容 |
+|------|---------|
+| **Framework** | Astro |
+| **Build Command** | `npm run build` |
+| **Output Directory** | `dist/` |
+| **Node.js** | 18.x 以上 |
+| **環境変数** | `PUBLIC_API_URL` = Cloud Run バックエンド URL |
+| **カスタムヘッダー** | `Cross-Origin-Embedder-Policy: require-corp`<br>`Cross-Origin-Opener-Policy: same-origin`<br>(WebAssembly ONNX Runtime 用, astro.config.mjs で設定済み) |
+
+**Vercel 連携手順:**
+
+```
+1. Vercel ダッシュボード → New Project → Import Git Repository
+   https://github.com/mirai-gpro/gourmet-sp2
+
+2. Framework Preset: Astro を選択
+
+3. 環境変数を設定:
+   PUBLIC_API_URL = https://<support-base-service>.run.app
+
+4. Deploy
+```
+
+### 9.4 モバイル固有の考慮事項 [確認済み — gourmet-sp2 で対応済]
+
+| 項目 | 対策 | 実装状態 |
+|------|------|---------|
+| **マイク権限** | ユーザー操作起点で `getUserMedia()` を呼ぶ (iOS Safari 制約) | 実装済 |
+| **AudioContext** | ユーザー操作後に `resume()` (iOS Safari autoplay policy) | 実装済 |
+| **iOS AudioWorklet** | iOS専用パス: 8192バッファ, 500msフラッシュ, サーバー待機最大500ms | 実装済 |
+| **Android AudioWorklet** | デフォルトパス: 16000バッファ, サーバー待機最大700ms, VAD チェック100ms毎 | 実装済 |
+| **バックグラウンド復帰** | 120秒以上バックグラウンド → ソフトリセット | 実装済 |
+| **メモリ制約** | iPhone SE (3-4GB RAM) でのアバターレンダリング最適化 | **要実機テスト** |
+| **PWA インストール** | iOS: 3ステップ手動ガイド, Android: `beforeinstallprompt` 自動プロンプト | 実装済 |
 
 ---
 
 ## 10. リップシンク実写アバター
 
-### 10.1 パイプライン概要
+### 10.1 実装状態 [確認済み — gourmet-sp2 でテスト完了]
+
+**gourmet-sp2 のコンシェルジュモード (`/concierge`) でリップシンクアバターは実装・テスト済み。**
+
+### 10.2 パイプライン概要
 
 ```
 1枚の顔写真
-    ↓ [オフライン] LAM (Large Avatar Model)
-3D Gaussian Splatting アバター (skin.glb + offset.ply)
-    ↓ [アプリ起動時] ロード
+    ↓ [オフライン] LAM (Large Avatar Model) — HF Spaces / ModelScope
+3D Gaussian Splatting アバター (skin.glb + offset.ply + animation.glb)
+    ↓ [アプリ起動時] GaussianSplatRenderer でロード
     ↓
-音声入力/AI音声出力
-    ↓ [サーバー] audio2exp-service
+AI音声出力 (TTS / Live API)
+    ↓ [サーバー] audio2exp-service (Cloud Run, 4Gi)
     │   Wav2Vec2 (95M params) → A2E Decoder
     ↓
-52次元 ARKit ブレンドシェイプ @30fps (~10KB/sec)
-    ↓ [クライアント] WebGL レンダリング
+52次元 ARKit ブレンドシェイプ @30fps
+    ↓ [クライアント] LAMAvatar.astro
+    │   frameBuffer にキュー → ttsPlayer.currentTime 同期
+    │   30fps → 60fps フレーム補間
+    ↓
+Gaussian Splatting WebGL レンダリング
+    ↓ カメラ: pos(0, 1.72, 0.55), FOV 38°, target(0, 1.66, 0)
 リアルタイムリップシンク + 表情アニメーション
 ```
 
-### 10.2 A2E サービス仕様 [確認済み]
+### 10.3 LAMAvatar コンポーネント [確認済み — gourmet-sp2]
+
+**ファイル**: `gourmet-sp2/src/components/LAMAvatar.astro`
+
+| 機能 | 詳細 |
+|------|------|
+| **SDK** | `gaussian-splat-renderer-for-lam` (v0.0.9-alpha) |
+| **フレームバッファ** | Expression frames を時系列でキュー管理 |
+| **TTS同期** | `ttsPlayer.currentTime` (ms) → `frameBuffer[frameIndex]` |
+| **フレーム補間** | 30fps A2E → 60fps レンダリング (スムーズ化) |
+| **フェードイン/アウト** | 200ms スムーズトランジション |
+| **ブレンドシェイプ増幅** | 口元の動きをスケーリングして視認性を向上 |
+| **FLAME LBS制約** | 値を 0.7 でクランプ (数値安定性) |
+| **フォールバック** | SDK ロード失敗時 → 静止画表示 |
+
+### 10.4 A2E サービス仕様 [確認済み]
 
 **デプロイ**: Cloud Run (us-central1), CPU, メモリ 4Gi
 
@@ -539,52 +677,79 @@ GET /health
 Response: { status: "healthy", engine_ready: bool, mode: "infer"|"fallback", device: "cpu" }
 ```
 
-### 10.3 表情データの伝送経路
+### 10.5 表情データの伝送経路
 
 | 経路 | トリガー | A2E入力 | Expression送信先 |
 |------|---------|---------|-----------------|
 | **Live API** | AIターン完了時 | PCM 24kHz (ai_audio_buffer) | WebSocket `{"type": "expression"}` |
 | **REST API** | TTS合成時 | MP3 base64 | REST レスポンス `{expression: {...}}` |
 
-### 10.4 52次元ARKitブレンドシェイプ → リップシンク変換
-
-**方式A: ExpressionManager (GVRM直接)**
+### 10.6 TTS + A2E 同期フロー [確認済み — gourmet-sp2]
 
 ```
-jawOpen × 0.6
-+ (mouthLowerDownL + mouthLowerDownR) / 2 × 0.2
-+ (mouthUpperUpL + mouthUpperUpR) / 2 × 0.1
-+ mouthFunnel × 0.05
-+ mouthPucker × 0.05
-= mouthOpenness (0.0〜1.0)
-→ gvrm.updateLipSync(mouthOpenness)
+ConciergeController.speakResponseInChunks(response)
+    ↓ 文分割 (。 or .)
+    ↓ 各文を並行 TTS 合成
+POST /api/tts/synthesize { text, language_code, voice_name, session_id }
+    ↓ バックエンド
+    ├── Google Cloud TTS → MP3 base64
+    └── audio2exp-service → { names[52], frames[N][52], frame_rate: 30 }
+    ↓ レスポンス
+ConciergeController.applyExpressionFromTts(expression)
+    ↓ フレーム変換: {names, frames[{weights}]} → {name: weight}[]
+    ↓ lamController.clearFrameBuffer()
+    ↓ lamController.queueExpressionFrames(frames, 30)
+    ↓
+ttsPlayer.play() → 'play' イベント発火
+    ↓ LAMAvatar 内部
+getExpressionData() [16ms間隔, ~60fps]
+    ↓ frameIndex = ttsPlayer.currentTime × frame_rate
+    ↓ frameBuffer[frameIndex] から 52次元係数を読出
+    ↓ Gaussian Splatting レンダラーに適用
+    ↓
+ttsPlayer.ended → フェードアウト (200ms) → アイドル状態
 ```
 
-**方式B: LAMAvatar (外部コントローラー)**
+### 10.7 GS レンダリング (gs.ts / gvrm.ts) [確認済み — gourmet-sp2]
 
+**gs.ts — Gaussian Splatting ビューアー:**
+- PLY アバターメッシュのロード
+- 頂点シェーダー: LBS (Linear Blend Skinning) + ボーンマトリクス
+- Jaw アニメーション: 口の開閉制御
+- インスタンスドレンダリング: パフォーマンス最適化
+- Sigmoid 活性化: 不透明度のリアルな合成
+
+**gvrm.ts — GVRM アバターシステム:**
+- Three.js シーン管理
+- ボーンテクスチャ (64マトリクス × 4×4)
+- `updateLipSync(level)` — jawOpen の直接制御
+- `setPose(matrices)` — 全スケルトンポーズの適用
+
+### 10.8 リップシンク診断テスト [確認済み — gourmet-sp2]
+
+ブラウザコンソールから実行可能:
+
+```javascript
+// コンシェルジュページ (/concierge) で:
+__testLipSync()
+
+// 5つの日本語母音 (あいうえお) を順次合成
+// 各母音の既知ブレンドシェイプパターンで検証:
+//   あ: jawOpen高, mouthSmile低
+//   い: jawOpen低, mouthSmile高
+//   う: mouthFunnel高, mouthPucker高
+//   え: jawOpen中, mouthSmile中
+//   お: jawOpen高, mouthFunnel高
 ```
-Expression frames → window.lamAvatarController.queueExpressionFrames()
-→ audioElement.currentTime に同期してフレーム選択
-→ 各フレームの52係数を直接適用
-```
 
-### 10.5 フォールバック (A2E利用不可時)
+### 10.9 スマホ軽量化戦略
 
-```
-TTS再生音声 → AnalyserNode (FFT, fftSize=256)
-→ 全周波数ビンの平均値
-→ Math.min(1.0, (average/255) × 2.5)
-→ gvrm.updateLipSync(level)
-```
-
-### 10.6 スマホ軽量化戦略
-
-| 項目 | 方針 |
-|------|------|
-| **A2E推論** | サーバー側 (CPU) で実行。結果の52次元係数のみクライアントに送信 (~10KB/sec) |
-| **レンダリング** | クライアント側 WebGL。LAM WebGL SDK (Gaussian Splatting) |
-| **フォールバック** | Three.js + GLB メッシュ (Gaussian Splatting が重い場合) |
-| **動作基準** | iPhone SE (A13/A15, 3-4GB RAM) で 30fps [**未検証 — 要実機テスト**] |
+| 項目 | 方針 | 実装状態 |
+|------|------|---------|
+| **A2E推論** | サーバー側 (CPU) で実行。52次元係数のみ送信 (~10KB/sec) | 実装済 |
+| **レンダリング** | クライアント側 WebGL。LAM Gaussian Splatting SDK | 実装済 |
+| **フォールバック** | SDK ロード失敗時 → 静止画表示 | 実装済 |
+| **動作基準** | iPhone SE (A13/A15, 3-4GB RAM) で 30fps | **要実機テスト** |
 
 ---
 
@@ -795,31 +960,51 @@ TTS再生音声 → AnalyserNode (FFT, fftSize=256)
 | A2E Live API 連携 (Expression WS送信) | **実装済み** | `live/relay.py` |
 | セッション管理 | **実装済み** | `session/manager.py` |
 
-### 13.2 フロントエンド (gourmet-sp) 残作業
+### 13.2 フロントエンド (gourmet-sp2) 実装ステータス
+
+| 機能 | ステータス | ファイル |
+|------|-----------|---------|
+| Astro SSG + PWA | **実装済み** | `astro.config.mjs`, `manifest.webmanifest` |
+| CoreController (基底) | **実装済み** | `src/scripts/chat/core-controller.ts` |
+| ChatController (グルメモード) | **実装済み** | `src/scripts/chat/chat-controller.ts` |
+| ConciergeController (コンシェルジュ) | **実装済み** | `src/scripts/chat/concierge-controller.ts` |
+| AudioManager (iOS/Android/PC対応) | **実装済み** | `src/scripts/chat/audio-manager.ts` |
+| LAMAvatar (Gaussian Splatting) | **実装済み** | `src/components/LAMAvatar.astro` |
+| GS レンダラー (Three.js + LBS) | **実装済み** | `gs.ts`, `gvrm.ts` |
+| A2E 統合 (TTS同期リップシンク) | **実装済み** | `concierge-controller.ts` |
+| リップシンク診断テスト | **実装済み** | `__testLipSync()` |
+| 多言語 UI (ja/en/zh/ko) | **実装済み** | `src/constants/i18n.ts` |
+| Socket.IO STT ストリーミング | **実装済み** | `audio-manager.ts` |
+| ショップカード + 予約モーダル | **実装済み** | `ShopCardList.astro`, `ReservationModal.astro` |
+| PWA インストールプロンプト | **実装済み** | `InstallPrompt.astro` |
+| REST API 連携 (/api/chat, /api/tts) | **実装済み** | `core-controller.ts`, `concierge-controller.ts` |
+
+### 13.3 フロントエンド (gourmet-sp2) 残作業
 
 | タスク | 優先度 | 説明 |
 |--------|--------|------|
-| LiveAPIClient 実装 | **P1** | WebSocket 接続、PCM 16kHz 送信 / 24kHz 受信、再接続UI |
-| DialogueManager 実装 | **P1** | Live API / REST API の切替管理 |
-| Live API 音声再生 | **P1** | PCM 24kHz → AudioContext での再生 |
-| Expression WebSocket 受信 | **P2** | `{"type": "expression"}` を受信し LAMAvatarController にキュー |
-| Transcription 表示 | **P2** | `{"type": "transcription"}` をチャットUIに表示 |
-| 割り込み (barge-in) UI | **P2** | `{"type": "interrupted"}` 受信時の再生停止 + UI更新 |
-| 再接続インジケータ | **P3** | `reconnecting` / `reconnected` のUI表示 |
-| A2E パッチ適用 | **P2** | `services/frontend-patches/` の結合テスト・適用 |
-| モード切替UI | **P3** | concierge ↔ chat のSPA内モード切替 |
+| **Vercel 連携** | **P1** | gourmet-sp2 を Vercel に接続。スマホテストに必須 |
+| **LiveAPIClient 実装** | **P1** | WebSocket 接続 (`/api/v2/live/{session_id}`)、PCM 16kHz 送信 / 24kHz 受信 |
+| **Live API 音声再生** | **P1** | PCM 24kHz → AudioContext で再生 (現行は MP3 TTS 再生のみ) |
+| **DialogueManager 実装** | **P1** | Live API / REST API のモード別切替管理 |
+| **Expression WS 受信** | **P2** | `{"type": "expression"}` → LAMAvatar.frameBuffer にキュー |
+| **Transcription 表示** | **P2** | `{"type": "transcription"}` → チャット UI にリアルタイム表示 |
+| **割り込み (barge-in) UI** | **P2** | `{"type": "interrupted"}` → TTS停止 + アバター即停止 |
+| **再接続 UI** | **P3** | `reconnecting` / `reconnected` のインジケータ表示 |
+| **API エンドポイント切替** | **P1** | 既存 `/api/*` → 新 `/api/v2/*` (support-base) への接続先変更 |
 
-### 13.3 インフラ・デプロイ残作業
+### 13.4 インフラ・デプロイ残作業
 
 | タスク | 優先度 | 説明 |
 |--------|--------|------|
+| **gourmet-sp2 Vercel デプロイ** | **P1** | GitHub 連携 + 環境変数 (PUBLIC_API_URL) 設定 |
 | support-base Cloud Run デプロイ | **P1** | FastAPI + uvicorn、WebSocket 対応 |
 | GCS プロンプトバケット設定 | **P1** | 4言語 × 2モードのプロンプトファイル配置 |
 | Supabase user_profiles テーブル | **P1** | スキーマ作成、RLS ポリシー設定 |
 | 環境変数設定 | **P1** | GEMINI_API_KEY, PROMPTS_BUCKET_NAME, SUPABASE_URL/KEY 等 |
-| iPhone SE 実機テスト | **P2** | LAM WebGL SDK の 30fps 動作検証 |
+| iPhone SE 実機テスト | **P2** | LAM WebGL SDK の 30fps 動作検証 (Vercel デプロイ後) |
 
-### 13.4 未確認事項・リスク
+### 13.5 未確認事項・リスク
 
 | # | 項目 | 影響度 | ステータス |
 |---|------|--------|-----------|
@@ -827,7 +1012,7 @@ TTS再生音声 → AnalyserNode (FFT, fftSize=256)
 | 2 | WebSocket 中継 (ブラウザ→サーバー→Gemini) のレイテンシ | **高** | **未検証** |
 | 3 | Live API の Function Calling (店舗検索等) | **中** | **未実装** |
 | 4 | ハイブリッド方式での Live→REST 切替トリガー | **中** | **未設計** |
-| 5 | PWA 対応 (ホーム画面追加、オフラインサポート) | **低** | **未着手** |
+| 5 | PWA 対応 | **低** | **実装済み** (gourmet-sp2 で PWA 対応済) |
 
 ---
 
@@ -849,6 +1034,12 @@ TTS再生音声 → AnalyserNode (FFT, fftSize=256)
 | `CORS_ORIGINS` | No | CORS 許可オリジン (カンマ区切り) | `*` |
 | `LEGACY_BACKEND_URL` | No | 既存 gourmet-support URL (プロキシ用) | — |
 
+**フロントエンド (gourmet-sp2) 環境変数:**
+
+| 変数名 | 必須 | 説明 | デフォルト |
+|--------|------|------|-----------|
+| `PUBLIC_API_URL` | Yes | バックエンド (support-base) の URL | — |
+
 ## 付録B: モードプラグイン追加手順
 
 新しいモード（例: カスタマーサポート）を追加する場合:
@@ -869,7 +1060,7 @@ TTS再生音声 → AnalyserNode (FFT, fftSize=256)
    mode_registry.register(CustomerSupportPlugin())
 
 4. (オプション) フロントエンドにモード固有UIを追加
-   gourmet-sp/src/modes/customer-support/
+   gourmet-sp2/src/pages/customer-support.astro
 ```
 
 以上の手順で、コア基盤のコードを変更することなく新モードを追加できる。
