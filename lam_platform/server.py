@@ -19,12 +19,12 @@ from fastapi import FastAPI, WebSocket, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from platform.config.settings import HOST, PORT, CORS_ORIGINS, A2E_SERVICE_URL
-from platform.modes.registry import ModeRegistry
-from platform.modes.gourmet.plugin import GourmetModePlugin
-from platform.services.a2e_client import A2EClient
-from platform.session.manager import SessionManager
-from platform.live.relay import LiveRelay
+from lam_platform.config.settings import HOST, PORT, CORS_ORIGINS, A2E_SERVICE_URL
+from lam_platform.modes.registry import ModeRegistry
+from lam_platform.modes.gourmet.plugin import GourmetModePlugin
+from lam_platform.services.a2e_client import A2EClient
+from lam_platform.session.manager import SessionManager
+from lam_platform.live.relay import LiveRelay
 
 logger = logging.getLogger(__name__)
 
@@ -233,7 +233,7 @@ def main():
     import uvicorn
 
     uvicorn.run(
-        "platform.server:app",
+        "lam_platform.server:app",
         host=HOST,
         port=PORT,
         log_level="info",

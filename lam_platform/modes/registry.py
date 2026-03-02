@@ -7,7 +7,7 @@
 
 import logging
 
-from platform.modes.base_mode import BaseModePlugin
+from lam_platform.modes.base_mode import BaseModePlugin
 
 logger = logging.getLogger(__name__)
 

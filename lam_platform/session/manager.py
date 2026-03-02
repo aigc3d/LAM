@@ -9,7 +9,7 @@ import logging
 from datetime import datetime
 from dataclasses import dataclass, field
 
-from platform.memory.session_memory import SessionMemory
+from lam_platform.memory.session_memory import SessionMemory
 
 logger = logging.getLogger(__name__)
 

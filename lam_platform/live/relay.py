@@ -38,16 +38,16 @@ from google.genai import types
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from platform.config.settings import (
+from lam_platform.config.settings import (
     GEMINI_API_KEY,
     LIVE_API_MODEL,
     RECONNECT_DELAY_SECONDS,
 )
-from platform.i18n.language_config import get_language_profile
-from platform.live.reconnect import ReconnectManager
-from platform.modes.base_mode import BaseModePlugin
-from platform.services.a2e_client import A2EClient
-from platform.session.manager import Session
+from lam_platform.i18n.language_config import get_language_profile
+from lam_platform.live.reconnect import ReconnectManager
+from lam_platform.modes.base_mode import BaseModePlugin
+from lam_platform.services.a2e_client import A2EClient
+from lam_platform.session.manager import Session
 
 logger = logging.getLogger(__name__)
 
