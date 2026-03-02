@@ -38,7 +38,7 @@ class PixelLoss(nn.Module):
         else:
             raise NotImplementedError(f'Unknown pixel loss option: {option}')
 
-    @torch.compile
+    # @torch.compile  # DISABLED: causes bird-monster on Modal L4 GPU
     def forward(self, x, y, conf_sigma=None, only_sym_conf=False):
         """
         Assume images are channel first.
