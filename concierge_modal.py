@@ -80,7 +80,9 @@ image = (
         "unicode = numpy.str_; str = numpy.str_/' "
         "\"$CHUMPY_INIT\" && "
         "find $(dirname \"$CHUMPY_INIT\") -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null; true",
-        "pip install git+https://github.com/facebookresearch/pytorch3d.git --no-build-isolation",
+        # pytorch3d: Use official pre-built v0.7.8 wheel (same as ModelScope demo)
+        # instead of building from GitHub HEAD which may include breaking changes
+        "pip install https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py310_cu121_pyt240/pytorch3d-0.7.8-cp310-cp310-linux_x86_64.whl",
     )
     # Python dependencies
     .pip_install(
@@ -140,9 +142,10 @@ image = (
         "pip install /tmp/simple-knn --no-build-isolation && "
         "rm -rf /tmp/simple-knn",
     )
-    # nvdiffrast — JIT compilation at runtime (requires -devel image)
+    # nvdiffrast: Pin to v0.3.3 tag (same as ModelScope vendored version)
+    # instead of GitHub HEAD which may include incompatible changes
     .run_commands(
-        "pip install git+https://github.com/NVlabs/nvdiffrast.git --no-build-isolation",
+        "pip install git+https://github.com/NVlabs/nvdiffrast.git@v0.3.3 --no-build-isolation",
     )
     # FBX SDK
     .run_commands(

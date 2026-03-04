@@ -58,9 +58,9 @@ ENV CXX=clang++
 # CUDA extensions (require no-build-isolation)
 RUN pip install chumpy==0.70 --no-build-isolation
 
-# pytorch3d — build from source (C++17 required for CUDA 12.1)
+# pytorch3d: Use official pre-built v0.7.8 wheel (same as ModelScope demo)
 ENV CXXFLAGS="-std=c++17"
-RUN pip install git+https://github.com/facebookresearch/pytorch3d.git --no-build-isolation
+RUN pip install https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py310_cu121_pyt240/pytorch3d-0.7.8-cp310-cp310-linux_x86_64.whl
 
 # diff-gaussian-rasterization — patch CUDA 12.1 header issues then build
 RUN git clone --recursive https://github.com/ashawkey/diff-gaussian-rasterization.git /tmp/dgr && \
@@ -75,8 +75,8 @@ RUN git clone https://github.com/camenduru/simple-knn.git /tmp/simple-knn && \
     pip install /tmp/simple-knn --no-build-isolation && \
     rm -rf /tmp/simple-knn
 
-# nvdiffrast — JIT compilation at runtime (requires -devel image)
-RUN pip install git+https://github.com/ShenhanQian/nvdiffrast.git@backface-culling --no-build-isolation
+# nvdiffrast: Pin to v0.3.3 (same as ModelScope vendored version)
+RUN pip install git+https://github.com/NVlabs/nvdiffrast.git@v0.3.3 --no-build-isolation
 
 # ============================================================
 # Python dependencies
