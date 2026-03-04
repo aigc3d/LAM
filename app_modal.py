@@ -147,23 +147,33 @@ def _precompile_nvdiffrast():
 image = image.run_function(_precompile_nvdiffrast)
 
 # ============================================================
-# ModelScope Official Wheels Override
+# ModelScope Official Wheels Override (REQUIRED)
 # ============================================================
-# If ./wheels/ contains the official ModelScope pre-built wheels,
-# override the GitHub/URL-built versions with exact ModelScope binaries.
-if os.path.isdir("./wheels") and any(f.endswith(".whl") for f in os.listdir("./wheels")):
-    image = (
-        image
-        .add_local_dir("./wheels", remote_path="/tmp/modelscope_wheels")
-        .run_commands(
-            "echo '[WHEELS] Installing ModelScope official wheels...'",
-            "for whl in /tmp/modelscope_wheels/*.whl; do "
-            "  [ -f \"$whl\" ] && pip install \"$whl\" --force-reinstall --no-deps && "
-            "  echo \"  Installed: $(basename $whl)\"; "
-            "done",
-            "echo '[WHEELS] Done.'",
-        )
+# The ./wheels/ directory MUST contain the official ModelScope pre-built
+# wheels. Without them, CUDA extensions built from GitHub sources produce
+# incorrect output ("bird monster" artifacts).
+_wheels_dir = "./wheels"
+if not os.path.isdir(_wheels_dir) or not any(f.endswith(".whl") for f in os.listdir(_wheels_dir)):
+    raise RuntimeError(
+        f"[ABORT] No .whl files found in {_wheels_dir}/. "
+        "You must place the official ModelScope wheels "
+        "(pytorch3d, diff_gaussian_rasterization, simple_knn, fbx) "
+        "in the wheels/ directory before building. "
+        "See README or handoff doc for download instructions."
     )
+
+image = (
+    image
+    .add_local_dir("./wheels", remote_path="/tmp/modelscope_wheels")
+    .run_commands(
+        "echo '[WHEELS] Installing ModelScope official wheels...'",
+        "for whl in /tmp/modelscope_wheels/*.whl; do "
+        "  [ -f \"$whl\" ] && pip install \"$whl\" --force-reinstall --no-deps && "
+        "  echo \"  Installed: $(basename $whl)\"; "
+        "done",
+        "echo '[WHEELS] Done.'",
+    )
+)
 
 # --- 写経セクション: app.py ヘルパー関数 ---
 

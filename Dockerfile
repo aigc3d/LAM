@@ -157,21 +157,19 @@ COPY download_models.py /app/download_models.py
 RUN python /app/download_models.py
 
 # ============================================================
-# ModelScope Official Wheels Override (if available)
+# ModelScope Official Wheels Override (REQUIRED)
 # ============================================================
-# Copy local wheels and override GitHub/URL-built extensions with
-# exact ModelScope binaries for bit-identical CUDA behavior.
+# The wheels/ directory MUST contain the official ModelScope pre-built
+# wheels. Without them, CUDA extensions produce incorrect output.
 COPY wheels/ /tmp/modelscope_wheels/
-RUN if ls /tmp/modelscope_wheels/*.whl 1>/dev/null 2>&1; then \
-        echo "[WHEELS] Installing ModelScope official wheels..." && \
-        for whl in /tmp/modelscope_wheels/*.whl; do \
-            pip install "$whl" --force-reinstall --no-deps && \
-            echo "  Installed: $(basename $whl)"; \
-        done && \
-        echo "[WHEELS] Done."; \
-    else \
-        echo "[WHEELS] No .whl files found, using URL/source builds."; \
-    fi
+RUN ls /tmp/modelscope_wheels/*.whl 1>/dev/null 2>&1 || \
+        { echo "[ABORT] No .whl files in wheels/. Place official ModelScope wheels before building."; exit 1; }
+RUN echo "[WHEELS] Installing ModelScope official wheels..." && \
+    for whl in /tmp/modelscope_wheels/*.whl; do \
+        pip install "$whl" --force-reinstall --no-deps && \
+        echo "  Installed: $(basename $whl)"; \
+    done && \
+    echo "[WHEELS] Done."
 
 # ============================================================
 # Copy application code (after model download for cache)
