@@ -157,6 +157,23 @@ COPY download_models.py /app/download_models.py
 RUN python /app/download_models.py
 
 # ============================================================
+# ModelScope Official Wheels Override (if available)
+# ============================================================
+# Copy local wheels and override GitHub/URL-built extensions with
+# exact ModelScope binaries for bit-identical CUDA behavior.
+COPY wheels/ /tmp/modelscope_wheels/
+RUN if ls /tmp/modelscope_wheels/*.whl 1>/dev/null 2>&1; then \
+        echo "[WHEELS] Installing ModelScope official wheels..." && \
+        for whl in /tmp/modelscope_wheels/*.whl; do \
+            pip install "$whl" --force-reinstall --no-deps && \
+            echo "  Installed: $(basename $whl)"; \
+        done && \
+        echo "[WHEELS] Done."; \
+    else \
+        echo "[WHEELS] No .whl files found, using URL/source builds."; \
+    fi
+
+# ============================================================
 # Copy application code (after model download for cache)
 # ============================================================
 WORKDIR /app/LAM

@@ -307,6 +307,32 @@ if os.path.isdir("./tools"):
 if os.path.isdir("./lam"):
     image = image.add_local_dir("./lam", remote_path="/root/LAM/lam")
 
+# ============================================================
+# ModelScope Official Wheels Override
+# ============================================================
+# If ./wheels/ contains the official ModelScope pre-built wheels,
+# override the GitHub/URL-built versions with exact ModelScope binaries.
+# This ensures bit-identical CUDA extensions to the official demo.
+#
+# Expected files in ./wheels/:
+#   - pytorch3d-0.7.8-cp310-cp310-linux_x86_64.whl
+#   - diff_gaussian_rasterization-0.0.0-cp310-cp310-linux_x86_64.whl
+#   - simple_knn-0.0.0-cp310-cp310-linux_x86_64.whl
+#   - fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl
+if os.path.isdir("./wheels") and any(f.endswith(".whl") for f in os.listdir("./wheels")):
+    image = (
+        image
+        .add_local_dir("./wheels", remote_path="/tmp/modelscope_wheels")
+        .run_commands(
+            "echo '[WHEELS] Installing ModelScope official wheels...'",
+            "for whl in /tmp/modelscope_wheels/*.whl; do "
+            "  [ -f \"$whl\" ] && pip install \"$whl\" --force-reinstall --no-deps && "
+            "  echo \"  Installed: $(basename $whl)\"; "
+            "done",
+            "echo '[WHEELS] Done.'",
+        )
+    )
+
 dl_image = modal.Image.debian_slim(python_version="3.10").pip_install("fastapi")
 ui_image = modal.Image.debian_slim(python_version="3.10").pip_install(
     "gradio>=4.0", "fastapi", "uvicorn",

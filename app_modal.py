@@ -146,6 +146,25 @@ def _precompile_nvdiffrast():
 
 image = image.run_function(_precompile_nvdiffrast)
 
+# ============================================================
+# ModelScope Official Wheels Override
+# ============================================================
+# If ./wheels/ contains the official ModelScope pre-built wheels,
+# override the GitHub/URL-built versions with exact ModelScope binaries.
+if os.path.isdir("./wheels") and any(f.endswith(".whl") for f in os.listdir("./wheels")):
+    image = (
+        image
+        .add_local_dir("./wheels", remote_path="/tmp/modelscope_wheels")
+        .run_commands(
+            "echo '[WHEELS] Installing ModelScope official wheels...'",
+            "for whl in /tmp/modelscope_wheels/*.whl; do "
+            "  [ -f \"$whl\" ] && pip install \"$whl\" --force-reinstall --no-deps && "
+            "  echo \"  Installed: $(basename $whl)\"; "
+            "done",
+            "echo '[WHEELS] Done.'",
+        )
+    )
+
 # --- 写経セクション: app.py ヘルパー関数 ---
 
 def save_imgs_2_video(imgs, v_pth, fps=30):
