@@ -80,22 +80,13 @@ image = (
         "pip install onnxruntime-gpu==1.18.1 "
         "--extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/",
     )
+    # ── ModelScope official pre-built wheels (HuggingFace mirror) ──
+    # These are the exact binaries used by the official 3DAIGC/LAM demo.
+    # Using GitHub source builds instead produces "bird monster" artifacts.
     .run_commands(
-        "git clone https://github.com/ashawkey/diff-gaussian-rasterization.git /tmp/dgr && "
-        "git clone https://github.com/g-truc/glm.git /tmp/dgr/third_party/glm && "
-        "find /tmp/dgr -name '*.cu' -exec sed -i '1i #include <cfloat>' {} + && "
-        "find /tmp/dgr -name '*.h' -path '*/cuda_rasterizer/*' -exec sed -i '1i #include <cstdint>' {} + && "
-        "pip install /tmp/dgr --no-build-isolation && rm -rf /tmp/dgr",
-    )
-    .run_commands(
-        "git clone https://github.com/camenduru/simple-knn.git /tmp/simple-knn && "
-        "sed -i '1i #include <cfloat>' /tmp/simple-knn/simple_knn.cu && "
-        "pip install /tmp/simple-knn --no-build-isolation && rm -rf /tmp/simple-knn",
-    )
-    # nvdiffrast: Pin to v0.3.3 tag (same as ModelScope vendored version)
-    # instead of GitHub HEAD which may include incompatible changes
-    .run_commands(
-        "pip install git+https://github.com/NVlabs/nvdiffrast.git@v0.3.3 --no-build-isolation",
+        "pip install https://huggingface.co/spaces/3DAIGC/LAM/resolve/main/wheels/diff_gaussian_rasterization-0.0.0-cp310-cp310-linux_x86_64.whl",
+        "pip install https://huggingface.co/spaces/3DAIGC/LAM/resolve/main/wheels/simple_knn-0.0.0-cp310-cp310-linux_x86_64.whl",
+        "pip install https://huggingface.co/spaces/3DAIGC/LAM/resolve/main/wheels/nvdiffrast-0.3.3-cp310-cp310-linux_x86_64.whl",
     )
     .run_commands(
         "pip install https://virutalbuy-public.oss-cn-hangzhou.aliyuncs.com/share/aigc3d/data/LAM/fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl",
@@ -146,34 +137,7 @@ def _precompile_nvdiffrast():
 
 image = image.run_function(_precompile_nvdiffrast)
 
-# ============================================================
-# ModelScope Official Wheels Override (REQUIRED)
-# ============================================================
-# The ./wheels/ directory MUST contain the official ModelScope pre-built
-# wheels. Without them, CUDA extensions built from GitHub sources produce
-# incorrect output ("bird monster" artifacts).
-_wheels_dir = "./wheels"
-if not os.path.isdir(_wheels_dir) or not any(f.endswith(".whl") for f in os.listdir(_wheels_dir)):
-    raise RuntimeError(
-        f"[ABORT] No .whl files found in {_wheels_dir}/. "
-        "You must place the official ModelScope wheels "
-        "(pytorch3d, diff_gaussian_rasterization, simple_knn, fbx) "
-        "in the wheels/ directory before building. "
-        "See README or handoff doc for download instructions."
-    )
-
-image = (
-    image
-    .add_local_dir("./wheels", remote_path="/tmp/modelscope_wheels")
-    .run_commands(
-        "echo '[WHEELS] Installing ModelScope official wheels...'",
-        "for whl in /tmp/modelscope_wheels/*.whl; do "
-        "  [ -f \"$whl\" ] && pip install \"$whl\" --force-reinstall --no-deps && "
-        "  echo \"  Installed: $(basename $whl)\"; "
-        "done",
-        "echo '[WHEELS] Done.'",
-    )
-)
+# (ModelScope wheels are now installed directly from HuggingFace URLs above)
 
 # --- 写経セクション: app.py ヘルパー関数 ---
 

@@ -62,21 +62,12 @@ RUN pip install chumpy==0.70 --no-build-isolation
 ENV CXXFLAGS="-std=c++17"
 RUN pip install https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py310_cu121_pyt240/pytorch3d-0.7.8-cp310-cp310-linux_x86_64.whl
 
-# diff-gaussian-rasterization — patch CUDA 12.1 header issues then build
-RUN git clone --recursive https://github.com/ashawkey/diff-gaussian-rasterization.git /tmp/dgr && \
-    find /tmp/dgr -name '*.cu' -exec sed -i '1i #include <cfloat>' {} + && \
-    find /tmp/dgr -name '*.h' -path '*/cuda_rasterizer/*' -exec sed -i '1i #include <cstdint>' {} + && \
-    pip install /tmp/dgr --no-build-isolation && \
-    rm -rf /tmp/dgr
-
-# simple-knn — patch cfloat for CUDA 12.1 then build
-RUN git clone https://github.com/camenduru/simple-knn.git /tmp/simple-knn && \
-    sed -i '1i #include <cfloat>' /tmp/simple-knn/simple_knn.cu && \
-    pip install /tmp/simple-knn --no-build-isolation && \
-    rm -rf /tmp/simple-knn
-
-# nvdiffrast: Pin to v0.3.3 (same as ModelScope vendored version)
-RUN pip install git+https://github.com/NVlabs/nvdiffrast.git@v0.3.3 --no-build-isolation
+# ── ModelScope official pre-built wheels (HuggingFace mirror) ──
+# These are the exact binaries used by the official 3DAIGC/LAM demo.
+# Using GitHub source builds instead produces "bird monster" artifacts.
+RUN pip install https://huggingface.co/spaces/3DAIGC/LAM/resolve/main/wheels/diff_gaussian_rasterization-0.0.0-cp310-cp310-linux_x86_64.whl
+RUN pip install https://huggingface.co/spaces/3DAIGC/LAM/resolve/main/wheels/simple_knn-0.0.0-cp310-cp310-linux_x86_64.whl
+RUN pip install https://huggingface.co/spaces/3DAIGC/LAM/resolve/main/wheels/nvdiffrast-0.3.3-cp310-cp310-linux_x86_64.whl
 
 # ============================================================
 # Python dependencies
@@ -156,20 +147,7 @@ include_dirs=[numpy.get_include()])" \
 COPY download_models.py /app/download_models.py
 RUN python /app/download_models.py
 
-# ============================================================
-# ModelScope Official Wheels Override (REQUIRED)
-# ============================================================
-# The wheels/ directory MUST contain the official ModelScope pre-built
-# wheels. Without them, CUDA extensions produce incorrect output.
-COPY wheels/ /tmp/modelscope_wheels/
-RUN ls /tmp/modelscope_wheels/*.whl 1>/dev/null 2>&1 || \
-        { echo "[ABORT] No .whl files in wheels/. Place official ModelScope wheels before building."; exit 1; }
-RUN echo "[WHEELS] Installing ModelScope official wheels..." && \
-    for whl in /tmp/modelscope_wheels/*.whl; do \
-        pip install "$whl" --force-reinstall --no-deps && \
-        echo "  Installed: $(basename $whl)"; \
-    done && \
-    echo "[WHEELS] Done."
+# (ModelScope wheels are now installed directly from HuggingFace URLs above)
 
 # ============================================================
 # Copy application code (after model download for cache)
