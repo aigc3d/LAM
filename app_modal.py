@@ -118,6 +118,9 @@ image = (
         "torch.hub.load_state_dict_from_url(url, map_location='cpu'); "
         "print('DINOv2 cached OK')\"",
     )
+    .run_commands(
+        "pip install git+https://github.com/NVlabs/nvdiffrast.git",
+    )
 )
 
 def _precompile_nvdiffrast():
