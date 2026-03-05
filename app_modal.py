@@ -136,7 +136,7 @@ image = image.run_function(_precompile_nvdiffrast)
 #   - simple_knn-0.0.0-cp310-cp310-linux_x86_64.whl
 #   - fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl
 # These are the ONLY source for these packages. No URL fallback.
-_wheels_dir = Path(r"C:\Users\hamad\LAM\wheels")
+_wheels_dir = Path(r"C:/Users/hamad/LAM/wheels")
 _whl_files = list(_wheels_dir.glob("*.whl")) if _wheels_dir.is_dir() else []
 if not _whl_files:
     raise RuntimeError(
