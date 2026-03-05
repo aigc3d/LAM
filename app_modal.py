@@ -136,19 +136,21 @@ image = image.run_function(_precompile_nvdiffrast)
 #   - simple_knn-0.0.0-cp310-cp310-linux_x86_64.whl
 #   - fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl
 # These are the ONLY source for these packages. No URL fallback.
+# This check only runs locally (during `modal deploy`), not inside the container.
 _wheels_dir = Path(r"C:/Users/hamad/LAM/wheels")
-_whl_files = list(_wheels_dir.glob("*.whl")) if _wheels_dir.is_dir() else []
-if not _whl_files:
-    raise RuntimeError(
-        f"[ABORT] No .whl files found in {_wheels_dir}/. "
-        "You must place the official ModelScope wheels "
-        "(pytorch3d, diff_gaussian_rasterization, simple_knn, fbx) "
-        "in the wheels/ directory before building. "
-        "See README or handoff doc for download instructions."
-    )
-print(f"[WHEELS] Found {len(_whl_files)} wheels in {_wheels_dir}:")
-for w in _whl_files:
-    print(f"  - {w.name}")
+if not os.environ.get("MODAL_IS_REMOTE"):
+    _whl_files = list(_wheels_dir.glob("*.whl")) if _wheels_dir.is_dir() else []
+    if not _whl_files:
+        raise RuntimeError(
+            f"[ABORT] No .whl files found in {_wheels_dir}/. "
+            "You must place the official ModelScope wheels "
+            "(pytorch3d, diff_gaussian_rasterization, simple_knn, fbx) "
+            "in the wheels/ directory before building. "
+            "See README or handoff doc for download instructions."
+        )
+    print(f"[WHEELS] Found {len(_whl_files)} wheels in {_wheels_dir}:")
+    for w in _whl_files:
+        print(f"  - {w.name}")
 
 image = (
     image
