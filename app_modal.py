@@ -72,6 +72,7 @@ image = (
         "tyro==0.8.0", "mediapipe==0.10.21", "tensorboard", "rich",
         "loguru", "Cython", "PyMCubes", "trimesh", "einops", "plyfile",
         "jaxtyping", "ninja", "patool", "safetensors", "decord",
+        "iopath",
         "numpy==1.26.4",
     )
     .run_commands(
