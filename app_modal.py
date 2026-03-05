@@ -160,7 +160,7 @@ if not os.environ.get("MODAL_IS_REMOTE"):
 
 image = (
     image
-    .add_local_dir(str(_wheels_dir), remote_path="/tmp/modelscope_wheels")
+    .add_local_dir(str(_wheels_dir), remote_path="/tmp/modelscope_wheels", copy=True)
     .run_commands(
         "echo '[WHEELS] Installing ModelScope official wheels...'",
         "for whl in /tmp/modelscope_wheels/*.whl; do "
@@ -421,7 +421,7 @@ class Generator:
 # --- Gradio UI (CPU) ---
 
 @app.function(image=image, volumes={"/vol/output": output_vol})
-@modal.web_endpoint(method="GET", label="lam-ui")
+@modal.fastapi_endpoint(method="GET", label="lam-ui")
 def web():
     import gradio as gr
     
