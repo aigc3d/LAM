@@ -62,21 +62,9 @@ RUN pip install chumpy==0.70 --no-build-isolation
 ENV CXXFLAGS="-std=c++17"
 RUN pip install https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py310_cu121_pyt240/pytorch3d-0.7.8-cp310-cp310-linux_x86_64.whl
 
-# diff-gaussian-rasterization — patch CUDA 12.1 header issues then build
-RUN git clone --recursive https://github.com/ashawkey/diff-gaussian-rasterization.git /tmp/dgr && \
-    find /tmp/dgr -name '*.cu' -exec sed -i '1i #include <cfloat>' {} + && \
-    find /tmp/dgr -name '*.h' -path '*/cuda_rasterizer/*' -exec sed -i '1i #include <cstdint>' {} + && \
-    pip install /tmp/dgr --no-build-isolation && \
-    rm -rf /tmp/dgr
-
-# simple-knn — patch cfloat for CUDA 12.1 then build
-RUN git clone https://github.com/camenduru/simple-knn.git /tmp/simple-knn && \
-    sed -i '1i #include <cfloat>' /tmp/simple-knn/simple_knn.cu && \
-    pip install /tmp/simple-knn --no-build-isolation && \
-    rm -rf /tmp/simple-knn
-
-# nvdiffrast: Pin to v0.3.3 (same as ModelScope vendored version)
-RUN pip install git+https://github.com/NVlabs/nvdiffrast.git@v0.3.3 --no-build-isolation
+# diff_gaussian_rasterization, simple_knn, nvdiffrast は
+# ローカル ModelScope 公式 wheels から後段でインストールする。
+# GitHub ソースビルドは使用しない（出力品質が異なるため）。
 
 # ============================================================
 # Python dependencies

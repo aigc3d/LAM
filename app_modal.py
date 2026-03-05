@@ -80,23 +80,9 @@ image = (
         "pip install onnxruntime-gpu==1.18.1 "
         "--extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/",
     )
-    .run_commands(
-        "git clone https://github.com/ashawkey/diff-gaussian-rasterization.git /tmp/dgr && "
-        "git clone https://github.com/g-truc/glm.git /tmp/dgr/third_party/glm && "
-        "find /tmp/dgr -name '*.cu' -exec sed -i '1i #include <cfloat>' {} + && "
-        "find /tmp/dgr -name '*.h' -path '*/cuda_rasterizer/*' -exec sed -i '1i #include <cstdint>' {} + && "
-        "pip install /tmp/dgr --no-build-isolation && rm -rf /tmp/dgr",
-    )
-    .run_commands(
-        "git clone https://github.com/camenduru/simple-knn.git /tmp/simple-knn && "
-        "sed -i '1i #include <cfloat>' /tmp/simple-knn/simple_knn.cu && "
-        "pip install /tmp/simple-knn --no-build-isolation && rm -rf /tmp/simple-knn",
-    )
-    # nvdiffrast: Pin to v0.3.3 tag (same as ModelScope vendored version)
-    # instead of GitHub HEAD which may include incompatible changes
-    .run_commands(
-        "pip install git+https://github.com/NVlabs/nvdiffrast.git@v0.3.3 --no-build-isolation",
-    )
+    # NOTE: diff_gaussian_rasterization, simple_knn, nvdiffrast は
+    # ローカル ModelScope 公式 wheels から後段でインストールする。
+    # GitHub ソースビルドは使用しない（出力品質が異なるため）。
     .run_commands(
         "pip install https://virutalbuy-public.oss-cn-hangzhou.aliyuncs.com/share/aigc3d/data/LAM/fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl",
     )
