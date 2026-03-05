@@ -60,9 +60,7 @@ image = (
         "unicode = numpy.str_; str = numpy.str_/' "
         "\"$CHUMPY_INIT\" && "
         "find $(dirname \"$CHUMPY_INIT\") -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null; true",
-        # pytorch3d: Use official pre-built v0.7.8 wheel (same as ModelScope demo)
-        # instead of building from GitHub HEAD which may include breaking changes
-        "pip install https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py310_cu121_pyt240/pytorch3d-0.7.8-cp310-cp310-linux_x86_64.whl",
+        # pytorch3d: ローカル wheels/ から後段でインストールする（URL不要）
     )
     .pip_install(
         "gradio==4.44.0", "gradio_client==1.3.0", "fastapi",
@@ -80,12 +78,9 @@ image = (
         "pip install onnxruntime-gpu==1.18.1 "
         "--extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/",
     )
-    # NOTE: diff_gaussian_rasterization, simple_knn, nvdiffrast は
-    # ローカル ModelScope 公式 wheels から後段でインストールする。
-    # GitHub ソースビルドは使用しない（出力品質が異なるため）。
-    .run_commands(
-        "pip install https://virutalbuy-public.oss-cn-hangzhou.aliyuncs.com/share/aigc3d/data/LAM/fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl",
-    )
+    # NOTE: pytorch3d, diff_gaussian_rasterization, simple_knn, fbx は
+    # 全てローカル wheels/ から後段でインストールする。
+    # URL ダウンロードや GitHub ソースビルドは使用しない。
     .run_commands(
         "wget -q https://download.blender.org/release/Blender4.2/blender-4.2.0-linux-x64.tar.xz -O /tmp/blender.tar.xz",
         "mkdir -p /opt/blender",
@@ -133,11 +128,14 @@ def _precompile_nvdiffrast():
 image = image.run_function(_precompile_nvdiffrast)
 
 # ============================================================
-# ModelScope Official Wheels Override (REQUIRED)
+# ModelScope Official Wheels (REQUIRED)
 # ============================================================
-# The ./wheels/ directory MUST contain the official ModelScope pre-built
-# wheels. Without them, CUDA extensions built from GitHub sources produce
-# incorrect output ("bird monster" artifacts).
+# The ./wheels/ directory MUST contain the official ModelScope pre-built wheels:
+#   - pytorch3d-0.7.8-cp310-cp310-linux_x86_64.whl
+#   - diff_gaussian_rasterization-0.0.0-cp310-cp310-linux_x86_64.whl
+#   - simple_knn-0.0.0-cp310-cp310-linux_x86_64.whl
+#   - fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl
+# These are the ONLY source for these packages. No URL fallback.
 _wheels_dir = "./wheels"
 if not os.path.isdir(_wheels_dir) or not any(f.endswith(".whl") for f in os.listdir(_wheels_dir)):
     raise RuntimeError(
