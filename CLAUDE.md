@@ -52,8 +52,30 @@ LAM (Large Avatar Model) を Modal クラウドにデプロイするプロジェ
 公式ModelScopeデモと完全に同一の動作を再現することが目標。
 
 - 公式ソース: `git show origin/lam-large-upload:LAM_Large_Avatar_Model/app.py`
-- Modal版: `app_modal.py` → `lam_avatar_batch.py`
-- 実行: `modal run --force-build lam_avatar_batch.py --image-path ./input/input.jpg`
+- Modal版エントリポイント: `lam_avatar_batch.py`
+- Modal版イメージ定義: `app_modal.py`（lam_avatar_batch.py から import される）
+
+## パイプライン実行方法
+
+```bash
+modal run lam_avatar_batch.py --image-path ./input/input.jpg
+# イメージ再ビルド時:
+modal run --force-build lam_avatar_batch.py --image-path ./input/input.jpg
+```
+
+**実行の流れ**:
+1. `modal run lam_avatar_batch.py` を実行
+2. `lam_avatar_batch.py` が `from app_modal import image, storage_vol` で `app_modal.py` を読み込む
+3. `app_modal.py` の `image` 定義に基づいて Modal がコンテナイメージをビルド
+   - CUDA + Python 3.10 ベースイメージ
+   - apt / pip 依存パッケージ
+   - LAM公式リポジトリの clone + ビルド
+   - **公式ModelScope wheels のインストール**（ここが最重要）
+   - nvdiffrast プリコンパイル
+4. コンテナ内で `app_modal.py` の `Generator.generate()` が呼ばれ推論実行
+5. 結果（動画 + OAC ZIP）が Modal Volume に保存される
+
+**つまり `app_modal.py` を変更すると推論パイプライン全体に影響する。慎重に。**
 
 ---
 
