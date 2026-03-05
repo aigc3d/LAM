@@ -1,0 +1,60 @@
+# Cloud Build: support_base → Cloud Run デプロイ
+#
+# トリガー設定:
+#   gcloud builds triggers create github \
+#     --repo-name=LAM_gpro --repo-owner=mirai-gpro \
+#     --branch-pattern="^main$" \
+#     --build-config=support_base/cloudbuild.yaml \
+#     --included-files="support_base/**"
+#
+# 手動実行:
+#   cd support_base
+#   gcloud builds submit --config=cloudbuild.yaml .
+
+substitutions:
+  _SERVICE_NAME: support-base
+  _REGION: asia-northeast1
+  _MEMORY: 1Gi
+
+steps:
+  # 1. Docker イメージビルド
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$COMMIT_SHA'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:latest'
+      - '.'
+    dir: 'support_base'
+
+  # 2. Container Registry にプッシュ
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$COMMIT_SHA'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:latest'
+
+  # 3. Cloud Run にデプロイ
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - '${_SERVICE_NAME}'
+      - '--image=gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$COMMIT_SHA'
+      - '--region=${_REGION}'
+      - '--platform=managed'
+      - '--memory=${_MEMORY}'
+      - '--port=8080'
+      - '--allow-unauthenticated'
+
+images:
+  - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:latest'
+
+timeout: '600s'

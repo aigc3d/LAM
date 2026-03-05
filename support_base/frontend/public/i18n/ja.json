@@ -1,0 +1,19 @@
+{
+  "pageTitle": "グルメコンシェルジュ AI",
+  "greeting": "いらっしゃいませ！何をお探しですか？",
+  "inputPlaceholder": "メッセージを入力...",
+  "voiceStatusListening": "聞いています...",
+  "voiceStatusSpeaking": "話しています...",
+  "voiceStatusStopped": "",
+  "voiceStatusReconnecting": "再接続中...",
+  "voiceStatusSynthesizing": "音声を合成中...",
+  "voiceStatusComplete": "認識完了",
+  "errorSessionInit": "セッションの初期化に失敗しました。",
+  "errorSendMessage": "メッセージの送信に失敗しました。",
+  "shortMsgWarning": "もう少し詳しく教えていただけますか？",
+  "ackYes": "はい",
+  "ackConfirm": "承知しました",
+  "ackSearch": "お探しします",
+  "ackUnderstood": "かしこまりました",
+  "ttsIntro": "ご希望に合うお店をご紹介します。"
+}
