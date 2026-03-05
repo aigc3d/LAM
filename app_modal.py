@@ -136,8 +136,10 @@ image = image.run_function(_precompile_nvdiffrast)
 #   - simple_knn-0.0.0-cp310-cp310-linux_x86_64.whl
 #   - fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl
 # These are the ONLY source for these packages. No URL fallback.
-_wheels_dir = "./wheels"
-if not os.path.isdir(_wheels_dir) or not any(f.endswith(".whl") for f in os.listdir(_wheels_dir)):
+_APP_DIR = Path(__file__).resolve().parent
+_wheels_dir = _APP_DIR / "wheels"
+_whl_files = list(_wheels_dir.glob("*.whl")) if _wheels_dir.is_dir() else []
+if not _whl_files:
     raise RuntimeError(
         f"[ABORT] No .whl files found in {_wheels_dir}/. "
         "You must place the official ModelScope wheels "
@@ -145,10 +147,13 @@ if not os.path.isdir(_wheels_dir) or not any(f.endswith(".whl") for f in os.list
         "in the wheels/ directory before building. "
         "See README or handoff doc for download instructions."
     )
+print(f"[WHEELS] Found {len(_whl_files)} wheels in {_wheels_dir}:")
+for w in _whl_files:
+    print(f"  - {w.name}")
 
 image = (
     image
-    .add_local_dir("./wheels", remote_path="/tmp/modelscope_wheels")
+    .add_local_dir(str(_wheels_dir), remote_path="/tmp/modelscope_wheels")
     .run_commands(
         "echo '[WHEELS] Installing ModelScope official wheels...'",
         "for whl in /tmp/modelscope_wheels/*.whl; do "
