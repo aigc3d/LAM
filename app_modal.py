@@ -30,16 +30,16 @@ image = (
     )
     .run_commands(
         "python -m pip install --upgrade pip setuptools wheel",
-        "pip install 'numpy==1.26.4'",
+        "pip install 'numpy==1.23.0'",
     )
     .run_commands(
         "pip install torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 "
         "--index-url https://download.pytorch.org/whl/cu121"
     )
-    .run_commands(
-        "pip install xformers==0.0.27.post2 "
-        "--index-url https://download.pytorch.org/whl/cu121"
-    )
+    # xformers: 公式ModelScope app.py は明示的に pip uninstall -y xformers している。
+    # xformersが存在するとDINOv2が memory_efficient_attention を使い、
+    # PyTorchネイティブattentionと異なる出力になる → 鳥の化け物の原因。
+    # インストールしない。
     .env({
         "FORCE_CUDA": "1",
         "CUDA_HOME": "/usr/local/cuda",
@@ -73,7 +73,7 @@ image = (
         "loguru", "Cython", "PyMCubes", "trimesh", "einops", "plyfile",
         "jaxtyping", "ninja", "patool", "safetensors", "decord",
         "iopath",
-        "numpy==1.26.4",
+        "numpy==1.23.0",
     )
     .run_commands(
         "pip install onnxruntime-gpu==1.18.1 "
@@ -119,20 +119,10 @@ image = (
         "torch.hub.load_state_dict_from_url(url, map_location='cpu'); "
         "print('DINOv2 cached OK')\"",
     )
-    .run_commands(
-        "git clone -b lam-large-upload --depth 1 https://github.com/mirai-gpro/LAM_gpro.git /tmp/lam_gpro_tmp",
-        "cp -r /tmp/lam_gpro_tmp/LAM_Large_Avatar_Model/external/nvdiffrast /root/LAM/external/nvdiffrast",
-        "rm -rf /tmp/lam_gpro_tmp",
-        "pip install /root/LAM/external/nvdiffrast/",
-    )
+    # nvdiffrast: GitHubソースビルドは使わない。
+    # 公式ModelScope wheels (nvdiffrast-0.3.3.whl) を使用する。
+    # 以前のClaudeセッションがGitHubソースビルドに改ざんしていたのを修正。
 )
-
-def _precompile_nvdiffrast():
-    import torch
-    import nvdiffrast.torch as dr
-    print("nvdiffrast pre-compiled OK")
-
-image = image.run_function(_precompile_nvdiffrast)
 
 # ============================================================
 # ModelScope Official Wheels (REQUIRED)
@@ -141,9 +131,10 @@ image = image.run_function(_precompile_nvdiffrast)
 #   - pytorch3d-0.7.8-cp310-cp310-linux_x86_64.whl
 #   - diff_gaussian_rasterization-0.0.0-cp310-cp310-linux_x86_64.whl
 #   - simple_knn-0.0.0-cp310-cp310-linux_x86_64.whl
+#   - nvdiffrast-0.3.3-cp310-cp310-linux_x86_64.whl
 #   - fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl
 # These are the ONLY source for these packages. No URL fallback.
-# This check only runs locally (during `modal deploy`), not inside the container.
+# GitHubソースビルドは使用禁止（過去のClaudeが改ざんして鳥の化け物になった原因）。
 _wheels_dir = Path(r"C:/Users/hamad/LAM/wheels")
 if not os.environ.get("MODAL_IS_REMOTE"):
     _whl_files = list(_wheels_dir.glob("*.whl")) if _wheels_dir.is_dir() else []
@@ -151,7 +142,7 @@ if not os.environ.get("MODAL_IS_REMOTE"):
         raise RuntimeError(
             f"[ABORT] No .whl files found in {_wheels_dir}/. "
             "You must place the official ModelScope wheels "
-            "(pytorch3d, diff_gaussian_rasterization, simple_knn, fbx) "
+            "(pytorch3d, diff_gaussian_rasterization, simple_knn, nvdiffrast, fbx) "
             "in the wheels/ directory before building. "
             "See README or handoff doc for download instructions."
         )
@@ -164,13 +155,24 @@ image = (
     .add_local_dir(str(_wheels_dir), remote_path="/tmp/modelscope_wheels", copy=True)
     .run_commands(
         "echo '[WHEELS] Installing ModelScope official wheels...'",
-        "for whl in /tmp/modelscope_wheels/*.whl; do "
-        "  [ -f \"$whl\" ] && pip install \"$whl\" --force-reinstall --no-deps && "
-        "  echo \"  Installed: $(basename $whl)\"; "
-        "done",
+        # 公式app.py と同じ順序・フラグで --force-reinstall
+        "pip install /tmp/modelscope_wheels/diff_gaussian_rasterization-0.0.0-cp310-cp310-linux_x86_64.whl --force-reinstall",
+        "pip install /tmp/modelscope_wheels/simple_knn-0.0.0-cp310-cp310-linux_x86_64.whl --force-reinstall",
+        "pip install /tmp/modelscope_wheels/nvdiffrast-0.3.3-cp310-cp310-linux_x86_64.whl --force-reinstall",
+        "pip install /tmp/modelscope_wheels/pytorch3d-0.7.8-cp310-cp310-linux_x86_64.whl --force-reinstall",
+        "pip install /tmp/modelscope_wheels/fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl --force-reinstall",
+        # 公式app.py: pip uninstall -y xformers
+        "pip uninstall -y xformers 2>/dev/null; true",
         "echo '[WHEELS] Done.'",
     )
 )
+
+def _precompile_nvdiffrast():
+    import torch
+    import nvdiffrast.torch as dr
+    print("nvdiffrast pre-compiled OK")
+
+image = image.run_function(_precompile_nvdiffrast)
 
 # --- 写経セクション: app.py ヘルパー関数 ---
 
