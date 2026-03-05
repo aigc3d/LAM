@@ -163,6 +163,9 @@ image = (
         "pip install /tmp/modelscope_wheels/fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl --force-reinstall",
         # 公式app.py: pip uninstall -y xformers
         "pip uninstall -y xformers 2>/dev/null; true",
+        # wheels の依存解決で numpy が 2.x に上がる場合があるため再ピン止め
+        # cpu_nms.pyx は numpy 1.x でコンパイル済みなので 2.x だとクラッシュする
+        "pip install 'numpy==1.23.0'",
         "echo '[WHEELS] Done.'",
     )
 )
