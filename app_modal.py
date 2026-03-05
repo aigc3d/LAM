@@ -119,7 +119,7 @@ image = (
         "print('DINOv2 cached OK')\"",
     )
     .run_commands(
-        "pip install git+https://github.com/NVlabs/nvdiffrast.git",
+        "pip install git+https://github.com/NVlabs/nvdiffrast.git@v0.3.3 --no-build-isolation",
     )
 )
 
