@@ -1,3 +1,6 @@
+# wheels/ directory tracked for structure; .whl binaries are excluded
+wheels/*.whl
+!wheels/.gitkeep
 __pycache__/
 build/
 *.so
