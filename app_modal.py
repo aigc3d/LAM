@@ -119,7 +119,9 @@ image = (
         "print('DINOv2 cached OK')\"",
     )
     .run_commands(
-        "git clone https://github.com/NVlabs/nvdiffrast.git /root/LAM/external/nvdiffrast",
+        "git clone -b lam-large-upload --depth 1 https://github.com/mirai-gpro/LAM_gpro.git /tmp/lam_gpro_tmp",
+        "cp -r /tmp/lam_gpro_tmp/LAM_Large_Avatar_Model/external/nvdiffrast /root/LAM/external/nvdiffrast",
+        "rm -rf /tmp/lam_gpro_tmp",
         "pip install /root/LAM/external/nvdiffrast/",
     )
 )
