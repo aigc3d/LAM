@@ -89,9 +89,10 @@ image = (
         "ln -sf /opt/blender/blender /usr/local/bin/blender",
         "rm /tmp/blender.tar.xz",
     )
-    # LAMソースコード: 公式ModelScope版（lam-large-uploadブランチ）を使用。
+    # LAMソースコード: ローカルの LAM_Large_Avatar_Model/ を使用。
+    # これは公式ModelScope版（lam-large-uploadブランチ）の展開物。
     # GitHub (aigc3d/LAM) は別物。head_utils.py等のコードが異なるため使用禁止。
-    .add_local_dir("lam_modelscope", remote_path="/root/LAM", copy=True)
+    .add_local_dir("LAM_Large_Avatar_Model", remote_path="/root/LAM", copy=True)
     .run_commands(
         # cpu_nms.pyx: numpy deprecation fix (np.int -> np.intp)
         "sed -i 's/dtype=np\\.int)/dtype=np.intp)/' "
@@ -127,45 +128,19 @@ image = (
     # nvdiffrast: GitHubソースビルドは使わない。
     # 公式ModelScope wheels (nvdiffrast-0.3.3.whl) を使用する。
     # 以前のClaudeセッションがGitHubソースビルドに改ざんしていたのを修正。
-)
-
-# ============================================================
-# ModelScope Official Wheels (REQUIRED)
-# ============================================================
-# The ./wheels/ directory MUST contain the official ModelScope pre-built wheels:
-#   - pytorch3d-0.7.8-cp310-cp310-linux_x86_64.whl
-#   - diff_gaussian_rasterization-0.0.0-cp310-cp310-linux_x86_64.whl
-#   - simple_knn-0.0.0-cp310-cp310-linux_x86_64.whl
-#   - nvdiffrast-0.3.3-cp310-cp310-linux_x86_64.whl
-#   - fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl
-# These are the ONLY source for these packages. No URL fallback.
-# GitHubソースビルドは使用禁止（過去のClaudeが改ざんして鳥の化け物になった原因）。
-_wheels_dir = Path(r"C:/Users/hamad/LAM/wheels")
-if not os.environ.get("MODAL_IS_REMOTE"):
-    _whl_files = list(_wheels_dir.glob("*.whl")) if _wheels_dir.is_dir() else []
-    if not _whl_files:
-        raise RuntimeError(
-            f"[ABORT] No .whl files found in {_wheels_dir}/. "
-            "You must place the official ModelScope wheels "
-            "(pytorch3d, diff_gaussian_rasterization, simple_knn, nvdiffrast, fbx) "
-            "in the wheels/ directory before building. "
-            "See README or handoff doc for download instructions."
-        )
-    print(f"[WHEELS] Found {len(_whl_files)} wheels in {_wheels_dir}:")
-    for w in _whl_files:
-        print(f"  - {w.name}")
-
-image = (
-    image
-    .add_local_dir(str(_wheels_dir), remote_path="/tmp/modelscope_wheels", copy=True)
+    #
+    # === ModelScope Official Wheels ===
+    # LAM_Large_Avatar_Model/wheels/ が /root/LAM/wheels/ にコピーされるので、
+    # 公式app.pyと同じく ./wheels/ パスで参照可能。
+    # GitHubソースビルドは使用禁止（過去のClaudeが改ざんして鳥の化け物になった原因）。
     .run_commands(
         "echo '[WHEELS] Installing ModelScope official wheels...'",
         # 公式app.py と同じ順序・フラグで --force-reinstall
-        "pip install /tmp/modelscope_wheels/diff_gaussian_rasterization-0.0.0-cp310-cp310-linux_x86_64.whl --force-reinstall",
-        "pip install /tmp/modelscope_wheels/simple_knn-0.0.0-cp310-cp310-linux_x86_64.whl --force-reinstall",
-        "pip install /tmp/modelscope_wheels/nvdiffrast-0.3.3-cp310-cp310-linux_x86_64.whl --force-reinstall",
-        "pip install /tmp/modelscope_wheels/pytorch3d-0.7.8-cp310-cp310-linux_x86_64.whl --force-reinstall",
-        "pip install /tmp/modelscope_wheels/fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl --force-reinstall",
+        "pip install /root/LAM/wheels/diff_gaussian_rasterization-0.0.0-cp310-cp310-linux_x86_64.whl --force-reinstall",
+        "pip install /root/LAM/wheels/simple_knn-0.0.0-cp310-cp310-linux_x86_64.whl --force-reinstall",
+        "pip install /root/LAM/wheels/nvdiffrast-0.3.3-cp310-cp310-linux_x86_64.whl --force-reinstall",
+        "pip install /root/LAM/wheels/pytorch3d-0.7.8-cp310-cp310-linux_x86_64.whl --force-reinstall",
+        "pip install /root/LAM/wheels/fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl --force-reinstall",
         # 公式app.py: pip uninstall -y xformers
         "pip uninstall -y xformers 2>/dev/null; true",
         # wheels の依存解決で numpy が 2.x に上がる場合があるため再ピン止め
