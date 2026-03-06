@@ -128,19 +128,22 @@ image = (
     # nvdiffrast: GitHubソースビルドは使わない。
     # 公式ModelScope wheels (nvdiffrast-0.3.3.whl) を使用する。
     # 以前のClaudeセッションがGitHubソースビルドに改ざんしていたのを修正。
-    #
-    # === ModelScope Official Wheels ===
-    # LAM_Large_Avatar_Model/wheels/ が /root/LAM/wheels/ にコピーされるので、
-    # 公式app.pyと同じく ./wheels/ パスで参照可能。
-    # GitHubソースビルドは使用禁止（過去のClaudeが改ざんして鳥の化け物になった原因）。
+)
+
+# === ModelScope Official Wheels ===
+# wheels/ ディレクトリ（LAM_Large_Avatar_Model とは別）に公式プリビルト .whl を配置。
+# GitHubソースビルドは使用禁止（過去のClaudeが改ざんして鳥の化け物になった原因）。
+image = (
+    image
+    .add_local_dir("wheels", remote_path="/tmp/modelscope_wheels", copy=True)
     .run_commands(
         "echo '[WHEELS] Installing ModelScope official wheels...'",
         # 公式app.py と同じ順序・フラグで --force-reinstall
-        "pip install /root/LAM/wheels/diff_gaussian_rasterization-0.0.0-cp310-cp310-linux_x86_64.whl --force-reinstall",
-        "pip install /root/LAM/wheels/simple_knn-0.0.0-cp310-cp310-linux_x86_64.whl --force-reinstall",
-        "pip install /root/LAM/wheels/nvdiffrast-0.3.3-cp310-cp310-linux_x86_64.whl --force-reinstall",
-        "pip install /root/LAM/wheels/pytorch3d-0.7.8-cp310-cp310-linux_x86_64.whl --force-reinstall",
-        "pip install /root/LAM/wheels/fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl --force-reinstall",
+        "pip install /tmp/modelscope_wheels/diff_gaussian_rasterization-0.0.0-cp310-cp310-linux_x86_64.whl --force-reinstall",
+        "pip install /tmp/modelscope_wheels/simple_knn-0.0.0-cp310-cp310-linux_x86_64.whl --force-reinstall",
+        "pip install /tmp/modelscope_wheels/nvdiffrast-0.3.3-cp310-cp310-linux_x86_64.whl --force-reinstall",
+        "pip install /tmp/modelscope_wheels/pytorch3d-0.7.8-cp310-cp310-linux_x86_64.whl --force-reinstall",
+        "pip install /tmp/modelscope_wheels/fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl --force-reinstall",
         # 公式app.py: pip uninstall -y xformers
         "pip uninstall -y xformers 2>/dev/null; true",
         # wheels の依存解決で numpy が 2.x に上がる場合があるため再ピン止め
