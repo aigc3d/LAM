@@ -369,7 +369,7 @@ class Generator:
             render_image_res=render_size, multiply=16,
             need_mask=motion_img_need_mask, vis_motion=vis_motion,
             shape_param=shape_param, test_sample=False, cross_id=False,
-            src_driven=src_driven, max_squen_length=300
+            src_driven=src_driven,
         )
         
         # infer_single_view 写経
