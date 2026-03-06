@@ -102,6 +102,12 @@ image = (
         "include_dirs=[numpy.get_include()])\" "
         "build_ext --inplace",
     )
+    # 公式ModelScope版 head_utils.py には max_squen_length パラメータがあるが、
+    # GitHub最新版にはない。公式app.pyが max_squen_length=300 で呼ぶので追加する。
+    .run_commands(
+        "sed -i 's/src_driven=\\[\"\"\\, \"\"\\])/src_driven=[\"\"\\, \"\"], max_squen_length=None)/' "
+        "/root/LAM/lam/runners/infer/head_utils.py",
+    )
     .run_commands(
         "sed -i 's/^    @torch.compile$/    # @torch.compile  # DISABLED/' "
         "/root/LAM/lam/models/modeling_lam.py",
@@ -369,9 +375,9 @@ class Generator:
             render_image_res=render_size, multiply=16,
             need_mask=motion_img_need_mask, vis_motion=vis_motion,
             shape_param=shape_param, test_sample=False, cross_id=False,
-            src_driven=src_driven,
+            src_driven=src_driven, max_squen_length=300
         )
-        
+
         # infer_single_view 写経
         motion_seq["flame_params"]["betas"] = shape_param.unsqueeze(0)
         device, dtype = "cuda", torch.float32
