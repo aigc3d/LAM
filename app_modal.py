@@ -89,10 +89,14 @@ image = (
         "ln -sf /opt/blender/blender /usr/local/bin/blender",
         "rm /tmp/blender.tar.xz",
     )
+    # LAMソースコード: 公式ModelScope版（lam-large-uploadブランチ）を使用。
+    # GitHub (aigc3d/LAM) は別物。head_utils.py等のコードが異なるため使用禁止。
+    .add_local_dir("lam_modelscope", remote_path="/root/LAM", copy=True)
     .run_commands(
-        "git clone https://github.com/aigc3d/LAM.git /root/LAM",
+        # cpu_nms.pyx: numpy deprecation fix (np.int -> np.intp)
         "sed -i 's/dtype=np\\.int)/dtype=np.intp)/' "
         "/root/LAM/external/landmark_detection/FaceBoxesV2/utils/nms/cpu_nms.pyx",
+        # Cython build cpu_nms extension
         "cd /root/LAM/external/landmark_detection/FaceBoxesV2/utils/nms && "
         "python -c \""
         "from setuptools import setup, Extension; "
@@ -102,13 +106,8 @@ image = (
         "include_dirs=[numpy.get_include()])\" "
         "build_ext --inplace",
     )
-    # 公式ModelScope版 head_utils.py には max_squen_length パラメータがあるが、
-    # GitHub最新版にはない。公式app.pyが max_squen_length=300 で呼ぶので追加する。
     .run_commands(
-        "sed -i 's/src_driven=\\[\"\"\\, \"\"\\])/src_driven=[\"\"\\, \"\"], max_squen_length=None)/' "
-        "/root/LAM/lam/runners/infer/head_utils.py",
-    )
-    .run_commands(
+        # torch.compile は Modal の L4 GPU で dynamo エラーを起こすため無効化
         "sed -i 's/^    @torch.compile$/    # @torch.compile  # DISABLED/' "
         "/root/LAM/lam/models/modeling_lam.py",
         "sed -i 's/^    @torch.compile$/    # @torch.compile  # DISABLED/' "

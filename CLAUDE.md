@@ -6,7 +6,18 @@
 
 ## 絶対禁止事項（過去10回以上の改ざん事故あり）
 
-### 1. ModelScope公式wheelsをGitHubソースビルドに差し替えるな
+### 1. GitHub (aigc3d/LAM) のコードを使うな — ModelScope版を使え
+
+**GitHubの公開LAMリポとModelScope版はコードが異なる。**
+`app_modal.py` は `lam_modelscope/` ディレクトリ（`lam-large-upload` ブランチから展開）を使う。
+**`git clone https://github.com/aigc3d/LAM.git` は絶対禁止。**
+
+具体的な差異の例:
+- `head_utils.py`: GitHub版421行 vs ModelScope版633行（関数シグネチャも後半ロジックも違う）
+- モデルパス: GitHub版は `model_zoo/` 、ModelScope版は `pretrained_models/`
+- `render_flame_mesh_gaga19()`: ModelScope版にのみ存在
+
+### 2. ModelScope公式wheelsをGitHubソースビルドに差し替えるな
 
 `app_modal.py` の wheels セクションは **公式ModelScope環境からDLしたプリビルド .whl** を使っている。
 **絶対にGitHubのURLやソースビルドに変更するな。**
@@ -22,14 +33,14 @@
 過去にClaudeが「GitHubが正しいはず」と判断してwheelsをソースビルドに差し替え、
 3Dアバターが「鳥の化け物」になった。150時間以上のデバッグ時間が無駄になった。
 
-### 2. xformers をインストールするな
+### 3. xformers をインストールするな
 
 公式ModelScope app.py は `pip uninstall -y xformers` を明示的に実行している。
 xformers が存在すると DINOv2 エンコーダが異なる attention パスを使い、出力が変わる。
 
 **xformers のインストール行を追加するな。削除されているのは意図的。**
 
-### 3. numpy のバージョンを上げるな
+### 4. numpy のバージョンを上げるな
 
 公式は `numpy==1.23.0`。新しいバージョンへの変更禁止。
 
