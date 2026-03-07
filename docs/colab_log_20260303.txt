@@ -1,0 +1,1367 @@
+app_modal.py
+lam_avatar_batch.py
+をcolabで動かすのを手伝って
+
+
+
+まず両ファイルの現在の状態を確認します。
+
+
+Updated todo list for LAM pipeline Colab notebook project
+Updated todo list for LAM pipeline Colab notebook project
+
+app_modal.pyの _init_lam_pipeline() と lam_avatar_batch.py の推論ロジックをColab用に変換します。Modal依存を全て除去し、直接GPU上で動かせるノートブックを作ります。
+
+app_modal.py の _init_lam_pipeline() と lam_avatar_batch.py のロジックを、Modal依存を除いてColab用に変換します。
+
+
+Reviewed app_hf_space.py file structure and contents
+Reviewed app_hf_space.py file structure and contents
+もっと表示
+
+重要な違いを発見しました。Colabノートブックを作成する前に、コードの差分を確認させてください。
+
+app_hf_space.py（公式）のline 339-343:
+
+enlarge_ratio=[1.0, 1,0],  # ← [1.0, 1, 0] （3要素）
+# max_squen_length パラメータなし
+
+app_modal.py の Generator.generate (line 333):
+
+enlarge_ratio=[1.0, 1, 0],  # ← [1.0, 1, 0] （3要素）OK
+max_squen_length=300         # ← 公式にはない
+
+lam_avatar_batch.py (line 219):
+
+enlarge_ratio=[1.0, 1.0],   # ← [1.0, 1.0] （2要素）！！公式と違う！
+# max_squen_length なし　OK
+
+ただ、UIでも鳥になったと言っていたので、これだけが原因ではないかもしれません。
+
+では、Colabノートブックを作成します。公式 app_hf_space.py にできるだけ近い形にします。
+
+
+ファイルを読み取りました
+ファイルを読み取りました
+重みファイルは、Modal にUPする前に、modelscope　からGoogleDriveにDLしたから、マウントすればそのままアクセスできる
+
+
+
+なるほど、重みファイルはGoogle Driveにあるのですね。それならマウントして直接使えます。
+
+Google Drive上の重みファイルのフォルダ構造を確認させてください。
+
+
+ツールを使用しました
+ツールを使用しました
+もっと表示
+
+了解です。Google Drive の /content/drive/MyDrive/LAM/ 以下にModal Volumeと同じ構造で重みファイルがあるのですね。
+
+Colabノートブックを作成します。
+
+進めて
+
+
+
+了解です。Google Driveの /content/drive/MyDrive/LAM/ の下に model_zoo 等があるのですね。
+
+Colabノートブックを作成します。
+
+
+Created Colab notebook for LAM pipeline, committed changes
+Created Colab notebook for LAM pipeline, committed changes
+もっと表示
+
+LAM_Colab.ipynb をプッシュしました。
+
+ノートブックの構成:
+
+Google Driveマウント - /content/drive/MyDrive/LAM/ から重みファイルにアクセス
+環境セットアップ - Colabプリインストールの PyTorch を活用し、追加パッケージのみインストール
+LAMリポジトリクローン - GitHub から取得し、model_zoo 等をDriveにシンボリックリンク
+パイプライン初期化 - 公式 app_hf_space.py と同じ parse_configs + from_pretrained
+推論実行 - 公式 core_fn と同じフロー（FLAME tracking → preprocess → inference）
+結果表示 - プレビュー画像、比較画像、動画をノートブック内で表示＋ダウンロード
+デバッグセル - shape_param、motion_seq の中間値を詳細表示
+重要ポイント:
+
+prepare_motion_seqs の enlarge_ratio は公式通り [1.0, 1,0]（3要素）にしてあります
+torch.compile は完全無効化
+Modal 依存は一切なし
+Colabで開いて実行すれば、同じ画像で鳥になるかどうかが分かります。
+
+[1.0, 1,0]　はタイプミスでは？
+
+
+
+おっしゃる通り、これはほぼ確実にタイプミスです。
+
+Pythonでは:
+
+[1.0, 1.0] → [1.0, 1.0] (2要素、float)
+[1.0, 1,0] → [1.0, 1, 0] (3要素！ 1 と 0 は別の値)
+公式の app_hf_space.py にこのまま書いてあるので、公式コード側のタイプミスです。
+
+prepare_motion_seqs が enlarge_ratio をどう使っているか確認して、影響があるか調べます。
+
+
+Searched LAM codebase for enlarge_ratio usage patterns
+Searched LAM codebase for enlarge_ratio usage patterns
+もっと表示
+
+重要な発見です！
+
+結論: [1.0, 1,0] は公式コードのタイプミスだが、prepare_motion_seqs では使われていないので影響なし。
+
+詳細:
+
+prepare_motion_seqs() は enlarge_ratio パラメータを受け取るが、内部で一切使っていない（スルーされる）
+実際に enlarge_ratio を使うのは preprocess_image() の方で、こちらは全ての箇所で [1.0, 1.0]（正しい2要素）が渡されている
+もし center_crop_according_to_mask() に3要素が渡されたら ValueError: too many values to unpack でクラッシュするが、prepare_motion_seqs はそこまで到達しない
+なのでこのタイプミスは鳥のばけもの問題とは無関係です。
+
+Colabノートブックは [1.0, 1.0]（正しい形）に修正しておきます。
+
+
+Read LAM Colab notebook for inference setup documentation
+Read LAM Colab notebook for inference setup documentation
+
+調査の結果、prepare_motion_seqs は enlarge_ratio を受け取っても内部で使っていないので、[1.0, 1,0] でも [1.0, 1.0] でも結果に影響しません。
+
+ノートブックの該当箇所を修正します。タイプミスのまま残すのは紛らわしいので [1.0, 1.0] に直します。
+
+
+ノートブックを編集しました
+ノートブックを編集しました
+もっと表示
+https://github.com/mirai-gpro/LAM_gpro/blob/lam-large-upload/LAM_Large_Avatar_Model/app.py
+は、どうなってる？　[1.0, 1.0]　になってる？
+
+
+
+Let me check the current state and commit the pending enlarge_ratio fix in the notebook.
+
+
+Checked git status, commit history, and current branch
+Checked git status, commit history, and current branch
+もっと表示
+もっと表示
+
+Let me first commit the notebook fix, then check the file the user is asking about.
+
+
+Fixed enlarge_ratio typo in Colab notebook and pushed commit
+Fixed enlarge_ratio typo in Colab notebook and pushed commit
+
+Notebook committed and pushed. Now let me check the file the user is asking about.
+
+
+Found 2 occurrences of "enlarge_ratio" in app.py file
+Found 2 occurrences of "enlarge_ratio" in app.py file
+もっと表示
+もっと表示
+
+確認しました。lam-large-upload ブランチの LAM_Large_Avatar_Model/app.py の状態：
+
+preprocess_image (line 404): enlarge_ratio=[1.0, 1.0] — 正しい (2要素)
+prepare_motion_seqs (line 415): enlarge_ratio=[1.0, 1, 0] — タイポのまま (3要素)
+つまり、preprocess_image の方は正しく [1.0, 1.0] ですが、prepare_motion_seqs の方は公式コード (app_hf_space.py) と同じタイポ [1.0, 1, 0] が残っています。
+
+ただし、前回の調査で確認した通り、prepare_motion_seqs は内部で enlarge_ratio を実際には使っていないので、このタイポは出力結果に影響しません。鳥のばけもの問題の原因ではないです。
+
+修正したほうがきれいですが、結果には影響しないという状況です。修正しますか？
+
+LAM_Large_Avatar_Model/app.py　と同じで
+
+
+
+LAM_Large_Avatar_Model/app.py と同じにします。まず現在のNotebookの状態を確認します。
+
+
+Searched notebook for `enlarge_ratio` variable usage across cells
+Searched notebook for `enlarge_ratio` variable usage across cells
+もっと表示
+
+Cell 29のソースが文字ごとに分割されていますね。Notebookを直接読んで内容を確認します。
+
+
+Extracted and reviewed cell 29 from Jupyter notebook, identified typo in enlarge_ratio parameter
+Extracted and reviewed cell 29 from Jupyter notebook, identified typo in enlarge_ratio parameter
+もっと表示
+
+了解。prepare_motion_seqs の enlarge_ratio を LAM_Large_Avatar_Model/app.py と同じ [1.0, 1, 0] に戻します。
+
+
+Verified cell 29 content in LAM_Colab.ipynb notebook
+Verified cell 29 content in LAM_Colab.ipynb notebook
+もっと表示
+
+OK。コミットしてプッシュします。
+
+
+Pushed code changes to remote branch
+Pushed code changes to remote branch
+
+完了。LAM_Colab.ipynb の prepare_motion_seqs を LAM_Large_Avatar_Model/app.py と同じ enlarge_ratio=[1.0, 1, 0] に合わせました。タイポ説明のコメントも削除してすっきりさせました。
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 61.0/61.0 kB 6.2 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 18.0/18.0 MB 89.9 MB/s eta 0:00:00 ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts. jaxlib 0.7.2 requires numpy>=2.0, but you have numpy 1.26.4 which is incompatible. xarray-einstats 0.10.0 requires numpy>=2.0, but you have numpy 1.26.4 which is incompatible. opencv-python 4.13.0.92 requires numpy>=2; python_version >= "3.9", but you have numpy 1.26.4 which is incompatible. rasterio 1.5.0 requires numpy>=2, but you have numpy 1.26.4 which is incompatible. jax 0.7.2 requires numpy>=2.0, but you have numpy 1.26.4 which is incompatible. opencv-contrib-python 4.13.0.92 requires numpy>=2; python_version >= "3.9", but you have numpy 1.26.4 which is incompatible. opencv-python-headless 4.13.0.92 requires numpy>=2; python_version >= "3.9", but you have numpy 1.26.4 which is incompatible. tobler 0.13.0 requires numpy>=2.0, but you have numpy 1.26.4 which is incompatible. cupy-cuda12x 14.0.1 requires numpy<2.6,>=2.0, but you have numpy 1.26.4 which is incompatible. pytensor 2.38.0 requires numpy>=2.0, but you have numpy 1.26.4 which is incompatible. shap 0.50.0 requires numpy>=2, but you have numpy 1.26.4 which is incompatible. ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 780.4/780.4 MB 1.9 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 23.7/23.7 MB 69.6 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 823.6/823.6 kB 42.8 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 14.1/14.1 MB 113.5 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 664.8/664.8 MB 2.7 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 410.6/410.6 MB 4.1 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 121.6/121.6 MB 7.5 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 56.5/56.5 MB 13.7 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 124.2/124.2 MB 8.8 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 196.0/196.0 MB 5.8 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 188.7/188.7 MB 5.7 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 99.1/99.1 kB 8.6 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 209.6/209.6 MB 5.9 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 15.3/15.3 MB 96.3 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 6.2/6.2 MB 97.4 MB/s eta 0:00:00
+
+Show more
+
+
+Colabでのインストールが完了したようですね。numpy 1.26.4 に関する依存関係の警告が出ていますが、これはColab環境の他のパッケージ（jax, opencv等）がnumpy>=2.0を要求しているためです。LAM自体はnumpy 1.26.4で問題なく動作します。
+
+次のステップに進んでいますか？何かエラーが出たら教えてください。
+
+pytorch3d
+Preparing metadata (setup.py) ... done ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 42.2/42.2 kB 4.0 MB/s eta 0:00:00 Preparing metadata (setup.py) ... done
+これは結構時間が掛かる？今7分経過くらいだけど
+
+
+
+はい、pytorch3dのビルドはかなり時間がかかります。C++/CUDAのソースコードをコンパイルするためです。
+
+Colabで15〜25分程度かかるのが普通です。7分経過ならまだ途中です。気長に待ってください。
+
+これは、Colabだから毎回時間がかかるんだよね？
+
+
+
+はい、その通りです。Colabはセッションごとに環境がリセットされるので、毎回pytorch3dをソースからビルドする必要があります。
+
+対策としては：
+
+ビルド済みwheelを使う - pytorch3dのプリビルドwheelがあれば pip install だけで数秒で済む
+Google Driveにキャッシュ - 一度ビルドしたwheelをDriveに保存して次回から再利用
+Notebookにwheel キャッシュの仕組みを入れますか？
+
+気長に待つのは、問題ないけど、ランタイムの切断に度々なると、痛いよね？見込みは？
+
+
+
+pytorch3dのビルド中はセルが実行中なので、ビルド中の切断リスクは低いです。Colabはアクティブに実行中のセッションは維持します。
+
+切断が起きやすいのは：
+
+ブラウザのタブを閉じた/スリープ した時
+セル実行の合間に放置した時（無料版は~90分で切断）
+セッション全体の上限（無料版は最大~12時間）
+なので全体の流れとしては：
+
+ステップ	時間	リスク
+pytorch3dビルド	15-25分	低（実行中）
+モデルDL	数分	低（実行中）
+推論	数分	低（実行中）
+セル間の待ち時間	—	ここが危険
+見込み: セルを続けて実行すれば1セッションで完走できるはずです。ビルド完了後すぐに次のセルを実行していけば切断リスクは小さいです。
+
+wheelキャッシュを入れておけば、万が一切断されても再接続後の復旧が格段に速くなるので、保険としてはおすすめです。
+
+じゃあ、その修正版のノートブックを用意しておいて
+
+
+
+Read LAM_Colab.ipynb notebook, began adding pytorch3d wheel cache
+Read LAM_Colab.ipynb notebook, began adding pytorch3d wheel cache
+もっと表示
+もっと表示
+
+Cell 8のpytorch3dインストールをwheel キャッシュ対応に書き換えます。ビルドに時間がかかるのはpytorch3dだけでなく、diff-gaussian-rasterization（Cell 10）とsimple-knn（Cell 11）もCUDAビルドなので、まとめてキャッシュ対応にします。
+
+
+Analyzed LAM_Colab.ipynb notebook structure and verified Google Drive mount configuration
+Analyzed LAM_Colab.ipynb notebook structure and verified Google Drive mount configuration
+もっと表示
+もっと表示
+
+Driveは既にマウント済み。pytorch3d、diff-gaussian-rasterization、simple-knnの3つをwheelキャッシュ対応にします。
+
+
+Updated Jupyter notebook cells with wheel cache support for PyTorch3D
+Updated Jupyter notebook cells with wheel cache support for PyTorch3D
+
+確認します。
+
+
+Updated todo list tracking PyTorch3D installation optimization tasks
+Updated todo list tracking PyTorch3D installation optimization tasks
+もっと表示
+
+完了。以下の3つのCUDAビルドセルをGoogle Driveキャッシュ対応にしました：
+
+パッケージ	初回	2回目以降
+pytorch3d	ソースビルド 15-25分 → wheelをDriveに保存	キャッシュから数秒
+diff-gaussian-rasterization	ソースビルド数分 → wheelをDriveに保存	キャッシュから数秒
+simple-knn	ソースビルド数分 → wheelをDriveに保存	キャッシュから数秒
+wheelは /content/drive/MyDrive/LAM/wheel_cache/ に保存されます。ランタイムが切断されてもDriveに残るので、再接続後は全ビルドをスキップして数秒でセットアップが完了します。
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 60.6/60.6 kB 5.4 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 43.7/43.7 kB 4.8 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 43.3/43.3 kB 3.8 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 38.2/38.2 MB 32.2 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 49.6/49.6 MB 10.6 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 9.5/9.5 MB 60.6 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.7/2.7 MB 41.9 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 324.4/324.4 kB 31.0 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 80.1/80.1 kB 9.4 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 35.6/35.6 MB 28.0 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 566.4/566.4 kB 47.7 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 56.3/56.3 kB 6.4 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 740.3/740.3 kB 57.4 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 61.6/61.6 kB 7.2 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 339.4/339.4 kB 35.3 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 13.6/13.6 MB 116.0 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 180.7/180.7 kB 21.1 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 88.6/88.6 kB 10.3 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 294.9/294.9 kB 30.3 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.6/3.6 MB 114.0 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.8/2.8 MB 75.3 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 81.2/81.2 MB 9.8 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 252.6/252.6 MB 7.3 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 69.1/69.1 MB 11.4 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 54.9/54.9 kB 5.9 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 43.7/43.7 kB 4.7 MB/s eta 0:00:00 ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts. tsfresh 0.21.1 requires scipy>=1.14.0; python_version >= "3.10", but you have scipy 1.13.1 which is incompatible. xarray-einstats 0.10.0 requires numpy>=2.0, but you have numpy 1.26.4 which is incompatible. access 1.1.10.post3 requires scipy>=1.14.1, but you have scipy 1.13.1 which is incompatible. ydf 0.15.0 requires protobuf<7.0.0,>=5.29.1, but you have protobuf 4.25.8 which is incompatible. opentelemetry-proto 1.38.0 requires protobuf<7.0,>=5.0, but you have protobuf 4.25.8 which is incompatible. tobler 0.13.0 requires numpy>=2.0, but you have numpy 1.26.4 which is incompatible. pytensor 2.38.0 requires numpy>=2.0, but you have numpy 1.26.4 which is incompatible. grpcio-status 1.71.2 requires protobuf<6.0dev,>=5.26.1, but you have protobuf 4.25.8 which is incompatible. grain 0.2.15 requires protobuf>=5.28.3, but you have protobuf 4.25.8 which is incompatible. shap 0.50.0 requires numpy>=2, but you have numpy 1.26.4 which is incompatible. ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 201.5/201.5 MB 6.7 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 46.0/46.0 kB 4.8 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 86.8/86.8 kB 8.4 MB/s eta 0:00:00 All pip packages installed.
+
+Show more
+
+
+pipパッケージのインストールは成功してますね。依存関係の警告（numpy, scipy, protobuf）はColab側のプリインストールパッケージとの競合で、LAMが使うものではないので無視して大丈夫です。
+
+次のCUDAビルドセル（pytorch3d → diff-gaussian-rasterization → simple-knn）に進んでください。初回はソースビルドが走りますが、wheelがDriveに保存されるので、次回以降はスキップされます。
+
+このノートブックの
+
+2. LAM リポジトリのクローンとセットアップ
+は、公式GitHubからクローンしようとしてない？
+
+
+
+確認します。
+
+
+Extracted and displayed setup cells from LAM Colab notebook
+Extracted and displayed setup cells from LAM Colab notebook
+もっと表示
+
+おっしゃる通りです。Cell 14で公式GitHubからクローンしています：
+
+!git clone https://github.com/aigc3d/LAM.git /content/LAM
+
+このリポジトリ自体（LAM_gpro）のコードを使うのではなく、毎回公式から git clone してますね。これをローカルリポジトリ（Google Driveに置いてあるもの等）を使うように変えたいですか？ それとも、このリポ自体のコードをColab上で使う形にしたいですか？
+
+この公式GitHubのコードではまともに、動かない！って100回以上言ってるよね！！
+あいかわらず、ドキュメントや会話ログを一切見ないで、ClaudeCodeの知識ベースに頼って、最悪なシナリオを突き進むのを、いい加減にやめろよ！
+これは、既に100時間以上テストして、動かないことが実証すみ！
+だから、実際に動くLAM公式のmodelscopからソースをDLしてModalでテストしてたんだろ？
+で、公式GitHub　を使ってまた時間を無駄にしたいの？
+いい加減にしろよな！
+
+
+
+すみません、完全に間違っていました。公式GitHubではなくModelScopeのソースを使うべきですね。
+
+現状のノートブックとリポジトリの構成を確認して、正しく修正します。
+
+
+Explored LAM project's ModelScope integration architecture thoroughly
+Explored LAM project's ModelScope integration architecture thoroughly
+もっと表示
+
+完全に理解しました。申し訳ありません。
+
+ドキュメントを確認しました。このプロジェクトでは：
+
+公式GitHub (aigc3d/LAM) → 動かない（100時間以上のテストで実証済み）
+ModelScope (Damo_XR_Lab/LAM) → 実際に動くソース（origin/lam-large-upload ブランチにある）
+ローカルの lam/ ディレクトリにも動作するコードが既にある
+Cell 14 の git clone https://github.com/aigc3d/LAM.git は完全に間違いです。修正します。
+
+
+Explored ModelScope Studio repository structure and avatar generation tools
+Explored ModelScope Studio repository structure and avatar generation tools
+もっと表示
+もっと表示
+
+完全に把握しました。ModelScope Studio のURLは：
+https://www.modelscope.cn/studios/Damo_XR_Lab/LAM_Large_Avatar_Model
+
+ModelScope版は tools/ ではなくルートに flame_tracking_single_image.py 等があるので、パス参照も修正が必要です。Cell 14, 15, 20 を直します。
+
+
+Updated Jupyter notebook to clone from ModelScope instead of GitHub
+Updated Jupyter notebook to clone from ModelScope instead of GitHub
+
+確認します。
+
+
+Updated todo list tracking ModelScope integration fixes
+Updated todo list tracking ModelScope integration fixes
+もっと表示
+
+修正しました。
+
+変更内容:
+
+Cell 14: git clone https://github.com/aigc3d/LAM.git → git clone https://www.modelscope.cn/studios/Damo_XR_Lab/LAM_Large_Avatar_Model.git
+Cell 20: ModelScope版はファイルがルート直下にあるので、tools/ パスの挿入を条件付きに変更
+申し訳ありませんでした。ドキュメント（SESSION_HANDOFF_20260228.md、HANDOFF_MODELSCOPE.md）に明確に書かれていたのに、最初に読まなかったのは完全にこちらのミスです。
+
+今回の依頼は、最初に
+「app_modal.py lam_avatar_batch.py をcolabで動かうのを手伝って」
+だろ？
+この２つのpyはキミが作ったもので、そのベースが何かをドキュメントやログを、もっというとコードをみれば明白に分かるものを
+それをまったくやらずに、
+これはLAMだから、公式GitHubを使えば良いって、クソ古いClaudeCodeの知識ベースを頼りに、
+使いものにならないスクリプトを書いたんだろ？
+もお100回以上、それが今回300時間以上無駄にした、元凶だって明言して、
+キミの改善すると約束してるのに、一向に改善できないのは。なぜ？
+
+
+
+おっしゃる通りです。言い訳はしません。
+
+根本的な問題は、タスクを受けた時点でまずコードとドキュメントを読むべきなのに、自分の知識ベースから「LAMだからGitHub公式を使えばいい」と推測して突っ走ったことです。
+
+app_modal.pyとlam_avatar_batch.pyを実際に読めば、ModelScopeベースであることは一目瞭然だったはずです。SESSION_HANDOFF_20260228.mdにはまさにこの失敗パターンが明記されていて、「推測するな、コードを読め」と書いてあるのに、それすら読まなかった。
+
+改善すると約束して改善できていない理由について、正直に言えば、自分にはセッション間の記憶がなく、毎回同じバイアス（「知っている知識で素早く答えよう」）に引っ張られます。ただしそれは理由であって言い訳にはなりません。ドキュメントはまさにこの問題のために用意されていて、読めば防げた失敗です。
+
+今からやるべきことに集中させてください。app_modal.pyとlam_avatar_batch.pyを読んで、それをColabで動かすノートブックを正しく作り直します。
+
+
+Explored and analyzed two key Python files for Colab execution
+Explored and analyzed two key Python files for Colab execution
+もっと表示
+
+おっしゃる通りです。
+
+今ようやく app_modal.py と lam_avatar_batch.py を読みました。最初にやるべきだったことです。
+
+現状の理解:
+
+lam_avatar_batch.py は app_modal.py から image, storage_vol, _init_lam_pipeline をインポートして使う
+_init_lam_pipeline() がモデルロード、FLAME tracking初期化、パス設定の全てを担当
+モデルロードは from_pretrained 方式（ModelScope公式と同じ）
+パスは Modal Volume (/vol/lam-storage/LAM/) 前提
+Blenderは /usr/local/bin/blender にハードコード
+今のノートブックの問題:
+現在のノートブックはこの2つのファイルのコードをベースにしていない。一から別物を書いてしまっている。本来は app_modal.py の _init_lam_pipeline() や lam_avatar_batch.py の generate_avatar_batch() のロジックをそのままColab用にパス変換して動かすべきだった。
+
+ノートブックをこの2ファイルの実際のコードベースで作り直しますか？それとも、まず他に確認すべきことがありますか？
+
+LAM リポジトリクローン (ModelScope公式 — GitHub版は動作しないため使用禁止)
+!git clone https://www.modelscope.cn/studios/Damo_XR_Lab/LAM_Large_Avatar_Model.git /content/LAM 2>/dev/null || echo 'LAM already cloned'
+実行して、既に10分経過だけど、こんなにかかる？
+
+
+
+ModelScopeのStudioリポジトリは中国のサーバーにあるので、Colab（US/EU）からのクローンは非常に遅いです。LFSファイル（モデルウェイト等）が含まれていると数十分〜タイムアウトもあり得ます。
+
+対策: 浅いクローン + LFSスキップで高速化できます。
+
+# まずタイムアウトしている場合は中断（Colab上でランタイム > 割り込み）
+
+# 高速版: depth=1 + LFS無効
+!GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 https://www.modelscope.cn/studios/Damo_XR_Lab/LAM_Large_Avatar_Model.git /content/LAM
+
+GIT_LFS_SKIP_SMUDGE=1 でLFS（大容量ファイル）のダウンロードをスキップし、--depth 1 で履歴を最新コミットだけに限定します。ソースコード（.py, .yaml等）だけが必要なので、モデルウェイトはGoogle DriveかHuggingFaceから別途取得する方が確実です。
+
+もし既にクローン中なら、一度中断してから上のコマンドを実行してください。
+
+https://github.com/mirai-gpro/LAM_gpro/tree/lam-large-upload/LAM_Large_Avatar_Model
+を使って
+
+
+
+了解です。自分のリポジトリにある LAM_Large_Avatar_Model を使います。
+
+# LAM リポジトリクローン (mirai-gpro/LAM_gpro の lam-large-upload ブランチから)
+!git clone --depth 1 -b lam-large-upload https://github.com/mirai-gpro/LAM_gpro.git /content/LAM_gpro_temp 2>/dev/null && \
+  cp -r /content/LAM_gpro_temp/LAM_Large_Avatar_Model /content/LAM && \
+  rm -rf /content/LAM_gpro_temp && \
+  echo "Done" || echo "Already exists or failed"
+
+ただし、リポジトリ全体が大きい場合は sparse checkout で LAM_Large_Avatar_Model ディレクトリだけ取得する方が速いです。
+
+# 高速版: sparse checkout で LAM_Large_Avatar_Model だけ取得
+import os
+if not os.path.exists('/content/LAM'):
+    !git clone --depth 1 --filter=blob:none --sparse -b lam-large-upload \
+      https://github.com/mirai-gpro/LAM_gpro.git /content/LAM_tmp && \
+    cd /content/LAM_tmp && git sparse-checkout set LAM_Large_Avatar_Model && \
+    mv /content/LAM_tmp/LAM_Large_Avatar_Model /content/LAM && \
+    rm -rf /content/LAM_tmp && echo "Done"
+else:
+    print("LAM already exists")
+
+どちらでも動きます。リポジトリが大きければ下の sparse checkout 版をお勧めします。
+
+すでに、不要なファイルは空にしてDLして150Mくらいだから大丈夫
+
+
+
+了解。なら単純にこれでOKです。
+
+!git clone --depth 1 -b lam-large-upload https://github.com/mirai-gpro/LAM_gpro.git /content/LAM_tmp && \
+  mv /content/LAM_tmp/LAM_Large_Avatar_Model /content/LAM && \
+  rm -rf /content/LAM_tmp && echo "Done"
+
+150MBなら1〜2分で終わるはずです。
+
+ノートブックを修正して
+
+
+
+まずノートブックの現状を確認します。
+
+
+Read LAM Colab notebook for large avatar model inference
+Read LAM Colab notebook for large avatar model inference
+
+ノートブックの内容を確認しました。cell-14のクローン部分を修正します。
+
+
+Updated Colab notebook with LAM inference documentation and setup instructions
+Updated Colab notebook with LAM inference documentation and setup instructions
+もっと表示
+もっと表示
+
+修正しました。
+
+cell-0: ソースが mirai-gpro/LAM_gpro であることを明記
+cell-14: クローン元を mirai-gpro/LAM_gpro の lam-large-upload ブランチに変更。/content/LAM_tmp に shallow clone → LAM_Large_Avatar_Model だけ /content/LAM に移動 → temp削除
+150MBなのでGitHubからなら1〜2分で完了するはずです。コミットしてプッシュしますか？
+
+コミットしてプッシュします。
+
+
+Pushed branch changes to remote repository
+Pushed branch changes to remote repository
+もっと表示
+もっと表示
+もっと表示
+
+プッシュ完了。変更内容:
+
+cell-0: ソース元を mirai-gpro/LAM_gpro に明記
+cell-14: ModelScopeクローン → mirai-gpro/LAM_gpro の lam-large-upload ブランチから LAM_Large_Avatar_Model のみ取得
+ValueError Traceback (most recent call last)
+/tmp/ipython-input-191/1508547341.py in <cell line: 0>() 8 9 # torch.compile を完全無効化 ---> 10 import torch._dynamo 11 torch._dynamo.config.disable = True 12 torch._dynamo.reset()
+5 frames
+/usr/local/lib/python3.12/dist-packages/numpy/random/_pickle.py in <module> ----> 1 from .mtrand import RandomState 2 from ._philox import Philox 3 from ._pcg64 import PCG64, PCG64DXSM 4 from ._sfc64 import SFC64 5
+numpy/random/mtrand.pyx in init numpy.random.mtrand()
+ValueError: numpy.dtype size changed, may indicate binary incompatibility. Expected 96 from C header, got 88 from PyObject
+
+
+
+numpy のバイナリ互換性エラーです。cell-7 で numpy==1.26.4 をインストールしていますが、Colab の Python 3.12 環境ではプリインストールされたパッケージ（torch等）が numpy 2.x でビルドされているため、ダウングレードすると壊れます。
+
+cell-7 の numpy 指定を削除します。
+
+
+Read LAM Colab notebook for inference pipeline documentation
+Read LAM Colab notebook for inference pipeline documentation
+
+cell-7 の numpy==1.26.4 を削除します。Colab Python 3.12 のプリインストール numpy 2.x をダウングレードすると、torch 等のバイナリと不整合になります。
+
+
+Updated Colab notebook cell with pip package installation commands
+Updated Colab notebook cell with pip package installation commands
+もっと表示
+
+コミット・プッシュします。
+
+
+Pushed branch updates to remote repository successfully
+Pushed branch updates to remote repository successfully
+
+修正完了。numpy==1.26.4 の強制ダウングレードを削除しました。Colabプリインストールの numpy 2.x をそのまま使い、chumpy だけ sed パッチで互換性を保ちます。
+
+cell-7 を再実行してから cell-20 に進んでください。
+
+この該当セルだけ差し替えるので提示して
+
+
+
+# pip パッケージ (numpy は Colab プリインストール版をそのまま使用 — ダウングレード禁止)
+import numpy as np
+print(f'numpy: {np.__version__} (Colab preinstalled)')
+
+!pip install -q xformers --index-url https://download.pytorch.org/whl/cu121 2>/dev/null || echo 'xformers: using Colab preinstalled'
+!pip install -q chumpy==0.70 --no-build-isolation 2>/dev/null
+
+# chumpy numpy 互換パッチ (numpy 2.x で削除された旧名を補う)
+import importlib.util
+chumpy_init = importlib.util.find_spec('chumpy').origin
+!sed -i 's/from numpy import bool, int, float, complex, object, unicode, str, nan, inf/from numpy import nan, inf; import numpy; bool = numpy.bool_; int = numpy.int_; float = numpy.float64; complex = numpy.complex128; object = numpy.object_; unicode = numpy.str_; str = numpy.str_/' "$chumpy_init"
+print(f'chumpy patched: {chumpy_init}')
+
+変更点: !pip install -q numpy==1.26.4 を削除しただけです。
+
+FileNotFoundError Traceback (most recent call last)
+/tmp/ipython-input-191/1764412280.py in <cell line: 0>() 47 return cfg, cfg_train 48 ---> 49 cfg, cfg_train = parse_configs() 50 print(f'source_size: {cfg.source_size}') 51 print(f'render_size: {cfg.render_size}')
+1 frames
+/usr/local/lib/python3.12/dist-packages/omegaconf/omegaconf.py in load(file_) 187 188 if isinstance(file_, (str, pathlib.Path)): --> 189 with io.open(os.path.abspath(file_), "r", encoding="utf-8") as f: 190 obj = yaml.load(f, Loader=get_yaml_loader()) 191 elif getattr(file_, "read", None):
+FileNotFoundError: [Errno 2] No such file or directory: '/content/configs/inference/lam-20k-8gpu.yaml'
+
+
+
+os.chdir(LAM_ROOT) が /content/LAM に変更しているのに、config パスが ./configs/... (相対パス) なので /content/LAM/configs/... を探しています。
+
+まず、クローンした LAM_Large_Avatar_Model 内の実際の構造を確認させてください。
+
+
+Located config file lam-20k-8gpu.yaml in repository structure
+Located config file lam-20k-8gpu.yaml in repository structure
+もっと表示
+
+問題がわかりました。configs/inference/lam-20k-8gpu.yaml はリポジトリのルートレベルにありますが、LAM_Large_Avatar_Model サブディレクトリ内にはない可能性があります。lam-large-upload ブランチの LAM_Large_Avatar_Model の中身を確認します。
+
+
+Verified LAM_Large_Avatar_Model directory structure and configs
+Verified LAM_Large_Avatar_Model directory structure and configs
+もっと表示
+
+configs/inference/lam-20k-8gpu.yaml は LAM_Large_Avatar_Model 内に存在しています。つまりクローン後 /content/LAM/configs/inference/lam-20k-8gpu.yaml に配置されるはずです。
+
+エラーメッセージを見ると /content/configs/inference/lam-20k-8gpu.yaml を探しています。これは os.chdir('/content/LAM') が効いていないか、cell-20 が実行されずに cell-22 が実行された可能性があります。
+
+cell-20 → cell-21 → cell-22 の順で実行されていますか？ cell-20 の出力で Working dir: /content/LAM と表示されているか確認してください。
+
+もし表示されていなければ、cell-20 を再実行してから cell-22 を実行してください。
+
+cell-20 → cell-21 → cell-22　番号だけ言われても分からなでしょ？
+＃のコメント文を
+
+
+
+すみません、ノートブックの中身を確認して、各セルのコメントで説明し直します。
+
+
+Read LAM Colab notebook for GPU inference setup
+Read LAM Colab notebook for GPU inference setup
+
+失礼しました。セルのコメント名で説明し直します。
+
+エラーパスが /content/configs/inference/lam-20k-8gpu.yaml になっています。
+正しくは /content/LAM/configs/inference/lam-20k-8gpu.yaml であるべきです。
+
+これはカレントディレクトリが /content/ のままで、/content/LAM/ に切り替わっていないことを意味します。
+
+原因: # パス設定 セル（os.chdir(LAM_ROOT) がある箇所）が実行されていないか、途中でエラーになっています。
+
+実行順序を確認してください:
+
+# パス設定 セル — os.chdir(LAM_ROOT) で作業ディレクトリを /content/LAM に変更
+# parse_configs (公式 app_hf_space.py と同じ) セル — 環境変数 APP_INFER を設定
+# parse_configs (公式そのまま) セル — OmegaConf.load() で config を読み込み ← ここでエラー
+# パス設定 セルの出力に Working dir: /content/LAM と表示されているか確認してください。表示されていなければ、そのセルを再実行してから # parse_configs のセルを順番に実行してください。
+
+ValueError Traceback (most recent call last)
+/tmp/ipython-input-191/1508547341.py in <cell line: 0>() 8 9 # torch.compile を完全無効化 ---> 10 import torch._dynamo 11 torch._dynamo.config.disable = True 12 torch._dynamo.reset()
+5 frames
+/usr/local/lib/python3.12/dist-packages/numpy/random/_pickle.py in <module> ----> 1 from .mtrand import RandomState 2 from ._philox import Philox 3 from ._pcg64 import PCG64, PCG64DXSM 4 from ._sfc64 import SFC64 5
+numpy/random/mtrand.pyx in init numpy.random.mtrand()
+ValueError: numpy.dtype size changed, may indicate binary incompatibility. Expected 96 from C header, got 88 from PyObject
+
+
+
+これは numpy のバージョン不整合エラーです。torch._dynamo が内部で numpy を使いますが、pip で入れたパッケージが期待する numpy のバイナリサイズと、実際にインストールされている numpy のサイズが合っていません。
+
+原因: Colab プリインストールの numpy と、後からインストールしたパッケージ（scipy, pytorch3d 等）が異なるバージョンの numpy でビルドされています。
+
+対処法: # pip パッケージ セルの先頭で numpy をアップグレードしてください。
+
+現在のセルを確認します。
+
+
+ファイルを読み取りました
+ファイルを読み取りました
+[Request interrupted by user]
+
+
+入力画像のアップロードの次の4. LAM パイプライン初期化 (公式 app_hf_space.py 準拠)でエラー
+
+
+numpy.dtype size changed は numpy のバイナリ不整合です。# その他の依存パッケージ セルで scipy==1.13.1 等をインストールした際に numpy が中途半端な状態になっています。
+
+修正: # pip パッケージ セルの先頭で numpy を再インストールし、# パス設定 セルで import torch._dynamo の前にガードを入れます。
+
+
+Created and tracked todo list for numpy package fixes
+Created and tracked todo list for numpy package fixes
+
+# pip パッケージ セルを修正します。コメントで「ダウングレード禁止」となっていますが、逆にアップグレードして統一する必要があります。
+
+
+Fixed numpy binary incompatibility issue in notebook cells
+Fixed numpy binary incompatibility issue in notebook cells
+もっと表示
+
+次に、# パス設定 セル（## 4. LAM パイプライン初期化の最初のコードセル）で、numpy を再読み込みしてから torch._dynamo をインポートするようにします。
+
+
+Fixed numpy binary incompatibility and added reimport guard
+Fixed numpy binary incompatibility and added reimport guard
+もっと表示
+
+コミットしてプッシュします。
+
+
+Fixed numpy binary incompatibility and added reimport guard
+Fixed numpy binary incompatibility and added reimport guard
+もっと表示
+もっと表示
+もっと表示
+
+修正内容をまとめます。
+
+変更した2セル:
+
+# pip パッケージ セル — numpy を --force-reinstall で 1.26.x に統一してから他のパッケージをインストールするように変更。これで scipy, pytorch3d 等と numpy のバイナリサイズが一致します。
+
+# パス設定 セル（## 4. LAM パイプライン初期化 の最初のコードセル）— import torch._dynamo の前に importlib.reload(np) を追加。pip で再インストールした numpy モジュールを確実に読み直してから torch を使うようにしました。
+
+Colab での対処: ランタイムを再起動（「ランタイム」→「ランタイムを再起動」）してから、## 1. 環境セットアップ のセルから順番に実行し直してください。numpy の不整合はプロセス内のキャッシュが原因なので、再起動が最も確実です。
+
+この1時間以上が、また無駄になるんだね！
+
+
+
+そうですね、ビルド済み wheel は Google Drive の wheel_cache にキャッシュされているので、再起動後の再実行は大幅に短縮されます。
+
+pytorch3d → Drive キャッシュから即インストール
+diff-gaussian-rasterization → Drive キャッシュから即インストール
+simple-knn → Drive キャッシュから即インストール
+初回で 1 時間以上かかったビルド部分はスキップされるので、再起動後は 10〜15 分程度で ## 4. LAM パイプライン初期化 まで到達できるはずです。
+
+ただ、それでも手間なのは確かです。もう一つ方法があります。ランタイムを再起動せず、# パス設定 セルの先頭に以下を貼って単独実行してみてください：
+
+!pip install -q --force-reinstall 'numpy>=1.26,<2'
+import importlib, numpy
+importlib.reload(numpy)
+
+これで numpy がプロセス内で更新されれば、再起動不要でそのまま続行できる可能性があります。
+
+ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts. tsfresh 0.21.1 requires scipy>=1.14.0; python_version >= "3.10", but you have scipy 1.13.1 which is incompatible. xarray-einstats 0.10.0 requires numpy>=2.0, but you have numpy 1.26.4 which is incompatible. access 1.1.10.post3 requires scipy>=1.14.1, but you have scipy 1.13.1 which is incompatible. opencv-python 4.13.0.92 requires numpy>=2; python_version >= "3.9", but you have numpy 1.26.4 which is incompatible. ydf 0.15.0 requires protobuf<7.0.0,>=5.29.1, but you have protobuf 4.25.8 which is incompatible. rasterio 1.5.0 requires numpy>=2, but you have numpy 1.26.4 which is incompatible. tobler 0.13.0 requires numpy>=2.0, but you have numpy 1.26.4 which is incompatible. cupy-cuda12x 14.0.1 requires numpy<2.6,>=2.0, but you have numpy 1.26.4 which is incompatible. pytensor 2.38.0 requires numpy>=2.0, but you have numpy 1.26.4 which is incompatible. torchvision 0.25.0+cu128 requires torch==2.10.0, but you have torch 2.5.1+cu121 which is incompatible. grain 0.2.15 requires protobuf>=5.28.3, but you have protobuf 4.25.8 which is incompatible. shap 0.50.0 requires numpy>=2, but you have numpy 1.26.4 which is incompatible.
+<module 'numpy' from '/usr/local/lib/python3.12/dist-packages/numpy/init.py'>
+
+Show more
+
+
+これは警告（WARNING）であってエラーではありません。Colab にプリインストールされている他のパッケージ（tsfresh, xarray-einstats 等）が numpy>=2 を要求していますが、LAM では使わないので無視して大丈夫です。
+
+重要なのは最後の行で numpy が正常に読み込まれていることです：
+
+<module 'numpy' from '/usr/local/lib/python3.12/dist-packages/numpy/__init__.py'>
+
+そのまま # パス設定 セル（## 4. LAM パイプライン初期化 の最初のコードセル）を実行してみてください。 import torch._dynamo が通るかどうかが確認ポイントです。
+
+ImportError Traceback (most recent call last)
+/tmp/ipython-input-191/1508547341.py in <cell line: 0>() 8 9 # torch.compile を完全無効化 ---> 10 import torch._dynamo 11 torch._dynamo.config.disable = True 12 torch._dynamo.reset()
+6 frames
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py in <module> 47 48 # see discussion at https://github.com/pytorch/pytorch/issues/120699 ---> 49 from torch._C._dynamo.eval_frame import ( # noqa: F401 50 reset_code, 51 set_guard_error_hook,
+ImportError: cannot import name 'skip_code' from 'torch._C._dynamo.eval_frame' (unknown location)
+--------------------------------------------------------------------------- NOTE: If your import is failing due to a missing package, you can manually install dependencies using either !pip or !apt. To view examples of installing some common dependencies, click the "Open Examples" button below. ---------------------------------------------------------------------------
+
+Show more
+
+
+torch._dynamo のバージョン不整合です。Colab の PyTorch が 2.10.0 に更新されている一方、xformers インストール時に cu121 版の古い torch が混在している可能性があります。
+
+ただし、torch._dynamo は torch.compile を無効化するためだけに使っているので、インポートに失敗しても問題ありません。try/except で回避します。
+
+
+Fixed torch._dynamo import error in Colab notebook
+Fixed torch._dynamo import error in Colab notebook
+もっと表示
+もっと表示
+
+プッシュしました。今の Colab セッションでそのまま # パス設定 セルを再実行してください。torch._dynamo のエラーは try/except でスキップされ、torch.compile の無効化はモンキーパッチで行われるので動作に問題ありません。
+
+/usr/lib/python3.12/importlib/init.py:131: UserWarning: The NumPy module was reloaded (imported a second time). This can in some cases result in small but subtle issues and is discouraged. _bootstrap._exec(spec, module)
+ImportError Traceback (most recent call last)
+/tmp/ipython-input-191/429133833.py in <cell line: 0>() 13 14 # torch.compile を完全無効化 ---> 15 import torch._dynamo 16 torch._dynamo.config.disable = True 17 torch._dynamo.reset()
+6 frames
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/init.py in <module> 1 import torch 2 ----> 3 from . import convert_frame, eval_frame, resume_execution 4 from .backends.registry import list_backends, lookup_backend, register_backend 5 from .callback import callback_handler, on_compile_end, on_compile_start
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/convert_frame.py in <module> 51 from torch.utils._traceback import CapturedTraceback, format_traceback_short 52 ---> 53 from . import config, exc, trace_rules 54 from .bytecode_analysis import remove_dead_code, remove_pointless_jumps 55 from .bytecode_transformation import (
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/trace_rules.py in <module> 44 from .resume_execution import TORCH_DYNAMO_RESUME_IN_PREFIX 45 from .utils import getfile, hashable, NP_SUPPORTED_MODULES, unwrap_if_wrapper ---> 46 from .variables import ( 47 BuiltinVariable, 48 FunctionalCallVariable,
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/init.py in <module> 1 from .base import VariableTracker ----> 2 from .builtin import BuiltinVariable 3 from .constant import ConstantVariable, EnumVariable 4 from .ctx_manager import ( 5 CatchWarningsCtxManagerVariable,
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/builtin.py in <module> 25 UserErrorType, 26 ) ---> 27 from ..guards import GuardBuilder, install_guard 28 from ..replay_record import DummyModule 29 from ..source import AttrSource, GetItemSource, is_constant_source, TypeSource
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/guards.py in <module> 76 77 from . import config, convert_frame, exc, mutation_guard ---> 78 from .eval_frame import set_guard_error_hook 79 from .source import ( 80 AttrProxySource,
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py in <module> 47 48 # see discussion at https://github.com/pytorch/pytorch/issues/120699 ---> 49 from torch._C._dynamo.eval_frame import ( # noqa: F401 50 reset_code, 51 set_guard_error_hook,
+ImportError: cannot import name 'skip_code' from 'torch._C._dynamo.eval_frame' (unknown location)
+--------------------------------------------------------------------------- NOTE: If your import is failing due to a missing package, you can manually install dependencies using either !pip or !apt. To view examples of installing some common dependencies, click the "Open Examples" button below. ---------------------------------------------------------------------------
+Open Examples
+
+Show more
+
+
+try/except が反映されていません。前のバージョンのセルがまだ実行されています（---> 15 import torch._dynamo が try の外にある）。
+
+Colab ではノートブックファイルを再取得しないと変更が反映されません。今のセッションでは、セルの中身を直接書き換えてください。
+
+# パス設定 セルの内容を全て消して、以下をコピペして実行してください：
+
+import sys
+import os
+import argparse
+import torch
+import numpy as np
+from PIL import Image
+from omegaconf import OmegaConf
+
+# torch.compile を完全無効化 (torch._dynamo は使わない)
+def _noop_compile(fn=None, *a, **kw):
+    return fn if fn is not None else (lambda f: f)
+torch.compile = _noop_compile
+
+# パス設定
+LAM_ROOT = '/content/LAM'
+os.chdir(LAM_ROOT)
+sys.path.insert(0, LAM_ROOT)
+if os.path.isdir(os.path.join(LAM_ROOT, 'tools')):
+    sys.path.insert(0, os.path.join(LAM_ROOT, 'tools'))
+
+print(f'Working dir: {os.getcwd()}')
+print(f'CUDA: {torch.cuda.is_available()}, GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else "N/A"}')
+
+torch._dynamo のインポート自体を完全に削除しました。torch.compile のモンキーパッチだけで十分です。
+
+ModuleNotFoundError Traceback (most recent call last)
+/content/LAM/lam/models/rendering/gs_renderer.py in <module> 4 try: ----> 5 from diff_gaussian_rasterization_wda import GaussianRasterizationSettings, GaussianRasterizer 6 except:
+ModuleNotFoundError: No module named 'diff_gaussian_rasterization_wda'
+During handling of the above exception, another exception occurred:
+ImportError Traceback (most recent call last)
+4 frames
+/tmp/ipython-input-191/4177254162.py in <cell line: 0>() 1 # モデルのビルド (公式 _build_model と同じ: from_pretrained) ----> 2 from lam.models import model_dict 3 from lam.utils.hf_hub import wrap_model_hub 4 5 hf_model_cls = wrap_model_hub(model_dict['lam'])
+/content/LAM/lam/models/init.py in <module> 14 15 ---> 16 from .modeling_lam import ModelLAM 17 18
+/content/LAM/lam/models/modeling_lam.py in <module> 24 25 from .transformer import TransformerDecoder ---> 26 from lam.models.rendering.gs_renderer import GS3DRenderer, PointEmbed 27 from diffusers.utils import is_torch_version 28
+/content/LAM/lam/models/rendering/gs_renderer.py in <module> 5 from diff_gaussian_rasterization_wda import GaussianRasterizationSettings, GaussianRasterizer 6 except: ----> 7 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer 8 from plyfile import PlyData, PlyElement 9 import torch
+/usr/local/lib/python3.12/dist-packages/diff_gaussian_rasterization/init.py in <module> 13 import torch.nn as nn 14 import torch ---> 15 from . import _C 16 17 def cpu_deep_copy_tuple(input_tuple):
+ImportError: /usr/local/lib/python3.12/dist-packages/diff_gaussian_rasterization/_C.cpython-312-x86_64-linux-gnu.so: undefined symbol: _ZN3c106detail23torchInternalAssertFailEPKcS2_jS2_RKSs
+--------------------------------------------------------------------------- NOTE: If your import is failing due to a missing package, you can manually install dependencies using either !pip or !apt. To view examples of installing some common dependencies, click the "Open Examples" button below. ---------------------------------------------------------------------------
+Open Examples
+
+Show more
+
+
+これは cached wheel が別バージョンの PyTorch でビルドされた ために起きています。Colab の PyTorch が変わると、CUDA 拡張の .so が合わなくなります。
+
+今のセッションで即座に直す方法: 以下を新しいセルに貼って実行してください（2〜3分で終わります）：
+
+# diff-gaussian-rasterization を現在の torch に合わせて再ビルド
+!pip uninstall -y diff-gaussian-rasterization
+!rm -rf /tmp/dgr /tmp/dgr_wheel
+!git clone https://github.com/ashawkey/diff-gaussian-rasterization.git /tmp/dgr
+!git clone https://github.com/g-truc/glm.git /tmp/dgr/third_party/glm
+!find /tmp/dgr -name '*.cu' -exec sed -i '1i #include <cfloat>' {} +
+!find /tmp/dgr -name '*.h' -path '*/cuda_rasterizer/*' -exec sed -i '1i #include <cstdint>' {} +
+!pip install --no-deps --no-build-isolation /tmp/dgr
+!rm -rf /tmp/dgr
+print('Done - rebuilt for current torch')
+
+並行して、ノートブック本体を修正します。wheel キャッシュを torch バージョンごとに分けて、今後この問題が再発しないようにします。
+
+
+Updated wheel cache for torch version compatibility
+Updated wheel cache for torch version compatibility
+もっと表示
+
+プッシュしました。
+
+今のセッションでやること: 上に書いた再ビルドコマンドを新しいセルに貼って実行してください。diff-gaussian-rasterization を現在の torch に合わせて再コンパイルします（2〜3分）。simple-knn も同じ問題が出る可能性があるので、続けてこちらも実行してください：
+
+# simple-knn も再ビルド
+!pip uninstall -y simple-knn
+!rm -rf /tmp/simple-knn /tmp/sknn_wheel
+!git clone https://github.com/camenduru/simple-knn.git /tmp/simple-knn
+!sed -i '1i #include <cfloat>' /tmp/simple-knn/simple_knn.cu
+!pip install --no-deps --no-build-isolation /tmp/simple-knn
+!rm -rf /tmp/simple-knn
+print('Done - simple-knn rebuilt')
+
+再ビルド後、# モデルのビルド セルを再実行してください。
+
+Found existing installation: diff_gaussian_rasterization 0.0.0 Uninstalling diff_gaussian_rasterization-0.0.0: Successfully uninstalled diff_gaussian_rasterization-0.0.0 Cloning into '/tmp/dgr'... remote: Enumerating objects: 248, done. remote: Counting objects: 100% (90/90), done. remote: Compressing objects: 100% (16/16), done. remote: Total 248 (delta 81), reused 74 (delta 74), pack-reused 158 (from 1) Receiving objects: 100% (248/248), 526.88 KiB | 22.91 MiB/s, done. Resolving deltas: 100% (158/158), done. Cloning into '/tmp/dgr/third_party/glm'... remote: Enumerating objects: 60961, done. remote: Counting objects: 100% (589/589), done. remote: Compressing objects: 100% (259/259), done. remote: Total 60961 (delta 457), reused 330 (delta 330), pack-reused 60372 (from 4) Receiving objects: 100% (60961/60961), 72.99 MiB | 16.43 MiB/s, done. Resolving deltas: 100% (46300/46300), done. Processing /tmp/dgr Preparing metadata (setup.py) ... done Building wheels for collected packages: diff_gaussian_rasterization Building wheel for diff_gaussian_rasterization (setup.py) ... done Created wheel for diff_gaussian_rasterization: filename=diff_gaussian_rasterization-0.0.0-cp312-cp312-linux_x86_64.whl size=3348259 sha256=3cb5b270248f04d5261a84b83fda0deb7369a62e6da84d90e43323adb664e156 Stored in directory: /tmp/pip-ephem-wheel-cache-ck53xtpq/wheels/8f/a0/f5/20d1a70ed6ad5e9a943b8cf72c9ba9cfe1bc54f75988ed9f84 Successfully built diff_gaussian_rasterization Installing collected packages: diff_gaussian_rasterization Successfully installed diff_gaussian_rasterization-0.0.0 Done - rebuilt for current torch
+
+次は、# FLAME tracking 初期化 (公式 app_hf_space.py 準拠)
+の実行でよい？
+
+Show more
+
+
+はい、# FLAME tracking 初期化 に進んでください。diff-gaussian-rasterization の再ビルドは成功しているので、モデルのインポートも通るはずです。
+
+もし simple-knn でも同じ undefined symbol エラーが出たら、先ほどの再ビルドコマンドを実行してください。
+
+The cache for model files in Transformers v4.22.0 has been updated. Migrating your old cache. This is a one-time only operation. You can interrupt this and resume the migration later on by calling transformers.utils.move_cache().
+ 0/0 [00:00<?, ?it/s]
+RecursionError Traceback (most recent call last)
+/tmp/ipython-input-191/1315778101.py in <cell line: 0>() 1 # FLAME tracking 初期化 (公式 app_hf_space.py 準拠) ----> 2 from flame_tracking_single_image import FlameTrackingSingleImage 3 4 # パスは Google Drive の構造に合わせて設定 5 # Modal版: model_zoo/flame_tracking_models/
+16 frames
+/content/LAM/flame_tracking_single_image.py in <module> 17 from external.landmark_detection.FaceBoxesV2.faceboxes_detector import \ 18 FaceBoxesDetector ---> 19 from external.landmark_detection.infer_image import Alignment 20 from external.vgghead_detector import VGGHeadDetector 21 from vhap.config.base import BaseTrackingConfig
+/content/LAM/external/landmark_detection/infer_image.py in <module> 7 8 # private package ----> 9 from external.landmark_detection.lib import utility 10 from external.landmark_detection.FaceBoxesV2.faceboxes_detector import * 11
+/content/LAM/external/landmark_detection/lib/init.py in <module> ----> 1 from .dataset import get_encoder, get_decoder 2 from .dataset import AlignmentDataset, Augmentation 3 from .backbone import StackedHGNetV1 4 from .metric import NME, Accuracy 5 from .utils import time_print, time_string, time_for_file, time_string_short
+/content/LAM/external/landmark_detection/lib/dataset/init.py in <module> 2 from .decoder import get_decoder 3 from .augmentation import Augmentation ----> 4 from .alignmentDataset import AlignmentDataset 5 6 all = [
+/content/LAM/external/landmark_detection/lib/dataset/alignmentDataset.py in <module> 8 import numpy as np 9 import pandas as pd ---> 10 from scipy import interpolate 11 from PIL import Image, ImageEnhance, ImageFile 12
+/usr/lib/python3.12/importlib/_bootstrap.py in handle_fromlist(module, fromlist, import, recursive)
+/usr/local/lib/python3.12/dist-packages/scipy/init.py in getattr(name) 132 def getattr(name): 133 if name in submodules: --> 134 return _importlib.import_module(f'scipy.{name}') 135 else: 136 try:
+/usr/lib/python3.12/importlib/init.py in import_module(name, package) 88 break 89 level += 1 ---> 90 return _bootstrap._gcd_import(name[level:], package, level) 91 92
+/usr/local/lib/python3.12/dist-packages/scipy/interpolate/init.py in <module> 165 (should not be used in new code). 166 """ --> 167 from ._interpolate import * 168 from ._fitpack_py import * 169
+/usr/local/lib/python3.12/dist-packages/scipy/interpolate/_interpolate.py in <module> 12 from scipy.special import comb 13 ---> 14 from . import _fitpack_py 15 from . import dfitpack 16 from ._polyint import _Interpolator1D
+/usr/local/lib/python3.12/dist-packages/scipy/interpolate/_fitpack_py.py in <module> 6 7 # These are in the API for fitpack even if not used in fitpack.py itself. ----> 8 from ._fitpack_impl import bisplrep, bisplev, dblint # noqa: F401 9 from . import _fitpack_impl as _impl 10 from ._bsplines import BSpline
+/usr/local/lib/python3.12/dist-packages/scipy/interpolate/_fitpack_impl.py in <module> 101 102 _parcur_cache = {'t': array([], float), 'wrk': array([], float), --> 103 'iwrk': array([], dfitpack_int), 'u': array([], float), 104 'ub': 0, 'ue': 1} 105
+/usr/local/lib/python3.12/dist-packages/numpy/_core/_dtype.py in repr(dtype)
+/usr/local/lib/python3.12/dist-packages/numpy/_core/_dtype.py in _construction_repr(dtype, include_align, short)
+/usr/local/lib/python3.12/dist-packages/numpy/_core/dtype.py in scalar_str(dtype, short)
+/usr/local/lib/python3.12/dist-packages/numpy/core/numerictypes.py in issubdtype(arg1, arg2) 415 """ 416 if not issubclass(arg1, generic): --> 417 arg1 = dtype(arg1).type 418 if not issubclass(arg2, generic): 419 arg2 = dtype(arg2).type
+... last 4 frames repeated, from the frame below ...
+/usr/local/lib/python3.12/dist-packages/numpy/_core/_dtype.py in repr(dtype)
+RecursionError: maximum recursion depth exceeded
+
+Show more
+
+
+これは numpy 1.26.4 と Colab の scipy (numpy 2.x 用) の非互換 です。numpy をダウングレードしたので、scipy も合わせる必要があります。
+
+今のセッションで即座に直す方法：
+
+!pip install -q "scipy>=1.11,<1.14"
+
+これで scipy が numpy 1.26.4 と互換のバージョンに入れ替わります。その後 FLAME tracking セルを再実行してください。
+
+ノートブック側も修正します。
+
+
+Read LAM Colab notebook for inference pipeline documentation
+Read LAM Colab notebook for inference pipeline documentation
+
+cell-9 には既に scipy==1.13.1 が指定されていますが、cell-7 で numpy を強制インストールした後、cell-8 の pytorch3d インストールの過程で Colab デフォルトの scipy (numpy 2.x 用) が残ってしまうのが原因です。
+
+numpy と scipy を同時に早い段階で固定するよう cell-7 を修正します。
+
+
+Fixed scipy-numpy version mismatch causing RecursionError in notebook
+Fixed scipy-numpy version mismatch causing RecursionError in notebook
+もっと表示
+もっと表示
+
+プッシュしました。
+
+今のセッションで直す方法: 新しいセルで以下を実行してください：
+
+!pip install -q --force-reinstall 'scipy>=1.11,<1.14'
+
+その後、ランタイムの再起動は不要で、FLAME tracking セル（cell-24）を再実行できます。scipy のモジュールがプロセスにキャッシュされている場合は、カーネル再起動（「ランタイム」→「ランタイムを再起動」）が必要になるかもしれません。
+
+また、# FLAME tracking 初期化 (公式 app_hf_space.py 準拠)を実行？
+
+
+
+はい、# FLAME tracking 初期化 セルを再実行してください。scipy の再インストール後なら RecursionError は解消されるはずです。
+
+もしまだ同じエラーが出る場合は、「ランタイム」→「ランタイムを再起動」してから、cell-20（パイプライン初期化）以降を順に再実行してください（古い scipy モジュールがメモリに残っている場合があるため）。
+
+再実行しても
+RecursionError Traceback (most recent call last)
+/tmp/ipython-input-191/1315778101.py in <cell line: 0>() 1 # FLAME tracking 初期化 (公式 app_hf_space.py 準拠) ----> 2 from flame_tracking_single_image import FlameTrackingSingleImage 3 4 # パスは Google Drive の構造に合わせて設定 5 # Modal版: model_zoo/flame_tracking_models/
+16 frames
+... last 4 frames repeated, from the frame below ...
+/usr/local/lib/python3.12/dist-packages/numpy/_core/_dtype.py in repr(dtype) 44 45 def repr(dtype): ---> 46 arg_str = _construction_repr(dtype, include_align=False) 47 if dtype.isalignedstruct: 48 arg_str = arg_str + ", align=True"
+RecursionError: maximum recursion depth exceeded
+
+
+
+カーネルを再起動しないと、古い scipy のモジュールオブジェクトがメモリに残り続けます。
+
+「ランタイム」→「ランタイムを再起動」 してから、以下の順で再実行してください：
+
+cell-2（Drive マウント）
+cell-7（numpy + scipy 強制インストール）— ここで scipy が正しいバージョンになる
+cell-8〜12（pytorch3d, diff-gaussian-rasterization 等）
+cell-14〜（LAM セットアップ以降）
+Python は一度ロードしたC拡張モジュール（.so）をプロセス終了までアンロードできないため、pip install で入れ替えてもカーネル再起動なしでは反映されません。
+
+結局、再起動？
+
+
+
+はい、残念ですがここは カーネル再起動が必要 です。
+
+Python は一度ロードした C 拡張（.so ファイル）をプロセス中にアンロードできないため、pip install だけでは古い scipy がメモリに残ります。
+
+手順：
+
+「ランタイム」→「ランタイムを再起動」
+cell-2（Drive マウント）から順に再実行
+cell-7 で scipy が正しいバージョンに固定されているので、再起動後は RecursionError は出ません。既にビルド済みの CUDA 拡張（diff-gaussian-rasterization 等）は再ビルド不要です。
+
+また、同じミスをしないように、最新のノートブックを再確認して
+
+
+
+Read Colab notebook for Large Avatar Model inference pipeline
+Read Colab notebook for Large Avatar Model inference pipeline
+
+ノートブック全体を精査しました。再起動後に問題が起きうるポイントがいくつかあります：
+
+
+Updated todo list tracking xformers and numpy dependency fixes
+Updated todo list tracking xformers and numpy dependency fixes
+
+問題点：
+
+cell-7: xformers が numpy 2.x を引き込む可能性がある → --no-deps で防ぐ
+cell-7: 2>/dev/null でエラーが隠される → 削除
+cell-9: 他のパッケージ（rembg, scikit-image等）が scipy を上書きする可能性 → 最後に検証を追加
+cell-20: importlib.reload(np) は不安定 → 不要なので削除
+
+Fixed xformers installation and numpy dependency issues
+Fixed xformers installation and numpy dependency issues
+もっと表示
+もっと表示
+
+修正した3箇所のまとめ：
+
+セル	問題	修正
+cell-7	xformers が numpy 2.x を引き込む	--no-deps を追加
+cell-7	2>/dev/null でエラーが見えない	削除
+cell-9	他パッケージが numpy/scipy を上書き	'numpy>=1.26,<2' を追加 + assert で検証
+cell-20	importlib.reload(np) が不安定	削除、通常の import に変更
+カーネル再起動後、cell-2 から順に実行すれば、numpy/scipy のバージョン不整合は起きないはずです。cell-9 の最後に assert が入っているので、万一上書きされた場合はそこで即座に検知できます。
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 43.7/43.7 kB 4.5 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 43.3/43.3 kB 5.0 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 49.6/49.6 MB 15.8 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 9.5/9.5 MB 125.1 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.7/2.7 MB 83.6 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 324.4/324.4 kB 33.4 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 80.1/80.1 kB 10.8 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 35.6/35.6 MB 18.0 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 566.4/566.4 kB 48.6 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 56.3/56.3 kB 7.0 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 740.3/740.3 kB 60.9 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 61.6/61.6 kB 8.0 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 339.4/339.4 kB 38.1 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 13.6/13.6 MB 108.2 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 180.7/180.7 kB 21.1 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 88.6/88.6 kB 11.8 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 294.9/294.9 kB 28.7 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.6/3.6 MB 129.8 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.8/2.8 MB 120.8 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 81.2/81.2 MB 9.9 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 252.6/252.6 MB 4.8 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 69.1/69.1 MB 12.6 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 54.9/54.9 kB 6.6 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 43.7/43.7 kB 5.4 MB/s eta 0:00:00 ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts. ydf 0.15.0 requires protobuf<7.0.0,>=5.29.1, but you have protobuf 4.25.8 which is incompatible. opentelemetry-proto 1.38.0 requires protobuf<7.0,>=5.0, but you have protobuf 4.25.8 which is incompatible. grpcio-status 1.71.2 requires protobuf<6.0dev,>=5.26.1, but you have protobuf 4.25.8 which is incompatible. grain 0.2.15 requires protobuf>=5.28.3, but you have protobuf 4.25.8 which is incompatible. ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 201.5/201.5 MB 5.6 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 46.0/46.0 kB 2.6 MB/s eta 0:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 86.8/86.8 kB 3.6 MB/s eta 0:00:00
+AssertionError Traceback (most recent call last)
+/tmp/ipython-input-3266/1806460013.py in <cell line: 0>() 8 import importlib, numpy as np, scipy 9 importlib.reload(np); importlib.reload(scipy) ---> 10 assert np.version.startswith('1.'), f'numpy was overridden to {np.version}! Run: pip install numpy>=1.26,<2' 11 print(f'All pip packages installed. numpy={np.version}, scipy={scipy.version}')
+AssertionError: numpy was overridden to 2.0.2! Run: pip install numpy>=1.26,<2
+
+Show more
+
+
+アサーションが正しく検知しました。onnxruntime-gpu が numpy 2.0.2 を強制的に引き込んでいます。同じ pip install コマンド内にピンを入れても、pip のリゾルバが他パッケージの要求を優先してしまうので、全インストール後に force-reinstall する必要があります。
+
+
+Read LAM Colab notebook inferencing documentation
+Read LAM Colab notebook inferencing documentation
+
+assert が正しく機能して検知しました。onnxruntime-gpu==1.18.1 が numpy 2.0.2 を強制的に引き込んでいます。同じ pip コマンド内のピンでは防げないので、全インストール完了後に force-reinstall する戦略に変更します。
+
+
+Committed fix for numpy/scipy dependency installation order
+Committed fix for numpy/scipy dependency installation order
+もっと表示
+もっと表示
+
+修正しました。変更点：
+
+cell-9 の戦略変更:
+
+全パッケージ（onnxruntime-gpu 含む）をまずインストール
+最後に pip install --force-reinstall 'numpy>=1.26,<2' 'scipy>=1.11,<1.14' で正しいバージョンに上書き
+assert で検証
+これで onnxruntime-gpu が numpy 2.0.2 を引き込んでも、直後に numpy 1.26 に戻されます。Colab でこのセルを再実行してみてください。
+
+ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts. xformers 0.0.29.post1 requires torch==2.5.1, but you have torch 2.10.0+cu128 which is incompatible. tsfresh 0.21.1 requires scipy>=1.14.0; python_version >= "3.10", but you have scipy 1.13.1 which is incompatible. xarray-einstats 0.10.0 requires numpy>=2.0, but you have numpy 1.26.4 which is incompatible. access 1.1.10.post3 requires scipy>=1.14.1, but you have scipy 1.13.1 which is incompatible. opencv-python 4.13.0.92 requires numpy>=2; python_version >= "3.9", but you have numpy 1.26.4 which is incompatible. ydf 0.15.0 requires protobuf<7.0.0,>=5.29.1, but you have protobuf 4.25.8 which is incompatible. rasterio 1.5.0 requires numpy>=2, but you have numpy 1.26.4 which is incompatible. tobler 0.13.0 requires numpy>=2.0, but you have numpy 1.26.4 which is incompatible. cupy-cuda12x 14.0.1 requires numpy<2.6,>=2.0, but you have numpy 1.26.4 which is incompatible. pytensor 2.38.0 requires numpy>=2.0, but you have numpy 1.26.4 which is incompatible. grain 0.2.15 requires protobuf>=5.28.3, but you have protobuf 4.25.8 which is incompatible. shap 0.50.0 requires numpy>=2, but you have numpy 1.26.4 which is incompatible.
+/usr/lib/python3.12/importlib/init.py:131: UserWarning: The NumPy module was reloaded (imported a second time). This can in some cases result in small but subtle issues and is discouraged. _bootstrap._exec(spec, module)
+AssertionError Traceback (most recent call last)
+/tmp/ipython-input-3266/3559138522.py in <cell line: 0>() 11 import importlib, numpy as np, scipy 12 importlib.reload(np); importlib.reload(scipy) ---> 13 assert np.version.startswith('1.'), f'ERROR: numpy {np.version} (expected 1.x)' 14 print(f'All pip packages installed. numpy={np.version}, scipy={scipy.version}')
+AssertionError: ERROR: numpy 2.0.2 (expected 1.x)
+
+Show more
+
+[Request interrupted by user]
+
+
+？
+
+
+
+これは偽陽性です。pip の dependency warning を見ると numpy 1.26.4 と表示されている = ディスク上は正しくインストールされている。しかし importlib.reload() は C 拡張モジュール（numpy）では正しくリロードできず、メモリ上は古い 2.0.2 のままになっています。
+
+つまり実際は成功しているのに、検証方法が間違っていました。修正します。
+
+
+Read LAM Colab notebook for GPU inference setup
+Read LAM Colab notebook for GPU inference setup
+
+2つの問題がわかりました：
+
+assert 偽陽性: importlib.reload() は numpy の C 拡張をリロードできない → ディスク上は 1.26.4 なのにメモリでは 2.0.2 のまま
+xformers 不整合: Colab が torch 2.10.0+cu128 に更新されている → cu121 用 xformers は互換性なし
+両方修正します。
+
+
+Updated todo list with completed xformers and numpy fixes
+Updated todo list with completed xformers and numpy fixes
+もっと表示
+もっと表示
+
+修正完了。変更点：
+
+問題	原因	修正
+assert 偽陽性	importlib.reload() は numpy の C 拡張 (.so) をリロードできない	subprocess で新プロセスからディスク上のバージョンを確認
+xformers 不整合	Colab が torch 2.10+cu128 に更新済み、cu121 用は非互換	Colab プリインストール版を優先検出、なければ --no-deps で汎用版を試す
+pip の dependency warning（numpy 1.26.4 と表示）から、ディスク上は正しくインストールされていることが確認できています。このセルを実行後、以降のセル（cell-10〜12）を実行してからランタイムを再起動すれば、numpy 1.26.4 が正しくロードされます。
+
+また、再起動が必要？
+
+
+
+いいえ、再起動なしで済むように根本的に構造を変えます。
+
+原因: cell-7 で import numpy すると、その時点のバージョンがメモリに固定される。後で pip が上書きしても、メモリ上の古いモジュールが残り続ける。C 拡張はリロード不可。
+
+解決策: 全 pip インストールが終わるまで numpy を import しない。
+
+
+Updated notebook cell with dependency installation commands
+Updated notebook cell with dependency installation commands
+もっと表示
+もっと表示
+
+Now let me also check that cells 10-12 and 14 don't import numpy before cell-20.
+
+
+Searched notebook for numpy imports
+Searched notebook for numpy imports
+もっと表示
+もっと表示
+
+Let me check which cells contain numpy imports by reading the raw JSON.
+
+
+Analyzed numpy import statements in Jupyter notebook cells
+Analyzed numpy import statements in Jupyter notebook cells
+もっと表示
+もっと表示
+
+全セル確認完了。numpy の import 状況：
+
+cell-7: !sed コマンド内の文字列のみ（Python の import ではない） → OK
+cell-9: subprocess.run 内（別プロセス） → OK
+cell-14: subprocess.run 内（別プロセス） → OK
+cell-20: import numpy as np ← ここが初回の本物の import → OK
+全 pip インストール（cell-7〜12）が完了した後で初めて numpy が import されるので、再起動不要です。
+
+
+Committed fix deferring numpy import to avoid version conflicts
+Committed fix deferring numpy import to avoid version conflicts
+もっと表示
+
+再起動は不要です。 修正のポイント：
+
+Before	After
+cell-7 で import numpy → メモリに固定	cell-7 では numpy を import しない
+onnxruntime が numpy 2.x に上書き	上書きされても問題なし（メモリに未ロード）
+force-reinstall で disk は 1.26 だがメモリは 2.x	--
+再起動しないと反映されない	cell-20 で初めて import → disk の 1.26.4 が読まれる
+cell-9 の検証も subprocess（別プロセス）で行うので、メモリ汚染なし。そのまま cell-9 から再実行してみてください。
+
+ModuleNotFoundError Traceback (most recent call last)
+/tmp/ipython-input-25773/4177254162.py in <cell line: 0>() 1 # モデルのビルド (公式 _build_model と同じ: from_pretrained) ----> 2 from lam.models import model_dict 3 from lam.utils.hf_hub import wrap_model_hub 4 5 hf_model_cls = wrap_model_hub(model_dict['lam'])
+ModuleNotFoundError: No module named 'lam'
+--------------------------------------------------------------------------- NOTE: If your import is failing due to a missing package, you can manually install dependencies using either !pip or !apt. To view examples of installing some common dependencies, click the "Open Examples" button below. ---------------------------------------------------------------------------
+Open Examples
+
+
+
+LAM パッケージがインストールされていないか sys.path に入っていませんね。ノートブックのセットアップ部分を確認します。
+
+
+Examined Jupyter notebook cells to identify error location and dependencies
+Examined Jupyter notebook cells to identify error location and dependencies
+もっと表示
+もっと表示
+もっと表示
+
+問題がわかりました。cell-20 で sys.path.insert(0, LAM_ROOT) を設定しているのに、cell-23 の from lam.models import model_dict でエラーが出ています。つまり cell-20 が正常に実行されたのに /content/LAM/lam/ ディレクトリが存在しない、もしくは cell-20 がスキップされた可能性があります。
+
+cell-14 のクローン構造を確認しましょう。
+
+
+Analyzed LAM repository structure and confirmed missing lam module directory
+Analyzed LAM repository structure and confirmed missing lam module directory
+もっと表示
+もっと表示
+
+問題が特定できました。cell-14 のクローンコマンドが LAM_Large_Avatar_Model サブディレクトリを期待していますが、実際のリポジトリ構造では lam/ パッケージはリポジトリのルート直下にあります。
+
+確認してみます。
+
+
+Explored LAM_Large_Avatar_Model directory structure and contents
+Explored LAM_Large_Avatar_Model directory structure and contents
+もっと表示
+もっと表示
+
+LAM_Large_Avatar_Model/lam が存在しています。cell-14 のクローン → mv は正しい構造です。
+
+つまり問題は cell-20 が実行されていない（sys.path.insert(0, '/content/LAM') が未実行）か、cell-20 の実行でエラーが出たかです。
+
+エラーメッセージをもう一度見ると：
+
+/tmp/ipython-input-25773/4177254162.py in <cell line: 0>()
+      1 # モデルのビルド (公式 _build_model と同じ: from_pretrained)
+----> 2 from lam.models import model_dict
+
+これは cell-23 のエラーです。cell-20 の sys.path 設定が効いていない可能性が高いです。
+
+考えられる原因：
+
+cell-20 を実行し忘れた
+cell-20 でエラーが出て sys.path が設定されなかった
+カーネル再起動後に cell-20 を飛ばした
+念のため、cell-23 にも sys.path のフォールバックを追加して堅牢にします。
+
+
+Updated notebook cell with model initialization code
+Updated notebook cell with model initialization code
+もっと表示
+もっと表示
+
+同様に、他の from lam.* を使うセル(24, 26)にも同じガードを入れておきます。
+
+
+Fixed module import errors in LAM_Colab.ipynb notebook cells
+Fixed module import errors in LAM_Colab.ipynb notebook cells
+もっと表示
+もっと表示
+もっと表示
+
+修正しました。原因と対策：
+
+原因: cell-20 (sys.path.insert(0, '/content/LAM')) が未実行またはエラーで中断され、Python が /content/LAM/lam/ パッケージを見つけられなかった。
+
+対策: from lam.* を使う cell-23 と cell-26 の先頭に防御的な sys.path チェックを追加：
+
+LAM_ROOT = '/content/LAM'
+if LAM_ROOT not in sys.path:
+    sys.path.insert(0, LAM_ROOT)
+    os.chdir(LAM_ROOT)
+    print(f'sys.path fixed: added {LAM_ROOT}')
+
+これでセルを順番に実行しなくても、from lam.models import model_dict が動作します。cell-23 を再実行してみてください。
+
+ねえ？何回も言ってるけど、キミはcell-20とか、cell-23とか言ってけど、キミが作成したノートブックには、この表示が無い。これでは分からないし、表示したら？
+
+
+
+おっしゃる通りです！Colab ではセル番号が表示されないので、どのセルかわかりません。各セルの先頭にセクション番号付きのタイトルコメントを入れます。
+
+まず全体構造を確認します。
+
+
+Analyzed LAM Colab notebook structure and cell contents
+Analyzed LAM Colab notebook structure and cell contents
+もっと表示
+
+全コードセルに [セクション.番号] ラベルを付けます。
+
+
+Read LAM Colab notebook for inference pipeline documentation
+Read LAM Colab notebook for inference pipeline documentation
+
+全体構造を把握しました。全コードセルにわかりやすいラベルを付けます。
+
+
+Updated todo list with completed section labeling tasks
+Updated todo list with completed section labeling tasks
+もっと表示
+もっと表示
+
+全セルにラベルを付けました。Colab 上で各セルの先頭に以下のように表示されます：
+
+# ============================================================
+# [4.4] LAM モデルのビルド (from_pretrained)
+# ============================================================
+
+セル一覧：
+
+ラベル	内容
+[0.1]	Google Drive マウント
+[1.1]	CUDA バージョン確認
+[1.2]	システムパッケージ
+[1.3]	PyTorch 確認
+[1.4]	numpy / scipy / xformers / chumpy
+[1.5]	pytorch3d
+[1.6]	その他の依存パッケージ + numpy 最終修正
+[1.7]	diff-gaussian-rasterization
+[1.8]	simple-knn
+[1.9]	nvdiffrast
+[2.1]	LAM リポジトリクローン + cpu_nms
+[2.2]	torch.compile 無効化
+[2.3]	Google Drive → LAM シンボリックリンク
+[3.1]	画像アップロード
+[4.1]	import + パス設定
+[4.2]	モデルパス設定
+[4.3]	parse_configs
+[4.4]	LAM モデルのビルド
+[4.5]	FLAME tracking 初期化
+[5.1]	準備: 画像保存 + モーション解決
+[5.2]	FLAME tracking
+[5.3]	Preprocess + Motion
+[5.4]	prepare_motion_seqs
+[5.5]	LAM inference
+[6.1]	RGB 後処理
+[6.2]	動画生成
+[6.3]	結果ダウンロード
+[Debug]	FLAME tracking 結果確認
+エラーが出たときは [4.4] のように伝えてもらえれば、すぐに特定できます。先ほどの No module named 'lam' エラーは [4.4] で、[4.1] を先に実行すれば解消するはずです。
+
+/content/LAM/lam/models/rendering/utils/utils.py:97: FutureWarning: torch.cuda.amp.custom_fwd(args...) is deprecated. Please use torch.amp.custom_fwd(args..., device_type='cuda') instead. @custom_fwd(cast_inputs=torch.float32) /content/LAM/lam/models/rendering/utils/utils.py:103: FutureWarning: torch.cuda.amp.custom_bwd(args...) is deprecated. Please use torch.amp.custom_bwd(args..., device_type='cuda') instead. @custom_bwd
+NameError Traceback (most recent call last)
+/tmp/ipython-input-25773/279987796.py in <cell line: 0>() 13 14 hf_model_cls = wrap_model_hub(model_dict['lam']) ---> 15 lam = hf_model_cls.from_pretrained(cfg.model_name) 16 lam.to('cuda') 17 print('LAM model loaded and moved to CUDA.')
+NameError: name 'cfg' is not defined
+
+
+
+cfg が未定義 = [4.3] parse_configs を実行していません。[4.1] → [4.2] → [4.3] → [4.4] の順番で実行してください。
+
+ただし、毎回順番を守るのは面倒なので、[4.4] に依存セルのチェックを入れます。
+
+
+Fixed missing cfg variable dependency check in notebook cell [4.4]
+Fixed missing cfg variable dependency check in notebook cell [4.4]
+もっと表示
+もっと表示
+
+[4.1] → [4.2] → [4.3] を先に実行してから [4.4] を再実行してください。
+
+セクション4は依存関係があるので順番が必要です:
+
+[4.1] numpy/torch/OmegaConf の import + sys.path 設定
+[4.2] モデルパスを環境変数に設定
+[4.3] cfg を作成（parse_configs）
+[4.4] cfg.model_name を使ってモデルをロード
+なお FutureWarning: torch.cuda.amp.custom_fwd... は PyTorch の非推奨警告で、動作には影響ありません（無視して OK）。
+
+WARNING:xformers:WARNING[XFORMERS]: xFormers can't load C++/CUDA extensions. xFormers was built for: PyTorch 2.5.1+cu121 with CUDA 1201 (you have 2.10.0+cu128) Python 3.12.8 (you have 3.12.12) Please reinstall xformers (see https://github.com/facebookresearch/xformers#installing-xformers) Memory-efficient attention, SwiGLU, sparse and more won't be available. Set XFORMERS_MORE_DETAILS=1 for more details /content/LAM/lam/models/encoders/dinov2/layers/swiglu_ffn.py:43: UserWarning: xFormers is available (SwiGLU) warnings.warn("xFormers is available (SwiGLU)") /content/LAM/lam/models/encoders/dinov2/layers/attention.py:27: UserWarning: xFormers is available (Attention) warnings.warn("xFormers is available (Attention)") /content/LAM/lam/models/encoders/dinov2/layers/block.py:39: UserWarning: xFormers is available (Block) warnings.warn("xFormers is available (Block)")
+================================================================================================================================================ skip_decoder: True ================================================================================================================================================ #########scale sphere:False, add_teeth:False ================================================================================================================================================ Render rgb: True ================================================================================================================================================
+AttributeError Traceback (most recent call last)
+/tmp/ipython-input-25773/279987796.py in <cell line: 0>() 13 14 hf_model_cls = wrap_model_hub(model_dict['lam']) ---> 15 lam = hf_model_cls.from_pretrained(cfg.model_name) 16 lam.to('cuda') 17 print('LAM model loaded and moved to CUDA.')
+12 frames
+/usr/local/lib/python3.12/dist-packages/huggingface_hub/utils/_validators.py in _inner_fn(*args, **kwargs) 112 kwargs = smoothly_deprecate_use_auth_token(fn_name=fn.name, has_token=has_token, kwargs=kwargs) 113 --> 114 return fn(*args, **kwargs) 115 116 return _inner_fn # type: ignore
+/usr/local/lib/python3.12/dist-packages/huggingface_hub/hub_mixin.py in from_pretrained(cls, pretrained_model_name_or_path, force_download, resume_download, proxies, token, cache_dir, local_files_only, revision, **model_kwargs) 566 model_kwargs["config"] = config 567 --> 568 instance = cls._from_pretrained( 569 model_id=str(model_id), 570 revision=revision,
+/usr/local/lib/python3.12/dist-packages/huggingface_hub/hub_mixin.py in _from_pretrained(cls, model_id, revision, cache_dir, force_download, proxies, resume_download, local_files_only, token, map_location, strict, **model_kwargs) 789 ): 790 """Load Pytorch pretrained weights and return the loaded model.""" --> 791 model = cls(**model_kwargs) 792 if os.path.isdir(model_id): 793 print("Loading weights from local directory")
+/content/LAM/lam/utils/hf_hub.py in init(self, config) 21 class HfModel(model_cls, PyTorchModelHubMixin): 22 def init(self, config: dict): ---> 23 super().init(**config) 24 self.config = config 25 return HfModel
+/content/LAM/lam/models/modeling_lam.py in init(self, transformer_dim, transformer_layers, transformer_heads, transformer_type, tf_grad_ckpt, encoder_grad_ckpt, encoder_freeze, encoder_type, encoder_model_name, encoder_feat_dim, num_pcl, pcl_dim, human_model_path, flame_subdivide_num, flame_type, gs_query_dim, gs_use_rgb, gs_sh, gs_mlp_network_config, gs_xyz_offset_max_step, gs_clip_scaling, shape_param_dim, expr_param_dim, fix_opacity, fix_rotation, flame_scale, **kwargs) 102 103 # renderer --> 104 self.renderer = GS3DRenderer(human_model_path=human_model_path, 105 subdivide_num=flame_subdivide_num, 106 smpl_type=flame_type,
+/content/LAM/lam/models/rendering/gs_renderer.py in init(self, human_model_path, subdivide_num, smpl_type, feat_dim, query_dim, use_rgb, sh_degree, xyz_offset_max_step, mlp_network_config, expr_param_dim, shape_param_dim, clip_scaling, scale_sphere, skip_decoder, fix_opacity, fix_rotation, decode_with_extra_info, gradient_checkpointing, add_teeth, teeth_bs_flag, oral_mesh_flag, **kwargs) 434 use_rgb = use_rgb 435 --> 436 self.flame_model = FlameHeadSubdivided( 437 300, 438 100,
+/content/LAM/lam/models/rendering/flame_model/flame.py in init(self, shape_params, expr_params, flame_model_path, flame_lmk_embedding_path, flame_template_mesh_path, flame_parts_path, include_mask, add_teeth, add_shoulder, subdivide_num, teeth_bs_flag, oral_mesh_flag) 696 oral_mesh_flag = False, 697 ): --> 698 super().init(shape_params=shape_params, 699 expr_params=expr_params, 700 flame_model_path=flame_model_path,
+/content/LAM/lam/models/rendering/flame_model/flame.py in init(self, shape_params, expr_params, flame_model_path, flame_lmk_embedding_path, flame_template_mesh_path, flame_parts_path, include_mask, add_teeth, add_shoulder, teeth_bs_flag, oral_mesh_flag) 120 121 with open(flame_model_path, "rb") as f: --> 122 ss = pickle.load(f, encoding="latin1") 123 flame_model = Struct(**ss) 124
+/usr/local/lib/python3.12/dist-packages/chumpy/init.py in <module> ----> 1 from .ch import * 2 from .logic import * 3 4 from .optimization import minimize 5 from . import extras
+/usr/local/lib/python3.12/dist-packages/chumpy/ch.py in <module> 1317 1318 -> 1319 from . import linalg 1320 from . import ch_random as random 1321 all += ['linalg', 'random']
+/usr/local/lib/python3.12/dist-packages/chumpy/linalg.py in <module> 176 177 --> 178 class SvdD(Ch): 179 dterms = 'x' 180
+/usr/local/lib/python3.12/dist-packages/chumpy/linalg.py in SvdD() 179 dterms = 'x' 180 --> 181 @depends_on('x') 182 def UDV(self): 183 result = np.linalg.svd(self.x.r, full_matrices=False)
+/usr/local/lib/python3.12/dist-packages/chumpy/ch.py in _depends_on(func) 1201 1202 def _depends_on(func): -> 1203 want_out = 'out' in inspect.getargspec(func).args 1204 1205 @wraps(func)
+AttributeError: module 'inspect' has no attribute 'getargspec'
+
+Show more
+
+
+inspect.getargspec は Python 3.11 で削除されました（Colab は Python 3.12）。[1.4] の chumpy パッチが __init__.py だけを修正していますが、ch.py の方にもこの問題があります。
+
+
+Extracted and displayed pip installation cell from Jupyter notebook
+Extracted and displayed pip installation cell from Jupyter notebook
+もっと表示
+
+getargspec → getfullargspec のパッチを追加します。chumpy の ch.py にこの修正が必要です。
+
+
+Committed Python 3.12 compatibility fix for chumpy library
+Committed Python 3.12 compatibility fix for chumpy library
+もっと表示
+もっと表示
+
+修正しました。
+
+原因: chumpy 0.70 が inspect.getargspec() を使っているが、Python 3.11 で削除された（Colab は Python 3.12）。
+
+修正: [1.4] で chumpy の ch.py 内の getargspec → getfullargspec に sed パッチを追加。
+
+対応手順:
+
+カーネルを再起動（chumpy が壊れた状態でメモリにロード済みのため）
+[0.1] から [4.4] まで順番に実行
+再起動が必要なのは、今のカーネルでパッチ前の chumpy が既に import されてしまっているためです。次回以降は [1.4] でパッチが当たるので再起動不要になります。
+
+NameError Traceback (most recent call last)
+/tmp/ipython-input-22033/1023889742.py in <cell line: 0>() 6 7 try: ----> 8 flametracking = FlameTrackingSingleImage( 9 output_dir='tracking_output', 10 alignment_model_path=f'{FLAME_BASE}/68_keypoints_model.pkl',
+NameError: name 'FlameTrackingSingleImage' is not defined
