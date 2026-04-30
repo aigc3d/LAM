@@ -40,6 +40,8 @@
 </div>
 
 ## 📢 News
+**[April 30, 2026]** We have released the technical report and project page of [MeshLAM](https://arxiv.org/abs/2604.22865v1), CVPR 2026!
+
 **[September 9, 2025]** We have released the technical report of [PanoLAM](https://arxiv.org/pdf/2509.07552)!
 
 **[May 20, 2025]** We have released the [WebGL-Render](https://github.com/aigc3d/LAM_WebRender)!
