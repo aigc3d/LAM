@@ -1,0 +1,12 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "unit: Unit tests (no external dependencies)",
+    "api: API contract tests (Flask test client)",
+    "integration: Integration tests (requires models)",
+    "slow: Slow tests (model loading, inference)",
+]
+addopts = "-v --tb=short -m 'not integration and not slow'"

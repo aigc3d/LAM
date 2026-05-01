@@ -1,0 +1,75 @@
+# OpenAvatarChat config for A2E + Japanese audio test
+# Gemini API + EdgeTTS (ja-JP) + LAM A2E
+#
+# Usage:
+#   Copy to C:\Users\hamad\OpenAvatarChat\config\chat_with_lam_jp.yaml
+#   python src/demo.py --config config/chat_with_lam_jp.yaml
+#
+# Requirements:
+#   - Gemini API key (https://aistudio.google.com/apikey)
+#   - pip install edge-tts addict yapf regex librosa transformers termcolor
+#   - models/LAM_audio2exp/pretrained_models/lam_audio2exp_streaming.tar
+#   - models/wav2vec2-base-960h/ (with model.safetensors or pytorch_model.bin)
+#   - models/iic/SenseVoiceSmall/
+
+default:
+  logger:
+    log_level: "INFO"
+  service:
+    host: "0.0.0.0"
+    port: 8282
+    cert_file: "ssl_certs/localhost.crt"
+    cert_key: "ssl_certs/localhost.key"
+  chat_engine:
+    model_root: "models"
+    handler_search_path:
+      - "src/handlers"
+    handler_configs:
+      LamClient:
+        module: client/h5_rendering_client/client_handler_lam
+        connection_ttl: 900
+        # ZIPパス: HF Spacesで生成した公式ZIPを指定
+        # 英語参照版と中国語参照版の2つでテスト比較
+        asset_path: lam_samples/concierge.zip
+
+      SileroVad:
+        module: vad/silerovad/vad_handler_silero
+        speaking_threshold: 0.5
+        start_delay: 2048
+        end_delay: 5000
+        buffer_look_back: 5000
+        speech_padding: 512
+
+      SenseVoice:
+        enabled: true
+        module: asr/sensevoice/asr_handler_sensevoice
+        model_name: "iic/SenseVoiceSmall"
+        # 日本語を強制指定（autoだと中国語と誤検出される）
+        # patch_asr_language.py を適用後に有効
+        language: "ja"
+
+      Edge_TTS:
+        enabled: true
+        module: tts/edgetts/tts_handler_edgetts
+        # 日本語音声: ja-JP-NanamiNeural (女性), ja-JP-KeitaNeural (男性)
+        voice: "ja-JP-NanamiNeural"
+        sample_rate: 24000
+
+      LLMOpenAICompatible:
+        enabled: true
+        module: llm/openai_compatible/llm_handler_openai_compatible
+        model_name: "gemini-2.5-flash"
+        enable_video_input: false
+        history_length: 20
+        system_prompt: "あなたはAIコンシェルジュです。日本語で簡潔に2〜3文で回答してください。"
+        api_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
+        # Gemini API key - replace with your own
+        # Get from: https://aistudio.google.com/apikey
+        api_key: "YOUR_GEMINI_API_KEY"
+
+      LAM_Driver:
+        enabled: true
+        module: avatar/lam/avatar_handler_lam_audio2expression
+        model_name: LAM_audio2exp
+        feature_extractor_model_name: wav2vec2-base-960h
+        audio_sample_rate: 24000
