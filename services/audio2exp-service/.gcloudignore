@@ -1,0 +1,7 @@
+# .gcloudignore - Cloud Build用の除外設定
+# ★ models/ は除外しない（Dockerイメージにベイクインするため）
+
+__pycache__/
+*.pyc
+.git
+.gitignore
