@@ -1,0 +1,12 @@
+# Cloud Build ignore file
+# Unlike .gitignore, we INCLUDE LAM_Audio2Expression for the build
+
+exp/
+models/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+*.md
+*.txt
+!requirements.txt
