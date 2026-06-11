@@ -1,0 +1,822 @@
+---
+// LAMAvatar.astro - LAM 3D Avatar Component using gaussian-splat-renderer-for-lam
+// This component renders a 3D avatar using WebGL Gaussian Splatting
+// With OpenAvatarChat WebSocket integration for real-time lip sync
+
+export interface Props {
+  avatarPath?: string;  // Path to avatar .zip file
+  width?: string;
+  height?: string;
+  wsUrl?: string;       // WebSocket URL for OpenAvatarChat backend
+  autoConnect?: boolean; // Auto-connect to WebSocket on load
+}
+
+const {
+  avatarPath = '/avatar/concierge.zip',
+  width = '100%',
+  height = '100%',
+  wsUrl = '',
+  autoConnect = false
+} = Astro.props;
+---
+
+<div
+  class="lam-avatar-container"
+  id="lamAvatarContainer"
+  data-avatar-path={avatarPath}
+  data-ws-url={wsUrl}
+  data-auto-connect={autoConnect.toString()}
+  style={`width: ${width}; height: ${height};`}
+>
+  <div class="lam-avatar-canvas" id="lamAvatarCanvas"></div>
+  <div class="lam-avatar-loading" id="lamAvatarLoading">
+    <div class="spinner"></div>
+    <p>Loading 3D Avatar...</p>
+  </div>
+  <div class="lam-avatar-fallback" id="lamAvatarFallback">
+    <img src="/images/avatar-anime.png" alt="AI Avatar" class="fallback-img" />
+  </div>
+</div>
+
+<style>
+.lam-avatar-container {
+  position: relative;
+  background: transparent;
+  overflow: hidden;
+}
+
+.lam-avatar-canvas {
+  width: 100%;
+  height: 100%;
+  display: none;
+}
+
+.lam-avatar-canvas.ready {
+  display: block;
+}
+
+.lam-avatar-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  z-index: 10;
+}
+
+.lam-avatar-loading.hidden {
+  display: none;
+}
+
+.lam-avatar-loading .spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid rgba(6, 182, 212, 0.3);
+  border-top-color: #06b6d4;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 12px;
+}
+
+.lam-avatar-loading p {
+  color: #0891b2;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.lam-avatar-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lam-avatar-fallback.hidden {
+  display: none;
+}
+
+.fallback-img {
+  max-width: 80%;
+  max-height: 80%;
+  object-fit: contain;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+</style>
+
+<script>
+/**
+ * LAM Avatar Controller with OpenAvatarChat WebSocket Integration
+ *
+ * Usage in your local environment:
+ * 1. Install NPM package: npm install gaussian-splat-renderer-for-lam
+ * 2. Place avatar .zip file in public/avatar/ directory
+ * 3. Connect to OpenAvatarChat backend for real-time lip sync
+ */
+
+import {
+  LAMWebSocketManager,
+  type ExpressionData,
+  type ExpressionFrameData,
+  type MotionData,
+  ARKIT_CHANNEL_NAMES
+} from '../scripts/lam/lam-websocket-manager';
+
+type ChatState = 'Idle' | 'Listening' | 'Thinking' | 'Responding';
+
+// 全52チャンネルを0で初期化
+function createDefaultExpressionData(): ExpressionData {
+  const data: ExpressionData = {};
+  ARKIT_CHANNEL_NAMES.forEach(name => {
+    data[name] = 0;
+  });
+  return data;
+}
+
+/**
+ * LAM Avatar Controller with Official OpenAvatarChat Sync Approach
+ *
+ * Synchronization mechanism:
+ * - Server bundles audio + expression data in JBIN format
+ * - AudioSyncPlayer plays audio and tracks playback position
+ * - Expression frames are synced based on audio playback time
+ * - No need for separate TTS event hooks
+ */
+class LAMAvatarController {
+  private container: HTMLElement;
+  private canvas: HTMLElement;
+  private loading: HTMLElement;
+  private fallback: HTMLElement;
+  private avatarPath: string;
+  private wsUrl: string;
+  private autoConnect: boolean;
+  private renderer: any = null;
+  private wsManager: LAMWebSocketManager | null = null;
+  private currentState: ChatState = 'Idle';
+  private expressionData: ExpressionData = createDefaultExpressionData();
+  private isInitialized = false;
+
+  // ★ 公式テストモード: test_expression_1s.json でループ再生
+  private testMode: boolean = false;  // false で実際のTTS同期モード
+  private testBsData: any = null;
+  private testStartTime: number = 0;
+
+  // Sync modes:
+  // - 'bundled': Official approach - audio + expression bundled from WebSocket
+  // - 'external': Hybrid approach - external TTS player + expression from WebSocket
+  private expressionUpdateInterval: number | null = null;
+  private syncMode: 'bundled' | 'external' = 'external';  // Default to external for gourmet-sp compatibility
+
+  // External TTS sync: Reference to external audio player and timing
+  private externalTtsPlayer: HTMLAudioElement | null = null;
+  private externalTtsStartTime: number = 0;
+  private externalTtsDuration: number = 0;
+
+  // Frame buffer for expression (used in external sync mode)
+  private frameBuffer: ExpressionData[] = [];
+  private frameQueue: ExpressionData[][] = [];
+  private frameIndex: number = 0;
+  private frameRate: number = 30;
+  private isPlayingFrames: boolean = false;
+  private waitingForAudio: boolean = false;
+  // ★ 公式と同じ: 再生開始時刻を記録し、経過時間からフレームを計算
+  private playbackStartTime: number = 0;
+
+  constructor(container: HTMLElement) {
+    this.container = container;
+    this.canvas = container.querySelector('#lamAvatarCanvas') as HTMLElement;
+    this.loading = container.querySelector('#lamAvatarLoading') as HTMLElement;
+    this.fallback = container.querySelector('#lamAvatarFallback') as HTMLElement;
+    this.avatarPath = container.dataset.avatarPath || '/avatar/concierge.zip';
+    this.wsUrl = container.dataset.wsUrl || '';
+    this.autoConnect = container.dataset.autoConnect === 'true';
+
+    this.init();
+  }
+
+  private async init() {
+    try {
+      // Try to load the LAM WebGL renderer
+      await this.loadRenderer();
+
+      // Start expression sync timer (for bundled audio+expression sync)
+      this.startExpressionSyncTimer();
+
+      // デバッグ：レンダラー状態を定期的にチェック
+      setInterval(() => {
+        const canvasVisible = this.canvas.classList.contains('ready');
+        const jawOpen = this.expressionData['jawOpen'] || 0;
+        const mouthLowerDownLeft = this.expressionData['mouthLowerDownLeft'] || 0;
+        const mouthLowerDownRight = this.expressionData['mouthLowerDownRight'] || 0;
+        const isAudioPlaying = this.wsManager?.isAudioPlaying() || false;
+        console.log(`[LAM Health] canvas=${canvasVisible}, renderer=${!!this.renderer}, state=${this.currentState}, audioPlaying=${isAudioPlaying}, jaw=${jawOpen.toFixed(3)}, mouthLD_L=${mouthLowerDownLeft.toFixed(3)}, mouthLD_R=${mouthLowerDownRight.toFixed(3)}`);
+      }, 2000);
+
+      // Auto-connect to WebSocket if configured
+      if (this.autoConnect && this.wsUrl) {
+        await this.connectWebSocket(this.wsUrl);
+      }
+    } catch (error) {
+      console.warn('LAM WebGL renderer not available, using fallback image:', error);
+      this.showFallback();
+    }
+  }
+
+  /**
+   * Start the expression sync timer
+   * NOTE: This is now DISABLED - all sync is handled in getExpressionData()
+   * to avoid race conditions with the renderer's 60fps calls
+   */
+  private startExpressionSyncTimer(): void {
+    // DISABLED: All sync logic moved to getExpressionData()
+    // The renderer calls getExpressionData() at ~60fps, which handles all sync
+    console.log('[LAM Avatar] Expression sync timer disabled - using getExpressionData() for sync');
+  }
+
+  /**
+   * Sync expression with external TTS player position
+   * NOTE: This logic is now integrated into getExpressionData()
+   */
+  private syncExpressionWithExternalPlayer(): void {
+    // DEPRECATED: Logic moved to getExpressionData()
+  }
+
+  // Track if external player is already linked to prevent duplicate listeners
+  private externalTtsLinked: boolean = false;
+  private ttsPlayHandler: (() => void) | null = null;
+  private ttsPauseHandler: (() => void) | null = null;
+  private ttsEndedHandler: (() => void) | null = null;
+
+  // ★ TTS状態を自分で追跡（pausedプロパティは信頼できない）
+  // pauseイベントがplayの直後に発火することがあるため
+  private ttsActive: boolean = false;
+  private ttsLastCurrentTime: number = 0;
+
+  /**
+   * Set the external TTS player for sync
+   * Call this to link the LAMAvatar with an external audio element
+   */
+  public setExternalTtsPlayer(player: HTMLAudioElement): void {
+    // Prevent duplicate linking
+    if (this.externalTtsLinked && this.externalTtsPlayer === player) {
+      console.log('[LAM Avatar] External TTS player already linked, skipping');
+      return;
+    }
+
+    // Remove old listeners if switching players
+    if (this.externalTtsPlayer && this.externalTtsPlayer !== player) {
+      if (this.ttsPlayHandler) this.externalTtsPlayer.removeEventListener('play', this.ttsPlayHandler);
+      if (this.ttsPauseHandler) this.externalTtsPlayer.removeEventListener('pause', this.ttsPauseHandler);
+      if (this.ttsEndedHandler) this.externalTtsPlayer.removeEventListener('ended', this.ttsEndedHandler);
+    }
+
+    this.externalTtsPlayer = player;
+    this.syncMode = 'external';
+
+    // Create bound handlers
+    this.ttsPlayHandler = () => {
+      console.log('[LAM External] TTS play event');
+      this.ttsActive = true;  // ★ 自分で追跡
+      this.ttsLastCurrentTime = player.currentTime;
+      this.externalTtsStartTime = Date.now() - (player.currentTime * 1000);
+      // ★ 修正: startFramePlaybackFromQueue()は呼ばない
+      // TTS-Syncモードでは getExpressionData() が frameBuffer と currentTime で直接同期する
+      // startFramePlaybackFromQueue() は frameQueue をクリアするため、複数TTS再生時に問題を起こす
+      console.log(`[LAM External] TTS play - frameBuffer has ${this.frameBuffer.length} frames`);
+    };
+
+    this.ttsPauseHandler = () => {
+      console.log('[LAM External] TTS pause event, currentTime=' + player.currentTime.toFixed(3));
+      // ★ pauseイベントではttsActiveをfalseにしない
+      // バッファリングやブラウザの挙動で一時的なpauseが発生するため
+      // 明示的にstopTtsSync()を呼ぶか、endedイベントで終了する
+    };
+
+    this.ttsEndedHandler = () => {
+      console.log('[LAM External] TTS ended event');
+      this.ttsActive = false;  // ★ 終了時のみfalseにする
+      // ★ 修正: stopFramePlayback()は呼ばない
+      // TTS-Syncモードでは getExpressionData() が ended を検出してリセットする
+      // stopFramePlayback() を呼ぶと次のTTS再生に影響する
+    };
+
+    // Listen for play/pause/ended events
+    player.addEventListener('play', this.ttsPlayHandler);
+    player.addEventListener('pause', this.ttsPauseHandler);
+    player.addEventListener('ended', this.ttsEndedHandler);
+
+    this.externalTtsLinked = true;
+    console.log('[LAM Avatar] External TTS player linked');
+  }
+
+  /**
+   * Switch sync mode
+   */
+  public setSyncMode(mode: 'bundled' | 'external'): void {
+    this.syncMode = mode;
+    console.log(`[LAM Avatar] Sync mode set to: ${mode}`);
+  }
+
+  private async loadRenderer() {
+    // Dynamic import of the gaussian-splat-renderer-for-lam package
+    // This will fail gracefully if the package is not installed
+    try {
+      const GaussianSplats3D = await import('gaussian-splat-renderer-for-lam');
+
+      // ★ テストモード: 公式test_expression_1s.jsonを読み込む
+      if (this.testMode) {
+        try {
+          const response = await fetch('/avatar/test_expression_1s.json');
+          this.testBsData = await response.json();
+          console.log(`[LAM TEST] Loaded test_expression_1s.json: ${this.testBsData.frames.length} frames`);
+        } catch (e) {
+          console.error('[LAM TEST] Failed to load test data:', e);
+          this.testMode = false;
+        }
+      }
+
+      // ★ 公式と同じ: .bind(this) 形式
+      this.renderer = await GaussianSplats3D.GaussianSplatRenderer.getInstance(
+        this.canvas,
+        this.avatarPath,
+        {
+          getChatState: this.getChatState.bind(this),
+          getExpressionData: this.getExpressionData.bind(this),
+          backgroundColor: '0xbae6fd',
+          alpha: 0.0
+        }
+      );
+
+      // ★ 公式と同じ: レンダラー初期化直後にstartTime設定
+      this.testStartTime = performance.now() / 1000;
+
+      this.isInitialized = true;
+      this.showCanvas();
+      console.log('LAM Avatar initialized successfully');
+
+      if (this.testMode) {
+        console.log('[LAM TEST] Test mode enabled - looping test_expression_1s.json');
+      }
+    } catch (error) {
+      throw new Error(`Failed to load LAM renderer: ${error}`);
+    }
+  }
+
+  private showCanvas() {
+    this.loading.classList.add('hidden');
+    this.fallback.classList.add('hidden');
+    this.canvas.classList.add('ready');
+  }
+
+  private showFallback() {
+    this.loading.classList.add('hidden');
+    this.canvas.classList.remove('ready');
+    this.fallback.classList.remove('hidden');
+  }
+
+  private expressionTimeoutId: number | null = null;
+
+  // WebSocket connection management
+
+  public async connectWebSocket(url: string): Promise<void> {
+    if (this.wsManager) {
+      this.wsManager.destroy();
+    }
+
+    this.wsManager = new LAMWebSocketManager({
+      // Legacy callbacks for backward compatibility (fallback mode)
+      onExpressionUpdate: (data: ExpressionData) => {
+        if (this.syncMode === 'bundled') return;  // Ignore in bundled mode
+        try {
+          const jawOpen = data['jawOpen'] || 0;
+          const mouthLowerDownLeft = data['mouthLowerDownLeft'] || 0;
+          console.log(`[LAM Expression] Single frame (legacy): jawOpen=${jawOpen.toFixed(3)}, mouthLD_L=${mouthLowerDownLeft.toFixed(3)}`);
+          Object.keys(data).forEach(key => {
+            this.expressionData[key] = data[key];
+          });
+        } catch (e) {
+          console.error('[LAM Expression] Update error:', e);
+        }
+      },
+      onExpressionFrames: (data: ExpressionFrameData) => {
+        if (this.syncMode === 'bundled') return;  // Ignore in bundled mode
+        try {
+          this.frameQueue.push(data.frames);
+          this.frameRate = data.frameRate;
+          this.waitingForAudio = true;
+          console.log(`[LAM Expression] Queued ${data.frameCount} frames (legacy mode)`);
+        } catch (e) {
+          console.error('[LAM Expression] Frame buffer error:', e);
+        }
+      },
+      onAudioData: (audio: Int16Array) => {
+        // Audio is now handled by AudioSyncPlayer in bundled mode
+        console.log(`[LAM Audio] Received ${audio.length} samples`);
+      },
+      onConnectionChange: (connected: boolean) => {
+        this.container.dispatchEvent(new CustomEvent('lamConnectionChange', {
+          detail: { connected }
+        }));
+        if (connected) {
+          this.setChatState('Idle');
+        }
+      },
+      // Official sync callbacks
+      onBatchStarted: (batchId: number) => {
+        console.log(`[LAM Avatar] Batch ${batchId} started - audio playing`);
+        this.setChatState('Responding');
+        this.container.dispatchEvent(new CustomEvent('lamSpeechStart', {
+          detail: { batchId }
+        }));
+      },
+      onBatchEnded: (batchId: number) => {
+        console.log(`[LAM Avatar] Batch ${batchId} ended - audio finished`);
+        this.resetExpression();
+        this.setChatState('Idle');
+        this.container.dispatchEvent(new CustomEvent('lamSpeechEnd', {
+          detail: { batchId }
+        }));
+      }
+    });
+
+    // Initialize the audio player (requires user interaction first)
+    await this.wsManager.initializeAudio();
+    await this.wsManager.connect(url);
+    console.log('[LAM Avatar] WebSocket connected with bundled sync:', url);
+  }
+
+  public disconnectWebSocket(): void {
+    if (this.wsManager) {
+      this.wsManager.destroy();
+      this.wsManager = null;
+    }
+  }
+
+  public isWebSocketConnected(): boolean {
+    return this.wsManager?.isConnected() ?? false;
+  }
+
+  // Audio control (delegated to WebSocket manager's AudioSyncPlayer)
+
+  public stopAudio(): void {
+    this.wsManager?.stopAudio();
+  }
+
+  public setAudioMute(muted: boolean): void {
+    this.wsManager?.setAudioMute(muted);
+  }
+
+  public isAudioPlaying(): boolean {
+    return this.wsManager?.isAudioPlaying() ?? false;
+  }
+
+  // ========================================
+  // Frame playback for lip sync
+  // ========================================
+
+  // ★ TTS再生開始時に外部から呼び出される
+  public startFramePlaybackFromQueue(): void {
+    if (this.isPlayingFrames) {
+      console.log('[LAM Playback] Already playing, skipping');
+      return;
+    }
+
+    if (this.frameQueue.length === 0) {
+      // フレームがまだ届いていない場合は、少し待ってリトライ
+      console.log('[LAM Playback] No frames in queue, waiting for frames...');
+      this.waitForFramesAndPlay(3, 200); // 3回リトライ、200ms間隔
+      return;
+    }
+
+    // キューからフレームを取り出して結合
+    this.frameBuffer = this.frameQueue.flat();
+    this.frameQueue = [];  // キューをクリア
+    this.waitingForAudio = false;
+
+    this.startFramePlayback();
+  }
+
+  // フレームが届くまで待ってから再生
+  private waitForFramesAndPlay(retriesLeft: number, delayMs: number): void {
+    if (retriesLeft <= 0) {
+      console.log('[LAM Playback] Gave up waiting for frames');
+      return;
+    }
+
+    setTimeout(() => {
+      if (this.isPlayingFrames) {
+        return; // 既に再生中
+      }
+
+      if (this.frameQueue.length > 0) {
+        console.log(`[LAM Playback] Frames arrived, starting playback (waited ${(4 - retriesLeft) * delayMs}ms)`);
+        this.frameBuffer = this.frameQueue.flat();
+        this.frameQueue = [];
+        this.waitingForAudio = false;
+        this.startFramePlayback();
+      } else {
+        console.log(`[LAM Playback] Still waiting for frames... (${retriesLeft - 1} retries left)`);
+        this.waitForFramesAndPlay(retriesLeft - 1, delayMs);
+      }
+    }, delayMs);
+  }
+
+  // ★ 公式と同じ: 再生開始時刻を記録するだけ（タイマー不要）
+  // フレームの取得はgetExpressionData()で経過時間から計算する
+  private startFramePlayback(): void {
+    if (this.isPlayingFrames || this.frameBuffer.length === 0) {
+      return;
+    }
+
+    this.isPlayingFrames = true;
+    this.playbackStartTime = performance.now();
+    this.frameIndex = 0;
+
+    const durationMs = (this.frameBuffer.length / this.frameRate) * 1000;
+    console.log(`[LAM Playback] Starting frame playback: ${this.frameBuffer.length} frames at ${this.frameRate}fps (duration: ${durationMs.toFixed(0)}ms)`);
+
+    // 状態をRespondingに設定
+    if (this.currentState !== 'Responding') {
+      this.setChatState('Responding');
+    }
+    // ★ タイマー不要 - getExpressionData()でリアルタイムにフレームを計算
+  }
+
+  public stopFramePlayback(): void {
+    console.log('[LAM Playback] Stopping frame playback');
+    this.isPlayingFrames = false;
+    this.playbackStartTime = 0;
+
+    // Reset to idle expression after a short delay
+    setTimeout(() => {
+      if (!this.isPlayingFrames) {
+        this.resetExpression();
+        this.setChatState('Idle');
+      }
+    }, 200);
+  }
+
+  private resetExpression(): void {
+    // Reset all expression channels to 0
+    ARKIT_CHANNEL_NAMES.forEach(name => {
+      this.expressionData[name] = 0;
+    });
+    console.log('[LAM Avatar] Expression reset to neutral');
+  }
+
+  // Public API for external control
+
+  public getChatState(): ChatState {
+    return this.currentState;
+  }
+
+  public setChatState(state: ChatState) {
+    console.log(`[LAM Avatar] setChatState: ${this.currentState} → ${state}`);
+    this.currentState = state;
+    // Emit event for other components
+    this.container.dispatchEvent(new CustomEvent('lamStateChange', {
+      detail: { state }
+    }));
+  }
+
+  // ★ 公式 gaussianAvatar.ts の getArkitFaceFrame() を正確にコピー
+  private getExpCallCount = 0;
+  private lastLoggedFrameIndex = -1;
+
+  public getExpressionData() {
+    this.getExpCallCount++;
+
+    // ★★★ テストモード: 公式と完全に同じループ再生 ★★★
+    if (this.testMode && this.testBsData) {
+      const length = this.testBsData.frames.length;
+      const frameInfoInternal = 1.0 / 30.0;
+      const currentTime = performance.now() / 1000;
+      const calcDelta = (currentTime - this.testStartTime) % (length * frameInfoInternal);
+      const frameIndex = Math.floor(calcDelta / frameInfoInternal);
+
+      this.expressionData = {};
+      this.testBsData.names.forEach((name: string, index: number) => {
+        this.expressionData[name] = this.testBsData.frames[frameIndex].weights[index];
+      });
+
+      // 30フレームごとにログ（1秒に1回）
+      if (this.getExpCallCount % 30 === 0) {
+        const jaw = this.expressionData['jawOpen'] || 0;
+        const mouth = this.expressionData['mouthLowerDownLeft'] || 0;
+        console.log(`[LAM TEST] Frame ${frameIndex}/${length}: jaw=${jaw.toFixed(3)}, mouth=${mouth.toFixed(3)}`);
+      }
+
+      return this.expressionData;
+    }
+
+    // ★★★ TTS同期モード: 外部プレーヤーの再生位置に基づいてフレームを取得 ★★★
+    if (this.syncMode === 'external' && this.externalTtsPlayer && this.frameBuffer.length > 0) {
+      // ★ 修正: pausedプロパティではなく、自分で追跡したttsActiveフラグを使用
+      // pauseイベントがplayの直後に発火することがあるため、pausedは信頼できない
+      const currentTimeMs = this.externalTtsPlayer.currentTime * 1000;
+
+      // TTS同期が有効な条件:
+      // 1. ttsActiveがtrue（playイベント後、endedイベント前）
+      // 2. OR currentTimeが進んでいる（実際に音声が再生されている）
+      // ★ ttsActiveがtrueならcurrentTimeが0でも同期開始（再生直後）
+      const isSyncActive = this.ttsActive || (currentTimeMs > 0 && !this.externalTtsPlayer.ended);
+
+      if (isSyncActive) {
+        // currentTimeがまだ0でもframe 0を使用
+        const effectiveTimeMs = Math.max(0, currentTimeMs);
+        const frameIndex = Math.floor((effectiveTimeMs / 1000) * this.frameRate);
+
+        if (frameIndex >= 0 && frameIndex < this.frameBuffer.length) {
+          // ★ 公式と同じ: 毎回新しいオブジェクトを作成
+          this.expressionData = {};
+          const frame = this.frameBuffer[frameIndex];
+          Object.keys(frame).forEach((name: string) => {
+            this.expressionData[name] = frame[name];
+          });
+
+          // 10フレームごとにログ（フレームが変わった時のみ）
+          if (frameIndex !== this.lastLoggedFrameIndex && frameIndex % 10 === 0) {
+            this.lastLoggedFrameIndex = frameIndex;
+            const jaw = this.expressionData['jawOpen'] || 0;
+            const mouth = this.expressionData['mouthLowerDownLeft'] || 0;
+            const paused = this.externalTtsPlayer.paused;
+            console.log(`[LAM TTS-Sync] Frame ${frameIndex}/${this.frameBuffer.length}: jaw=${jaw.toFixed(3)}, mouth=${mouth.toFixed(3)}, ttsTime=${effectiveTimeMs.toFixed(0)}ms, ttsActive=${this.ttsActive}, paused=${paused}`);
+          }
+
+          // 状態をRespondingに設定
+          if (this.currentState !== 'Responding') {
+            this.setChatState('Responding');
+          }
+
+          // currentTimeの進行を追跡
+          this.ttsLastCurrentTime = this.externalTtsPlayer.currentTime;
+
+          return this.expressionData;
+        } else if (frameIndex >= this.frameBuffer.length) {
+          // フレームバッファの終端を超えた - 最後のフレームを維持
+          const lastFrame = this.frameBuffer[this.frameBuffer.length - 1];
+          if (lastFrame) {
+            this.expressionData = {};
+            Object.keys(lastFrame).forEach((name: string) => {
+              this.expressionData[name] = lastFrame[name];
+            });
+          }
+          // ★ TTSがまだ再生中なら最後のフレームを返す（フォールスルー防止）
+          if (!this.externalTtsPlayer.ended) {
+            return this.expressionData;
+          }
+        }
+      }
+
+      // ★ TTS終了検出（バッファはクリアしない - 複数セグメント対応）
+      // バッファのクリアは concierge-controller が新しいスピーチ開始時に行う
+      // ここではフレームバッファが使い切られた場合のみリセット
+      if (this.externalTtsPlayer.ended && !this.ttsActive) {
+        // ttsActiveがfalse（endedイベントで設定）かつendedの場合
+        // 次のセグメントがなければニュートラルに戻す
+        if (this.currentState === 'Responding') {
+          console.log('[LAM TTS-Sync] TTS ended and no active playback, resetting to idle');
+          this.resetExpression();
+          this.setChatState('Idle');
+        }
+      }
+    }
+
+    // フォールバック: playbackStartTimeベースの再生（レガシー）
+    // ★ TTS-Syncモードが有効な場合はスキップ（競合防止）
+    const skipLegacy = this.syncMode === 'external' && this.ttsActive;
+    if (!skipLegacy && this.isPlayingFrames && this.frameBuffer.length > 0 && this.playbackStartTime > 0) {
+      const length = this.frameBuffer.length;
+      const frameInfoInternal = 1.0 / this.frameRate;
+      const currentTime = performance.now() / 1000;
+      const calcDelta = currentTime - (this.playbackStartTime / 1000);
+
+      // 再生終了チェック
+      if (calcDelta >= length * frameInfoInternal) {
+        console.log(`[LAM Playback] Completed (legacy mode)`);
+        this.stopFramePlayback();
+        return this.expressionData;
+      }
+
+      const frameIndex = Math.floor(calcDelta / frameInfoInternal);
+
+      // ★ 公式と同じ: 毎回新しいオブジェクトを作成
+      this.expressionData = {};
+      const frame = this.frameBuffer[frameIndex];
+      if (frame) {
+        Object.keys(frame).forEach((name: string) => {
+          this.expressionData[name] = frame[name];
+        });
+      }
+
+      // 10フレームごとにログ
+      if (frameIndex !== this.lastLoggedFrameIndex && frameIndex % 10 === 0) {
+        this.lastLoggedFrameIndex = frameIndex;
+        const jaw = this.expressionData['jawOpen'] || 0;
+        const mouth = this.expressionData['mouthLowerDownLeft'] || 0;
+        console.log(`[LAM Legacy] Frame ${frameIndex}/${length}: jaw=${jaw.toFixed(3)}, mouth=${mouth.toFixed(3)}`);
+      }
+
+      return this.expressionData;
+    }
+
+    // デフォルト: 何も再生していない場合
+    if (this.getExpCallCount % 100 === 0) {
+      const hasBuffer = this.frameBuffer.length > 0;
+      const ttsTime = this.externalTtsPlayer ? this.externalTtsPlayer.currentTime.toFixed(2) : 'N/A';
+      console.log(`[LAM getExpressionData] Called ${this.getExpCallCount}x, buffer=${hasBuffer}, ttsActive=${this.ttsActive}, ttsTime=${ttsTime}s, isPlaying=${this.isPlayingFrames}`);
+    }
+
+    return this.expressionData;
+  }
+
+  public setExpressionData(data: ExpressionData) {
+    this.expressionData = data;
+  }
+
+  // Update expression from Audio2Expression output (manual mode)
+  public updateFromAudio2Expression(frameData: { names: string[], weights: number[] }) {
+    const newExpression: ExpressionData = {};
+    frameData.names.forEach((name, index) => {
+      newExpression[name] = frameData.weights[index];
+    });
+    this.expressionData = newExpression;
+  }
+
+  // Send end speech signal to backend
+  public sendEndSpeech(): void {
+    this.wsManager?.sendEndSpeech();
+  }
+
+  /**
+   * Queue expression frames from external source (REST API)
+   * Use this when expression data comes from a REST API instead of WebSocket
+   *
+   * ★ 修正: フレームを直接frameBufferに追加（TTSと同期するため）
+   * - 以前: frameQueueに追加 → playイベントでflattenして使用（タイミング問題あり）
+   * - 修正後: 直接frameBufferに追加 → TTS再生位置でフレームを取得
+   *
+   * @param frames - Array of expression frames
+   * @param frameRate - Frame rate (default 30fps)
+   */
+  public queueExpressionFrames(frames: ExpressionData[], frameRate: number = 30): void {
+    if (!frames || frames.length === 0) {
+      console.warn('[LAM Avatar] queueExpressionFrames called with no frames');
+      return;
+    }
+
+    // ★ 直接frameBufferに追加（既存のフレームに追加）
+    // これにより、複数チャンクの音声に対応
+    this.frameBuffer = this.frameBuffer.concat(frames);
+    this.frameRate = frameRate;
+
+    // レガシー互換: frameQueueにも追加
+    this.frameQueue.push(frames);
+    this.waitingForAudio = true;
+
+    console.log(`[LAM Avatar] Added ${frames.length} frames to buffer (total: ${this.frameBuffer.length}) at ${frameRate}fps`);
+  }
+
+  /**
+   * Clear frame buffer (call when starting new speech)
+   */
+  public clearFrameBuffer(): void {
+    this.frameBuffer = [];
+    this.frameQueue = [];
+    this.lastLoggedFrameIndex = -1;
+    this.ttsActive = false;  // ★ リセット
+    this.ttsLastCurrentTime = 0;
+    console.log('[LAM Avatar] Frame buffer cleared');
+  }
+
+  /**
+   * Stop TTS sync manually (call when TTS is interrupted)
+   */
+  public stopTtsSync(): void {
+    console.log('[LAM Avatar] stopTtsSync called');
+    this.ttsActive = false;
+    this.stopFramePlayback();
+  }
+
+  // Get WebSocket manager for advanced usage
+  public getWebSocketManager(): LAMWebSocketManager | null {
+    return this.wsManager;
+  }
+}
+
+// Initialize when DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+  const container = document.getElementById('lamAvatarContainer');
+  if (container) {
+    // Expose controller globally for external access
+    (window as any).lamAvatarController = new LAMAvatarController(container);
+  }
+});
+
+// Export for module usage
+export { LAMAvatarController };
+</script>

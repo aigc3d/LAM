@@ -1,0 +1,76 @@
+# Cloud Build configuration for audio2exp-service
+# Models are downloaded from GCS and baked into the Docker image
+
+options:
+  machineType: 'E2_HIGHCPU_8'
+  diskSizeGb: 100
+
+steps:
+  # Step 1: Download models from GCS
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        mkdir -p models
+        echo "Downloading LAM model..."
+        gsutil cp gs://hp-support-477512-models/audio2exp/LAM_audio2exp_streaming.tar models/
+        echo "Downloading wav2vec2 model..."
+        gsutil -m cp -r gs://hp-support-477512-models/audio2exp/wav2vec2-base-960h models/
+        echo "Models downloaded:"
+        ls -la models/
+        ls -la models/wav2vec2-base-960h/ || true
+
+  # Step 2: Build Docker image (models are copied into image)
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '--no-cache'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/audio2exp-service:$BUILD_ID'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/audio2exp-service:latest'
+      - '.'
+
+  # Step 3: Push to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - '--all-tags'
+      - 'gcr.io/$PROJECT_ID/audio2exp-service'
+
+  # Step 4: Deploy to Cloud Run (simple, no FUSE)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'audio2exp-service'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/audio2exp-service:$BUILD_ID'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--execution-environment'
+      - 'gen2'
+      - '--memory'
+      - '8Gi'
+      - '--cpu'
+      - '4'
+      - '--cpu-boost'
+      - '--timeout'
+      - '300'
+      - '--concurrency'
+      - '10'
+      - '--min-instances'
+      - '0'
+      - '--max-instances'
+      - '2'
+
+images:
+  - 'gcr.io/$PROJECT_ID/audio2exp-service:$BUILD_ID'
+  - 'gcr.io/$PROJECT_ID/audio2exp-service:latest'
+
+timeout: '3600s'
