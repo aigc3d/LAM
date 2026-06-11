@@ -1,0 +1,13 @@
+flask>=3.0.0
+flask-cors>=4.0.0
+gunicorn>=21.2.0
+numpy>=1.24.0
+torch>=2.0.0
+transformers>=4.30.0
+pydub>=0.25.1
+# LAM_Audio2Expression INFER pipeline dependencies
+librosa>=0.10.0
+scipy>=1.10.0
+addict>=2.4.0
+yapf>=0.40.0
+termcolor>=2.0.0
