@@ -1,0 +1,69 @@
+diff --git a/engines/infer.py b/engines/infer.py
+index ffd6cfe..a5eac9f 100644
+--- a/engines/infer.py
++++ b/engines/infer.py
+@@ -41,14 +41,24 @@ from models.utils import smooth_mouth_movements, apply_frame_blending, apply_sav
+ 
+ INFER = Registry("infer")
+ 
++# Device detection for CPU/GPU support
++def get_device():
++    """Get the best available device (CUDA or CPU)"""
++    if torch.cuda.is_available():
++        return torch.device('cuda')
++    else:
++        return torch.device('cpu')
++
+ class InferBase:
+     def __init__(self, cfg, model=None, verbose=False) -> None:
+         torch.multiprocessing.set_sharing_strategy("file_system")
++        self.device = get_device()
+         self.logger = get_root_logger(
+             log_file=os.path.join(cfg.save_path, "infer.log"),
+             file_mode="a" if cfg.resume else "w",
+         )
+         self.logger.info("=> Loading config ...")
++        self.logger.info(f"=> Using device: {self.device}")
+         self.cfg = cfg
+         self.verbose = verbose
+         if self.verbose:
+@@ -65,13 +75,13 @@ class InferBase:
+         n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+         self.logger.info(f"Num params: {n_parameters}")
+         model = create_ddp_model(
+-            model.cuda(),
++            model.to(self.device),
+             broadcast_buffers=False,
+             find_unused_parameters=self.cfg.find_unused_parameters,
+         )
+         if os.path.isfile(self.cfg.weight):
+             self.logger.info(f"Loading weight at: {self.cfg.weight}")
+-            checkpoint = torch.load(self.cfg.weight)
++            checkpoint = torch.load(self.cfg.weight, map_location=self.device)
+             weight = OrderedDict()
+             for key, value in checkpoint["state_dict"].items():
+                 if key.startswith("module."):
+@@ -117,9 +127,9 @@ class Audio2ExpressionInfer(InferBase):
+         with torch.no_grad():
+             input_dict = {}
+             input_dict['id_idx'] = F.one_hot(torch.tensor(self.cfg.id_idx),
+-                                             self.cfg.model.backbone.num_identity_classes).cuda(non_blocking=True)[None,...]
++                                             self.cfg.model.backbone.num_identity_classes).to(self.device)[None,...]
+             speech_array, ssr = librosa.load(self.cfg.audio_input, sr=16000)
+-            input_dict['input_audio_array'] = torch.FloatTensor(speech_array).cuda(non_blocking=True)[None,...]
++            input_dict['input_audio_array'] = torch.FloatTensor(speech_array).to(self.device)[None,...]
+ 
+             end = time.time()
+             output_dict = self.model(input_dict)
+@@ -198,9 +208,9 @@ class Audio2ExpressionInfer(InferBase):
+             try:
+                 input_dict = {}
+                 input_dict['id_idx'] = F.one_hot(torch.tensor(self.cfg.id_idx),
+-                                                 self.cfg.model.backbone.num_identity_classes).cuda(non_blocking=True)[
++                                                 self.cfg.model.backbone.num_identity_classes).to(self.device)[
+                     None, ...]
+-                input_dict['input_audio_array'] = torch.FloatTensor(input_audio).cuda(non_blocking=True)[None, ...]
++                input_dict['input_audio_array'] = torch.FloatTensor(input_audio).to(self.device)[None, ...]
+                 output_dict = self.model(input_dict)
+                 out_exp = output_dict['pred_exp'].squeeze().cpu().numpy()[start_frame:, :]
+             except:
