@@ -1,0 +1,2049 @@
+Active code page: 65001
+(oac) PS C:\Users\hamad\OpenAvatarChat> conda install -c conda-forge ffmpeg=7 -y
+3 channel Terms of Service accepted
+
+DirectoryNotACondaEnvironmentError: The target directory exists, but it is not a conda environment.
+Use 'conda create' to convert the directory to a conda environment.
+  target directory: C:\Users\hamad\miniconda3\envs\oac
+
+
+(oac) PS C:\Users\hamad\OpenAvatarChat> pip install av==14.4.0
+Collecting av==14.4.0
+  Using cached av-14.4.0.tar.gz (3.9 MB)
+  Installing build dependencies ... done
+  Getting requirements to build wheel ... done
+  Preparing metadata (pyproject.toml) ... done
+Building wheels for collected packages: av
+  Building wheel for av (pyproject.toml) ... error
+  error: subprocess-exited-with-error
+
+  × Building wheel for av (pyproject.toml) did not run successfully.
+  │ exit code: 1
+  ╰─> [258 lines of output]
+
+      Warning! You are installing from source.
+      It is EXPECTED that it will fail. You are REQUIRED to use ffmpeg 7.
+      You MUST have Cython, pkg-config, and a C compiler.
+
+      Warning! You are not using a virtual environment
+      running bdist_wheel
+      running build
+      running build_py
+      creating build\lib.win-amd64-cpython-311\av
+      copying av\about.py -> build\lib.win-amd64-cpython-311\av
+      copying av\datasets.py -> build\lib.win-amd64-cpython-311\av
+      copying av\packet.py -> build\lib.win-amd64-cpython-311\av
+      copying av\__init__.py -> build\lib.win-amd64-cpython-311\av
+      copying av\__main__.py -> build\lib.win-amd64-cpython-311\av
+      creating build\lib.win-amd64-cpython-311\av\attachments
+      copying av\attachments\__init__.py -> build\lib.win-amd64-cpython-311\av\attachments
+      creating build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\codeccontext.py -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\__init__.py -> build\lib.win-amd64-cpython-311\av\audio
+      creating build\lib.win-amd64-cpython-311\av\codec
+      copying av\codec\__init__.py -> build\lib.win-amd64-cpython-311\av\codec
+      creating build\lib.win-amd64-cpython-311\av\container
+      copying av\container\__init__.py -> build\lib.win-amd64-cpython-311\av\container
+      creating build\lib.win-amd64-cpython-311\av\data
+      copying av\data\__init__.py -> build\lib.win-amd64-cpython-311\av\data
+      creating build\lib.win-amd64-cpython-311\av\filter
+      copying av\filter\loudnorm.py -> build\lib.win-amd64-cpython-311\av\filter
+      copying av\filter\__init__.py -> build\lib.win-amd64-cpython-311\av\filter
+      creating build\lib.win-amd64-cpython-311\av\sidedata
+      copying av\sidedata\__init__.py -> build\lib.win-amd64-cpython-311\av\sidedata
+      creating build\lib.win-amd64-cpython-311\av\subtitles
+      copying av\subtitles\__init__.py -> build\lib.win-amd64-cpython-311\av\subtitles
+      creating build\lib.win-amd64-cpython-311\av\video
+      copying av\video\__init__.py -> build\lib.win-amd64-cpython-311\av\video
+      running egg_info
+      writing av.egg-info\PKG-INFO
+      writing dependency_links to av.egg-info\dependency_links.txt
+      writing entry points to av.egg-info\entry_points.txt
+      writing top-level names to av.egg-info\top_level.txt
+      reading manifest file 'av.egg-info\SOURCES.txt'
+      reading manifest template 'MANIFEST.in'
+      warning: no files found matching '*.h' under directory 'include'
+      adding license file 'LICENSE.txt'
+      adding license file 'AUTHORS.py'
+      adding license file 'AUTHORS.rst'
+      writing manifest file 'av.egg-info\SOURCES.txt'
+      C:\Users\hamad\AppData\Local\Temp\pip-build-env-a90xo2z4\overlay\Lib\site-packages\setuptools\command\build_py.py:215: _Warning: Package 'av.filter' is absent from the `packages` configuration.
+      !!
+
+              ********************************************************************************
+              ############################
+              # Package would be ignored #
+              ############################
+              Python recognizes 'av.filter' as an importable package[^1],
+              but it is absent from setuptools' `packages` configuration.
+
+              This leads to an ambiguous overall configuration. If you want to distribute this
+              package, please make sure that 'av.filter' is explicitly added
+              to the `packages` configuration field.
+
+              Alternatively, you can also rely on setuptools' discovery methods
+              (for example by using `find_namespace_packages(...)`/`find_namespace:`
+              instead of `find_packages(...)`/`find:`).
+
+              You can read more about "package discovery" on setuptools documentation page:
+
+              - https://setuptools.pypa.io/en/latest/userguide/package_discovery.html
+
+              If you don't want 'av.filter' to be distributed and are
+              already explicitly excluding 'av.filter' via
+              `find_namespace_packages(...)/find_namespace` or `find_packages(...)/find`,
+              you can try to use `exclude_package_data`, or `include-package-data=False` in
+              combination with a more fine grained `package-data` configuration.
+
+              You can read more about "package data files" on setuptools documentation page:
+
+              - https://setuptools.pypa.io/en/latest/userguide/datafiles.html
+
+
+              [^1]: For Python, any directory (with suitable naming) can be imported,
+                    even if it does not contain any `.py` files.
+                    On the other hand, currently there is no concept of package data
+                    directory, all directories are treated like packages.
+              ********************************************************************************
+
+      !!
+        check.warn(importable)
+      copying av\__init__.pxd -> build\lib.win-amd64-cpython-311\av
+      copying av\_core.pyi -> build\lib.win-amd64-cpython-311\av
+      copying av\_core.pyx -> build\lib.win-amd64-cpython-311\av
+      copying av\bitstream.pxd -> build\lib.win-amd64-cpython-311\av
+      copying av\bitstream.pyi -> build\lib.win-amd64-cpython-311\av
+      copying av\bitstream.pyx -> build\lib.win-amd64-cpython-311\av
+      copying av\buffer.pxd -> build\lib.win-amd64-cpython-311\av
+      copying av\buffer.pyi -> build\lib.win-amd64-cpython-311\av
+      copying av\buffer.pyx -> build\lib.win-amd64-cpython-311\av
+      copying av\bytesource.pxd -> build\lib.win-amd64-cpython-311\av
+      copying av\bytesource.pyx -> build\lib.win-amd64-cpython-311\av
+      copying av\descriptor.pxd -> build\lib.win-amd64-cpython-311\av
+      copying av\descriptor.pyi -> build\lib.win-amd64-cpython-311\av
+      copying av\descriptor.pyx -> build\lib.win-amd64-cpython-311\av
+      copying av\dictionary.pxd -> build\lib.win-amd64-cpython-311\av
+      copying av\dictionary.pyi -> build\lib.win-amd64-cpython-311\av
+      copying av\dictionary.pyx -> build\lib.win-amd64-cpython-311\av
+      copying av\error.pxd -> build\lib.win-amd64-cpython-311\av
+      copying av\error.pyi -> build\lib.win-amd64-cpython-311\av
+      copying av\error.pyx -> build\lib.win-amd64-cpython-311\av
+      copying av\format.pxd -> build\lib.win-amd64-cpython-311\av
+      copying av\format.pyi -> build\lib.win-amd64-cpython-311\av
+      copying av\format.pyx -> build\lib.win-amd64-cpython-311\av
+      copying av\frame.pxd -> build\lib.win-amd64-cpython-311\av
+      copying av\frame.pyi -> build\lib.win-amd64-cpython-311\av
+      copying av\frame.pyx -> build\lib.win-amd64-cpython-311\av
+      copying av\logging.pxd -> build\lib.win-amd64-cpython-311\av
+      copying av\logging.pyi -> build\lib.win-amd64-cpython-311\av
+      copying av\logging.pyx -> build\lib.win-amd64-cpython-311\av
+      copying av\opaque.pxd -> build\lib.win-amd64-cpython-311\av
+      copying av\opaque.pyx -> build\lib.win-amd64-cpython-311\av
+      copying av\option.pxd -> build\lib.win-amd64-cpython-311\av
+      copying av\option.pyi -> build\lib.win-amd64-cpython-311\av
+      copying av\option.pyx -> build\lib.win-amd64-cpython-311\av
+      copying av\packet.pxd -> build\lib.win-amd64-cpython-311\av
+      copying av\packet.pyi -> build\lib.win-amd64-cpython-311\av
+      copying av\plane.pxd -> build\lib.win-amd64-cpython-311\av
+      copying av\plane.pyi -> build\lib.win-amd64-cpython-311\av
+      copying av\plane.pyx -> build\lib.win-amd64-cpython-311\av
+      copying av\py.typed -> build\lib.win-amd64-cpython-311\av
+      copying av\stream.pxd -> build\lib.win-amd64-cpython-311\av
+      copying av\stream.pyi -> build\lib.win-amd64-cpython-311\av
+      copying av\stream.pyx -> build\lib.win-amd64-cpython-311\av
+      copying av\utils.pxd -> build\lib.win-amd64-cpython-311\av
+      copying av\utils.pyx -> build\lib.win-amd64-cpython-311\av
+      copying av\filter\loudnorm_impl.c -> build\lib.win-amd64-cpython-311\av\filter
+      copying av\filter\loudnorm_impl.h -> build\lib.win-amd64-cpython-311\av\filter
+      copying av\attachments\stream.pxd -> build\lib.win-amd64-cpython-311\av\attachments
+      copying av\attachments\stream.pyi -> build\lib.win-amd64-cpython-311\av\attachments
+      copying av\attachments\stream.pyx -> build\lib.win-amd64-cpython-311\av\attachments
+      copying av\audio\__init__.pxd -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\__init__.pyi -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\codeccontext.pxd -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\codeccontext.pyi -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\fifo.pxd -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\fifo.pyi -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\fifo.pyx -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\format.pxd -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\format.pyi -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\format.pyx -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\frame.pxd -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\frame.pyi -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\frame.pyx -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\layout.pxd -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\layout.pyi -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\layout.pyx -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\plane.pxd -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\plane.pyi -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\plane.pyx -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\resampler.pxd -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\resampler.pyi -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\resampler.pyx -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\stream.pxd -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\stream.pyi -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\audio\stream.pyx -> build\lib.win-amd64-cpython-311\av\audio
+      copying av\codec\__init__.pxd -> build\lib.win-amd64-cpython-311\av\codec
+      copying av\codec\codec.pxd -> build\lib.win-amd64-cpython-311\av\codec
+      copying av\codec\codec.pyi -> build\lib.win-amd64-cpython-311\av\codec
+      copying av\codec\codec.pyx -> build\lib.win-amd64-cpython-311\av\codec
+      copying av\codec\context.pxd -> build\lib.win-amd64-cpython-311\av\codec
+      copying av\codec\context.pyi -> build\lib.win-amd64-cpython-311\av\codec
+      copying av\codec\context.pyx -> build\lib.win-amd64-cpython-311\av\codec
+      copying av\codec\hwaccel.pxd -> build\lib.win-amd64-cpython-311\av\codec
+      copying av\codec\hwaccel.pyi -> build\lib.win-amd64-cpython-311\av\codec
+      copying av\codec\hwaccel.pyx -> build\lib.win-amd64-cpython-311\av\codec
+      copying av\container\__init__.pxd -> build\lib.win-amd64-cpython-311\av\container
+      copying av\container\__init__.pyi -> build\lib.win-amd64-cpython-311\av\container
+      copying av\container\core.pxd -> build\lib.win-amd64-cpython-311\av\container
+      copying av\container\core.pyi -> build\lib.win-amd64-cpython-311\av\container
+      copying av\container\core.pyx -> build\lib.win-amd64-cpython-311\av\container
+      copying av\container\input.pxd -> build\lib.win-amd64-cpython-311\av\container
+      copying av\container\input.pyi -> build\lib.win-amd64-cpython-311\av\container
+      copying av\container\input.pyx -> build\lib.win-amd64-cpython-311\av\container
+      copying av\container\output.pxd -> build\lib.win-amd64-cpython-311\av\container
+      copying av\container\output.pyi -> build\lib.win-amd64-cpython-311\av\container
+      copying av\container\output.pyx -> build\lib.win-amd64-cpython-311\av\container
+      copying av\container\pyio.pxd -> build\lib.win-amd64-cpython-311\av\container
+      copying av\container\pyio.pyx -> build\lib.win-amd64-cpython-311\av\container
+      copying av\container\streams.pxd -> build\lib.win-amd64-cpython-311\av\container
+      copying av\container\streams.pyi -> build\lib.win-amd64-cpython-311\av\container
+      copying av\container\streams.pyx -> build\lib.win-amd64-cpython-311\av\container
+      copying av\data\__init__.pxd -> build\lib.win-amd64-cpython-311\av\data
+      copying av\data\stream.pxd -> build\lib.win-amd64-cpython-311\av\data
+      copying av\data\stream.pyi -> build\lib.win-amd64-cpython-311\av\data
+      copying av\data\stream.pyx -> build\lib.win-amd64-cpython-311\av\data
+      copying av\filter\__init__.pxd -> build\lib.win-amd64-cpython-311\av\filter
+      copying av\filter\__init__.pyi -> build\lib.win-amd64-cpython-311\av\filter
+      copying av\filter\context.pxd -> build\lib.win-amd64-cpython-311\av\filter
+      copying av\filter\context.pyi -> build\lib.win-amd64-cpython-311\av\filter
+      copying av\filter\context.pyx -> build\lib.win-amd64-cpython-311\av\filter
+      copying av\filter\filter.pxd -> build\lib.win-amd64-cpython-311\av\filter
+      copying av\filter\filter.pyi -> build\lib.win-amd64-cpython-311\av\filter
+      copying av\filter\filter.pyx -> build\lib.win-amd64-cpython-311\av\filter
+      copying av\filter\graph.pxd -> build\lib.win-amd64-cpython-311\av\filter
+      copying av\filter\graph.pyi -> build\lib.win-amd64-cpython-311\av\filter
+      copying av\filter\graph.pyx -> build\lib.win-amd64-cpython-311\av\filter
+      copying av\filter\link.pxd -> build\lib.win-amd64-cpython-311\av\filter
+      copying av\filter\link.pyi -> build\lib.win-amd64-cpython-311\av\filter
+      copying av\filter\link.pyx -> build\lib.win-amd64-cpython-311\av\filter
+      copying av\filter\loudnorm.pxd -> build\lib.win-amd64-cpython-311\av\filter
+      copying av\filter\loudnorm.pyi -> build\lib.win-amd64-cpython-311\av\filter
+      copying av\filter\loudnorm_impl.c -> build\lib.win-amd64-cpython-311\av\filter
+      copying av\filter\pad.pxd -> build\lib.win-amd64-cpython-311\av\filter
+      copying av\filter\pad.pyi -> build\lib.win-amd64-cpython-311\av\filter
+      copying av\filter\pad.pyx -> build\lib.win-amd64-cpython-311\av\filter
+      copying av\sidedata\__init__.pxd -> build\lib.win-amd64-cpython-311\av\sidedata
+      copying av\sidedata\motionvectors.pxd -> build\lib.win-amd64-cpython-311\av\sidedata
+      copying av\sidedata\motionvectors.pyi -> build\lib.win-amd64-cpython-311\av\sidedata
+      copying av\sidedata\motionvectors.pyx -> build\lib.win-amd64-cpython-311\av\sidedata
+      copying av\sidedata\sidedata.pxd -> build\lib.win-amd64-cpython-311\av\sidedata
+      copying av\sidedata\sidedata.pyi -> build\lib.win-amd64-cpython-311\av\sidedata
+      copying av\sidedata\sidedata.pyx -> build\lib.win-amd64-cpython-311\av\sidedata
+      copying av\subtitles\__init__.pxd -> build\lib.win-amd64-cpython-311\av\subtitles
+      copying av\subtitles\codeccontext.pxd -> build\lib.win-amd64-cpython-311\av\subtitles
+      copying av\subtitles\codeccontext.pyi -> build\lib.win-amd64-cpython-311\av\subtitles
+      copying av\subtitles\codeccontext.pyx -> build\lib.win-amd64-cpython-311\av\subtitles
+      copying av\subtitles\stream.pxd -> build\lib.win-amd64-cpython-311\av\subtitles
+      copying av\subtitles\stream.pyi -> build\lib.win-amd64-cpython-311\av\subtitles
+      copying av\subtitles\stream.pyx -> build\lib.win-amd64-cpython-311\av\subtitles
+      copying av\subtitles\subtitle.pxd -> build\lib.win-amd64-cpython-311\av\subtitles
+      copying av\subtitles\subtitle.pyi -> build\lib.win-amd64-cpython-311\av\subtitles
+      copying av\subtitles\subtitle.pyx -> build\lib.win-amd64-cpython-311\av\subtitles
+      copying av\video\__init__.pxd -> build\lib.win-amd64-cpython-311\av\video
+      copying av\video\__init__.pyi -> build\lib.win-amd64-cpython-311\av\video
+      copying av\video\codeccontext.pxd -> build\lib.win-amd64-cpython-311\av\video
+      copying av\video\codeccontext.pyi -> build\lib.win-amd64-cpython-311\av\video
+      copying av\video\codeccontext.pyx -> build\lib.win-amd64-cpython-311\av\video
+      copying av\video\format.pxd -> build\lib.win-amd64-cpython-311\av\video
+      copying av\video\format.pyi -> build\lib.win-amd64-cpython-311\av\video
+      copying av\video\format.pyx -> build\lib.win-amd64-cpython-311\av\video
+      copying av\video\frame.pxd -> build\lib.win-amd64-cpython-311\av\video
+      copying av\video\frame.pyi -> build\lib.win-amd64-cpython-311\av\video
+      copying av\video\frame.pyx -> build\lib.win-amd64-cpython-311\av\video
+      copying av\video\plane.pxd -> build\lib.win-amd64-cpython-311\av\video
+      copying av\video\plane.pyi -> build\lib.win-amd64-cpython-311\av\video
+      copying av\video\plane.pyx -> build\lib.win-amd64-cpython-311\av\video
+      copying av\video\reformatter.pxd -> build\lib.win-amd64-cpython-311\av\video
+      copying av\video\reformatter.pyi -> build\lib.win-amd64-cpython-311\av\video
+      copying av\video\reformatter.pyx -> build\lib.win-amd64-cpython-311\av\video
+      copying av\video\stream.pxd -> build\lib.win-amd64-cpython-311\av\video
+      copying av\video\stream.pyi -> build\lib.win-amd64-cpython-311\av\video
+      copying av\video\stream.pyx -> build\lib.win-amd64-cpython-311\av\video
+      running build_ext
+      building 'av.filter.loudnorm' extension
+      creating build\temp.win-amd64-cpython-311\Release\av\filter
+      creating build\temp.win-amd64-cpython-311\Release\src\av\filter
+      "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\bin\HostX86\x64\cl.exe" /c /nologo /O2 /W3 /GL /DNDEBUG /MD -Iav/filter -IC:\Users\hamad\miniconda3\envs\oac\include -IC:\Users\hamad\miniconda3\envs\oac\Include "-IC:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include" "-IC:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\VS\include" /Tcav/filter/loudnorm_impl.c /Fobuild\temp.win-amd64-cpython-311\Release\av\filter\loudnorm_impl.obj
+      loudnorm_impl.c
+      av/filter/loudnorm_impl.c(1): fatal error C1083: include 繝輔ぃ繧､繝ｫ繧帝幕縺代∪縺帙ｓ縲\x82'libavcodec/avcodec.h':No such file or directory
+      error: command 'C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX86\\x64\\cl.exe' failed with exit code 2
+      [end of output]
+
+  note: This error originates from a subprocess, and is likely not a problem with pip.
+  ERROR: Failed building wheel for av
+Failed to build av
+error: failed-wheel-build-for-install
+
+× Failed to build installable wheels for some pyproject.toml based projects
+╰─> av
+(oac) PS C:\Users\hamad\OpenAvatarChat> conda deactivate
+(base) PS C:\Users\hamad\OpenAvatarChat> conda env remove -n oac
+3 channel Terms of Service accepted
+
+DirectoryNotACondaEnvironmentError: The target directory exists, but it is not a conda environment.
+Use 'conda create' to convert the directory to a conda environment.
+  target directory: C:\Users\hamad\miniconda3\envs\oac
+
+
+(base) PS C:\Users\hamad\OpenAvatarChat>
+(base) PS C:\Users\hamad\OpenAvatarChat> conda create -n oac python=3.11 av=14 -c conda-forge -y
+3 channel Terms of Service accepted
+Channels:
+ - conda-forge
+ - defaults
+Platform: win-64
+Collecting package metadata (repodata.json): done
+Solving environment: done
+
+
+==> WARNING: A newer version of conda exists. <==
+    current version: 25.11.1
+    latest version: 26.1.1
+
+Please update conda by running
+
+    $ conda update -n base -c defaults conda
+
+
+
+## Package Plan ##
+
+  environment location: C:\Users\hamad\miniconda3\envs\oac
+
+  added / updated specs:
+    - av=14
+    - python=3.11
+
+
+The following packages will be downloaded:
+
+    package                    |            build
+    ---------------------------|-----------------
+    libffi-3.5.2               |       h3d046cb_0          45 KB  conda-forge
+    libglib-2.86.4             |       h0c9aed9_0         3.9 MB  conda-forge
+    librsvg-2.60.0             |       hd5e4115_1         2.7 MB  conda-forge
+    libsqlite-3.51.2           |       hf5d6505_0         1.2 MB  conda-forge
+    pcre2-10.47                |       hd2b5f0e_0         973 KB  conda-forge
+    python-3.11.14             |h0159041_3_cpython        17.5 MB  conda-forge
+    python_abi-3.11            |          8_cp311           7 KB  conda-forge
+    ------------------------------------------------------------
+                                           Total:        26.4 MB
+
+The following NEW packages will be INSTALLED:
+
+  _openmp_mutex      conda-forge/win-64::_openmp_mutex-4.5-20_gnu
+  aom                conda-forge/win-64::aom-3.9.1-he0c23c2_0
+  av                 conda-forge/win-64::av-14.4.0-py311h641bbc9_0
+  cairo              conda-forge/win-64::cairo-1.18.4-h477c42c_1
+  dav1d              conda-forge/win-64::dav1d-1.2.1-hcfcfb64_0
+  ffmpeg             conda-forge/win-64::ffmpeg-7.1.1-gpl_he3062b8_911
+  font-ttf-dejavu-s~ conda-forge/noarch::font-ttf-dejavu-sans-mono-2.37-hab24e00_0
+  font-ttf-inconsol~ conda-forge/noarch::font-ttf-inconsolata-3.000-h77eed37_0
+  font-ttf-source-c~ conda-forge/noarch::font-ttf-source-code-pro-2.038-h77eed37_0
+  font-ttf-ubuntu    conda-forge/noarch::font-ttf-ubuntu-0.83-h77eed37_3
+  fontconfig         conda-forge/win-64::fontconfig-2.17.1-hd47e2ca_0
+  fonts-conda-ecosy~ conda-forge/noarch::fonts-conda-ecosystem-1-0
+  fonts-conda-forge  conda-forge/noarch::fonts-conda-forge-1-hc364b38_1
+  fribidi            conda-forge/win-64::fribidi-1.0.16-hfd05255_0
+  gdk-pixbuf         conda-forge/win-64::gdk-pixbuf-2.44.5-h1f5b9c4_0
+  graphite2          conda-forge/win-64::graphite2-1.3.14-hac47afa_2
+  harfbuzz           conda-forge/win-64::harfbuzz-12.3.2-h5a1b470_0
+  icu                conda-forge/win-64::icu-78.2-h637d24d_0
+  lame               conda-forge/win-64::lame-3.100-hcfcfb64_1003
+  lcms2              conda-forge/win-64::lcms2-2.18-hf2c6c5f_0
+  lerc               conda-forge/win-64::lerc-4.0.0-h6470a55_1
+  libblas            conda-forge/win-64::libblas-3.11.0-5_hf2e6a31_mkl
+  libcblas           conda-forge/win-64::libcblas-3.11.0-5_h2a3cdd5_mkl
+  libdeflate         conda-forge/win-64::libdeflate-1.25-h51727cc_0
+  libexpat           conda-forge/win-64::libexpat-2.7.4-hac47afa_0
+  libfreetype        conda-forge/win-64::libfreetype-2.14.1-h57928b3_0
+  libfreetype6       conda-forge/win-64::libfreetype6-2.14.1-hdbac1cb_0
+  libgcc             conda-forge/win-64::libgcc-15.2.0-h8ee18e1_18
+  libglib            conda-forge/win-64::libglib-2.86.4-h0c9aed9_0
+  libgomp            conda-forge/win-64::libgomp-15.2.0-h8ee18e1_18
+  libhwloc           conda-forge/win-64::libhwloc-2.12.2-default_h4379cf1_1000
+  libiconv           conda-forge/win-64::libiconv-1.18-hc1393d2_2
+  libintl            conda-forge/win-64::libintl-0.22.5-h5728263_3
+  libjpeg-turbo      conda-forge/win-64::libjpeg-turbo-3.1.2-hfd05255_0
+  liblapack          conda-forge/win-64::liblapack-3.11.0-5_hf9ab0e9_mkl
+  liblzma            conda-forge/win-64::liblzma-5.8.2-hfd05255_0
+  liblzma-devel      conda-forge/win-64::liblzma-devel-5.8.2-hfd05255_0
+  libogg             conda-forge/win-64::libogg-1.3.5-h2466b09_1
+  libopus            conda-forge/win-64::libopus-1.6.1-h6a83c73_0
+  libpng             conda-forge/win-64::libpng-1.6.55-h7351971_0
+  librsvg            conda-forge/win-64::librsvg-2.60.0-hd5e4115_1
+  libsqlite          conda-forge/win-64::libsqlite-3.51.2-hf5d6505_0
+  libtiff            conda-forge/win-64::libtiff-4.7.1-h8f73337_1
+  libusb             conda-forge/win-64::libusb-1.0.29-h1839187_0
+  libvorbis          conda-forge/win-64::libvorbis-1.3.7-h5112557_2
+  libvulkan-loader   conda-forge/win-64::libvulkan-loader-1.4.341.0-h477610d_0
+  libwebp-base       conda-forge/win-64::libwebp-base-1.6.0-h4d5522a_0
+  libwinpthread      conda-forge/win-64::libwinpthread-12.0.0.r4.gg4f2fc60ca-h57928b3_10
+  libxcb             conda-forge/win-64::libxcb-1.17.0-h0e4246c_0
+  libxml2            conda-forge/win-64::libxml2-2.15.1-h779ef1b_1
+  libxml2-16         conda-forge/win-64::libxml2-16-2.15.1-h3cfd58e_1
+  llvm-openmp        conda-forge/win-64::llvm-openmp-21.1.8-h4fa8253_0
+  mkl                conda-forge/win-64::mkl-2025.3.0-hac47afa_455
+  numpy              conda-forge/win-64::numpy-2.4.2-py311h80b3fa1_1
+  openh264           conda-forge/win-64::openh264-2.6.0-hb17fa0b_0
+  openjpeg           conda-forge/win-64::openjpeg-2.5.4-h24db6dd_0
+  pango              conda-forge/win-64::pango-1.56.4-h03d888a_0
+  pcre2              conda-forge/win-64::pcre2-10.47-hd2b5f0e_0
+  pillow             conda-forge/win-64::pillow-12.1.1-py311h17b8079_0
+  pixman             conda-forge/win-64::pixman-0.46.4-h5112557_1
+  pthread-stubs      conda-forge/win-64::pthread-stubs-0.4-h0e40799_1002
+  python_abi         conda-forge/noarch::python_abi-3.11-8_cp311
+  sdl2               conda-forge/win-64::sdl2-2.32.56-h5112557_0
+  sdl3               conda-forge/win-64::sdl3-3.4.0-h5112557_1
+  svt-av1            conda-forge/win-64::svt-av1-3.1.2-hac47afa_0
+  tbb                conda-forge/win-64::tbb-2022.3.0-h3155e25_2
+  x264               conda-forge/win-64::x264-1!164.3095-h8ffe710_2
+  x265               conda-forge/win-64::x265-3.5-h2d74725_3
+  xorg-libxau        conda-forge/win-64::xorg-libxau-1.0.12-hba3369d_1
+  xorg-libxdmcp      conda-forge/win-64::xorg-libxdmcp-1.1.5-hba3369d_1
+  xz-tools           conda-forge/win-64::xz-tools-5.8.2-hfd05255_0
+  zlib-ng            conda-forge/win-64::zlib-ng-2.3.3-h0261ad2_1
+  zstd               conda-forge/win-64::zstd-1.5.7-h534d264_6
+
+The following packages will be UPDATED:
+
+  ca-certificates    pkgs/main/win-64::ca-certificates-202~ --> conda-forge/noarch::ca-certificates-2026.1.4-h4c7d964_0
+  libffi                 pkgs/main::libffi-3.4.4-hd77b12b_1 --> conda-forge::libffi-3.5.2-h3d046cb_0
+  openssl              pkgs/main::openssl-3.0.19-hbb43b14_0 --> conda-forge::openssl-3.6.1-hf411b9b_1
+  python                pkgs/main::python-3.11.9-he1021f5_0 --> conda-forge::python-3.11.14-h0159041_3_cpython
+  xz                         pkgs/main::xz-5.6.4-h4754444_1 --> conda-forge::xz-5.8.2-hb6c8415_0
+
+
+
+Downloading and Extracting Packages:
+
+Preparing transaction: done
+Verifying transaction: done
+Executing transaction: \
+-
+done
+#
+# To activate this environment, use
+#
+#     $ conda activate oac
+#
+# To deactivate an active environment, use
+#
+#     $ conda deactivate
+
+(base) PS C:\Users\hamad\OpenAvatarChat> conda activate oac
+(oac) PS C:\Users\hamad\OpenAvatarChat> cd C:\Users\hamad\OpenAvatarChat
+(oac) PS C:\Users\hamad\OpenAvatarChat> pip install -r requirements.txt
+ERROR: Could not open requirements file: [Errno 2] No such file or directory: 'requirements.txt'
+(oac) PS C:\Users\hamad\OpenAvatarChat> # ファイル構成を確認
+(oac) PS C:\Users\hamad\OpenAvatarChat> dir C:\Users\hamad\OpenAvatarChat
+
+
+    ディレクトリ: C:\Users\hamad\OpenAvatarChat
+
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+d-----        2026/02/19     18:49                assets
+d-----        2026/02/19     18:49                build
+d-----        2026/02/19     18:49                config
+d-----        2026/02/19     18:49                coturn-data
+d-----        2026/02/19     18:49                docs
+d-----        2026/02/19     18:49                models
+d-----        2026/02/19     18:49                resource
+d-----        2026/02/19     18:49                scripts
+d-----        2026/02/19     18:50                src
+d-----        2026/02/19     18:49                ssl_certs
+d-----        2026/02/19     18:49                tests
+-a----        2026/02/19     18:49           2696 .dockerignore
+-a----        2026/02/19     18:49              0 .gitattributes
+-a----        2026/02/19     18:49            463 .gitignore
+-a----        2026/02/19     18:49           1240 .gitmodules
+-a----        2026/02/19     18:49            876 build_and_run.sh
+-a----        2026/02/19     18:49           6388 build_cuda128.sh
+-a----        2026/02/19     18:49           1685 docker-compose.yml
+-a----        2026/02/19     18:49           2110 Dockerfile
+-a----        2026/02/19     18:49           6447 Dockerfile.cuda12.8
+-a----        2026/02/19     18:49           4039 install.py
+-a----        2026/02/19     18:49          11558 LICENSE
+-a----        2026/02/19     18:49           1778 pyproject.toml
+-a----        2026/02/19     18:49          46909 README.md
+-a----        2026/02/19     18:49          52437 readme_en.md
+-a----        2026/02/19     18:49           1572 run_docker_cuda128.sh
+-a----        2026/02/19     18:49             73 setup.cfg
+
+
+(oac) PS C:\Users\hamad\OpenAvatarChat>
+(oac) PS C:\Users\hamad\OpenAvatarChat> # setup.py や pyproject.toml があるか確認
+(oac) PS C:\Users\hamad\OpenAvatarChat> dir C:\Users\hamad\OpenAvatarChat\setup.py
+dir : パス 'C:\Users\hamad\OpenAvatarChat\setup.py' が存在しないため検出できません。
+発生場所 行:1 文字:1
++ dir C:\Users\hamad\OpenAvatarChat\setup.py
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (C:\Users\hamad\OpenAvatarChat\setup.py:String) [Get-ChildItem], ItemNot
+   FoundException
+    + FullyQualifiedErrorId : PathNotFound,Microsoft.PowerShell.Commands.GetChildItemCommand
+
+(oac) PS C:\Users\hamad\OpenAvatarChat> dir C:\Users\hamad\OpenAvatarChat\pyproject.toml
+
+
+    ディレクトリ: C:\Users\hamad\OpenAvatarChat
+
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+-a----        2026/02/19     18:49           1778 pyproject.toml
+
+
+(oac) PS C:\Users\hamad\OpenAvatarChat>
+(oac) PS C:\Users\hamad\OpenAvatarChat> # サブディレクトリにrequirements.txtがあるか確認
+(oac) PS C:\Users\hamad\OpenAvatarChat> dir C:\Users\hamad\OpenAvatarChat\*requirements*.txt /s
+dir : 2 番目のパス フラグメントを ドライブ名または UNC 名にすることはできません。
+パラメーター名:path2
+発生場所 行:1 文字:1
++ dir C:\Users\hamad\OpenAvatarChat\*requirements*.txt /s
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidArgument: (C:\Users\hamad\OpenAvatarChat:String) [Get-ChildItem]、ArgumentExceptio
+   n
+    + FullyQualifiedErrorId : DirArgumentError,Microsoft.PowerShell.Commands.GetChildItemCommand
+
+(oac) PS C:\Users\hamad\OpenAvatarChat> dir C:\Users\hamad\OpenAvatarChat
+
+
+    ディレクトリ: C:\Users\hamad\OpenAvatarChat
+
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+d-----        2026/02/19     18:49                assets
+d-----        2026/02/19     18:49                build
+d-----        2026/02/19     18:49                config
+d-----        2026/02/19     18:49                coturn-data
+d-----        2026/02/19     18:49                docs
+d-----        2026/02/19     18:49                models
+d-----        2026/02/19     18:49                resource
+d-----        2026/02/19     18:49                scripts
+d-----        2026/02/19     18:50                src
+d-----        2026/02/19     18:49                ssl_certs
+d-----        2026/02/19     18:49                tests
+-a----        2026/02/19     18:49           2696 .dockerignore
+-a----        2026/02/19     18:49              0 .gitattributes
+-a----        2026/02/19     18:49            463 .gitignore
+-a----        2026/02/19     18:49           1240 .gitmodules
+-a----        2026/02/19     18:49            876 build_and_run.sh
+-a----        2026/02/19     18:49           6388 build_cuda128.sh
+-a----        2026/02/19     18:49           1685 docker-compose.yml
+-a----        2026/02/19     18:49           2110 Dockerfile
+-a----        2026/02/19     18:49           6447 Dockerfile.cuda12.8
+-a----        2026/02/19     18:49           4039 install.py
+-a----        2026/02/19     18:49          11558 LICENSE
+-a----        2026/02/19     18:49           1778 pyproject.toml
+-a----        2026/02/19     18:49          46909 README.md
+-a----        2026/02/19     18:49          52437 readme_en.md
+-a----        2026/02/19     18:49           1572 run_docker_cuda128.sh
+-a----        2026/02/19     18:49             73 setup.cfg
+
+
+(oac) PS C:\Users\hamad\OpenAvatarChat> dir C:\Users\hamad\OpenAvatarChat\setup.py
+dir : パス 'C:\Users\hamad\OpenAvatarChat\setup.py' が存在しないため検出できません。
+発生場所 行:1 文字:1
++ dir C:\Users\hamad\OpenAvatarChat\setup.py
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (C:\Users\hamad\OpenAvatarChat\setup.py:String) [Get-ChildItem], ItemNot
+   FoundException
+    + FullyQualifiedErrorId : PathNotFound,Microsoft.PowerShell.Commands.GetChildItemCommand
+
+(oac) PS C:\Users\hamad\OpenAvatarChat> dir C:\Users\hamad\OpenAvatarChat\pyproject.tom
+(oac) PS C:\Users\hamad\OpenAvatarChat> dir C:\Users\hamad\OpenAvatarChat\setup.py
+dir : パス 'C:\Users\hamad\OpenAvatarChat\setup.py' が存在しないため検出できません。
+発生場所 行:1 文字:1
++ dir C:\Users\hamad\OpenAvatarChat\setup.py
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (C:\Users\hamad\OpenAvatarChat\setup.py:String) [Get-ChildItem], ItemNot
+   FoundException
+    + FullyQualifiedErrorId : PathNotFound,Microsoft.PowerShell.Commands.GetChildItemCommand
+
+(oac) PS C:\Users\hamad\OpenAvatarChat> dir C:\Users\hamad\OpenAvatarChat
+
+
+    ディレクトリ: C:\Users\hamad\OpenAvatarChat
+
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+d-----        2026/02/19     18:49                assets
+d-----        2026/02/19     18:49                build
+d-----        2026/02/19     18:49                config
+d-----        2026/02/19     18:49                coturn-data
+d-----        2026/02/19     18:49                docs
+d-----        2026/02/19     18:49                models
+d-----        2026/02/19     18:49                resource
+d-----        2026/02/19     18:49                scripts
+d-----        2026/02/19     18:50                src
+d-----        2026/02/19     18:49                ssl_certs
+d-----        2026/02/19     18:49                tests
+-a----        2026/02/19     18:49           2696 .dockerignore
+-a----        2026/02/19     18:49              0 .gitattributes
+-a----        2026/02/19     18:49            463 .gitignore
+-a----        2026/02/19     18:49           1240 .gitmodules
+-a----        2026/02/19     18:49            876 build_and_run.sh
+-a----        2026/02/19     18:49           6388 build_cuda128.sh
+-a----        2026/02/19     18:49           1685 docker-compose.yml
+-a----        2026/02/19     18:49           2110 Dockerfile
+-a----        2026/02/19     18:49           6447 Dockerfile.cuda12.8
+-a----        2026/02/19     18:49           4039 install.py
+-a----        2026/02/19     18:49          11558 LICENSE
+-a----        2026/02/19     18:49           1778 pyproject.toml
+-a----        2026/02/19     18:49          46909 README.md
+-a----        2026/02/19     18:49          52437 readme_en.md
+-a----        2026/02/19     18:49           1572 run_docker_cuda128.sh
+-a----        2026/02/19     18:49             73 setup.cfg
+
+
+(oac) PS C:\Users\hamad\OpenAvatarChat> dir C:\Users\hamad\OpenAvatarChat\*requirements*.txt /s
+dir : 2 番目のパス フラグメントを ドライブ名または UNC 名にすることはできません。
+パラメーター名:path2
+発生場所 行:1 文字:1
++ dir C:\Users\hamad\OpenAvatarChat\*requirements*.txt /s
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidArgument: (C:\Users\hamad\OpenAvatarChat:String) [Get-ChildItem]、ArgumentExceptio
+   n
+    + FullyQualifiedErrorId : DirArgumentError,Microsoft.PowerShell.Commands.GetChildItemCommand
+
+(oac) PS C:\Users\hamad\OpenAvatarChat>
+(oac) PS C:\Users\hamad\OpenAvatarChat> type C:\Users\hamad\OpenAvatarChat\pyproject.toml
+[project]
+name = "open-video-chat"
+version = "0.1.0"
+description = "A modular interactive digital human conversation implementation that runs full-featured on a single PC."
+readme = "README.md"
+requires-python = ">=3.11.7, <3.12"
+dependencies = [
+    "aiohttp~=3.11.12",
+    "aiortc~=1.12.0",
+    "dynaconf~=3.2.7",
+    "fastapi[standard]~=0.115.12",
+    "fastrtc",
+    "gradio~=5.9.1",
+    "librosa~=0.10.2",
+    "loguru~=0.7.3",
+    "modelscope>=1.25.0",
+    "numpy<=1.26.4",
+    "openai>=1.72.0",
+    "opencv-python-headless~=4.11.0",
+    "pip>=25.0.1",
+    "pyaml>=25.1.0",
+    "pydantic~=2.10.6",
+    "pyyaml~=6.0.2",
+    "scipy~=1.15.1",
+    "setuptools>=78.1.0",
+    "soundfile~=0.13.1",
+    "starlette~=0.41.3",
+    "tqdm~=4.67.1",
+    "typing-extensions~=4.12.2",
+    "uvicorn~=0.34.0",
+    "torch==2.8.0",
+    "torchvision",
+    "torchaudio",
+    "python-dotenv>=1.1.0",
+]
+
+[tool.uv.workspace]
+members = [
+    "src/handlers/tts/edgetts",
+    "src/handlers/tts/cosyvoice",
+    "src/handlers/llm/minicpm",
+    "src/handlers/avatar/liteavatar",
+    "src/handlers/avatar/lam",
+    "src/handlers/vad/silerovad",
+    "src/handlers/tts/bailian_tts",
+    "src/handlers/asr/sensevoice",
+    "src/handlers/avatar/musetalk",
+]
+
+[tool.uv.sources]
+fastrtc = { path = "src/third_party/gradio_webrtc_videochat/dist/fastrtc-0.0.28.dev0-py3-none-any.whl" }
+torch = [
+    { index = "pytorch-cu128" },
+]
+torchvision = [
+    { index = "pytorch-cu128" },
+]
+torchaudio = [
+    { index = "pytorch-cu128" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv]
+no-build-isolation-package = ["chumpy"]
+
+[tool.uv.extra-build-dependencies]
+chumpy = ["wheel"]
+(oac) PS C:\Users\hamad\OpenAvatarChat> type C:\Users\hamad\OpenAvatarChat\install.py
+import argparse
+import os
+import subprocess
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+import yaml
+
+from src.engine_utils.directory_info import DirectoryInfo
+
+
+def is_venv_active():
+    """Check if running inside a virtual environment"""
+    return hasattr(sys, 'real_prefix') or (
+        hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix) or (os.getenv('VIRTUAL_ENV') is not None)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, default="config/chat_with_minicpm.yaml",
+                        help="Path to config file")
+    parser.add_argument("--uv", action="store_true",
+                        help="Use uv pip compiler instead of standard pip")
+    parser.add_argument("--skip-core", action="store_true",
+                        help="Skip installation of core dependencies")
+    return parser.parse_args()
+
+
+def load_configs(in_args):
+    base_dir = DirectoryInfo.get_project_dir()
+    config_path = Path(in_args.config) if os.path.isabs(in_args.config) \
+        else Path(base_dir) / in_args.config
+
+    print(f"Loading config from {config_path}")
+    with open(config_path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def get_module_files(config, use_uv=False):
+    """Collect dependency files for enabled modules"""
+    base_dir = Path(DirectoryInfo.get_project_dir())
+    handler_configs = config.get("default", {}).get("chat_engine", {}).get("handler_configs", {})
+
+    module_files = {}
+    for handler_name, cfg in handler_configs.items():
+        if not cfg.get("enabled", True):
+            continue
+
+        module_path = Path(cfg.get("module", "")).parent
+        handler_dir = base_dir / "src/handlers" / module_path
+
+        # Prefer pyproject.toml when using uv
+        if use_uv:
+            toml_file = handler_dir / "pyproject.toml"
+            if toml_file.exists():
+                module_files[handler_name] = toml_file
+                continue
+
+        # Fallback to requirements.txt
+        req_file = handler_dir / "requirements.txt"
+        if req_file.exists():
+            module_files[handler_name] = req_file
+
+    return module_files
+
+
+def collect_root_file(use_uv=False):
+    """Get root dependency file based on tool preference"""
+    base_dir = Path(DirectoryInfo.get_project_dir())
+
+    if use_uv:
+        root_toml = base_dir / "pyproject.toml"
+        if root_toml.exists():
+            return root_toml
+
+    root_req = base_dir / "requirements.txt"
+    return root_req if root_req.exists() else None
+
+
+def install_files(file_paths, use_uv=False):
+    """Install dependencies from collected files"""
+    try:
+        for dep_file in file_paths:
+            print(f"Installing from {dep_file}")
+
+            if use_uv:
+                cmd = ["uv", "pip", "install", "-r", str(dep_file)]
+            else:
+                cmd = [sys.executable, "-m", "pip", "install", "-r", str(dep_file)]
+
+            subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Installation failed: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    # Check virtual environment first
+    if not is_venv_active():
+        print("Error: Not running in a virtual environment.")
+        print("Create and activate a venv first.")
+        sys.exit(1)
+
+    args = parse_args()
+    config = load_configs(args)
+
+    # Collect dependency files
+    root_file = collect_root_file(args.uv)
+    module_files = get_module_files(config, args.uv)
+
+    # Prepare installation list
+    install_paths = []
+    if root_file and not args.skip_core:
+        install_paths.append(root_file)
+    install_paths.extend(module_files.values())
+
+    if not install_paths:
+        print("No dependency files found!")
+        sys.exit(1)
+
+    # Perform installation
+    install_files(install_paths, args.uv)
+    print("Dependencies installed successfully")
+(oac) PS C:\Users\hamad\OpenAvatarChat> pip install torch==2.8.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+Looking in indexes: https://download.pytorch.org/whl/cu128
+Collecting torch==2.8.0
+  Downloading https://download.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp311-cp311-win_amd64.whl.metadata (29 kB)
+Collecting torchvision
+  Downloading https://download.pytorch.org/whl/cu128/torchvision-0.25.0%2Bcu128-cp311-cp311-win_amd64.whl.metadata (5.5 kB)
+Collecting torchaudio
+  Downloading https://download.pytorch.org/whl/cu128/torchaudio-2.10.0%2Bcu128-cp311-cp311-win_amd64.whl.metadata (7.1 kB)
+Collecting filelock (from torch==2.8.0)
+  Downloading filelock-3.20.0-py3-none-any.whl.metadata (2.1 kB)
+Collecting typing-extensions>=4.10.0 (from torch==2.8.0)
+  Downloading https://download.pytorch.org/whl/typing_extensions-4.15.0-py3-none-any.whl.metadata (3.3 kB)
+Collecting sympy>=1.13.3 (from torch==2.8.0)
+  Using cached sympy-1.14.0-py3-none-any.whl.metadata (12 kB)
+Collecting networkx (from torch==2.8.0)
+  Using cached networkx-3.6.1-py3-none-any.whl.metadata (6.8 kB)
+Collecting jinja2 (from torch==2.8.0)
+  Downloading https://download.pytorch.org/whl/jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+Collecting fsspec (from torch==2.8.0)
+  Downloading fsspec-2025.12.0-py3-none-any.whl.metadata (10 kB)
+Requirement already satisfied: numpy in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from torchvision) (2.4.2)
+INFO: pip is looking at multiple versions of torchvision to determine which version is compatible with other requirements. This could take a while.
+Collecting torchvision
+  Downloading https://download.pytorch.org/whl/cu128/torchvision-0.24.1%2Bcu128-cp311-cp311-win_amd64.whl.metadata (6.1 kB)
+  Downloading https://download.pytorch.org/whl/cu128/torchvision-0.24.0%2Bcu128-cp311-cp311-win_amd64.whl.metadata (6.1 kB)
+  Downloading https://download.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp311-cp311-win_amd64.whl.metadata (6.3 kB)
+Requirement already satisfied: pillow!=8.3.*,>=5.3.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from torchvision) (12.1.1)
+INFO: pip is looking at multiple versions of torchaudio to determine which version is compatible with other requirements. This could take a while.
+Collecting torchaudio
+  Downloading https://download.pytorch.org/whl/cu128/torchaudio-2.9.1%2Bcu128-cp311-cp311-win_amd64.whl.metadata (7.0 kB)
+  Downloading https://download.pytorch.org/whl/cu128/torchaudio-2.9.0%2Bcu128-cp311-cp311-win_amd64.whl.metadata (7.0 kB)
+  Downloading https://download.pytorch.org/whl/cu128/torchaudio-2.8.0%2Bcu128-cp311-cp311-win_amd64.whl.metadata (7.4 kB)
+Collecting mpmath<1.4,>=1.1.0 (from sympy>=1.13.3->torch==2.8.0)
+  Using cached mpmath-1.3.0-py3-none-any.whl.metadata (8.6 kB)
+Collecting MarkupSafe>=2.0 (from jinja2->torch==2.8.0)
+  Downloading https://download.pytorch.org/whl/MarkupSafe-2.1.5-cp311-cp311-win_amd64.whl (17 kB)
+Downloading https://download.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp311-cp311-win_amd64.whl (3461.4 MB)
+   ---------------------------------------- 3.5/3.5 GB 11.6 MB/s  0:03:32
+Downloading https://download.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp311-cp311-win_amd64.whl (7.5 MB)
+   ---------------------------------------- 7.5/7.5 MB 10.6 MB/s  0:00:00
+Downloading https://download.pytorch.org/whl/cu128/torchaudio-2.8.0%2Bcu128-cp311-cp311-win_amd64.whl (4.7 MB)
+   ---------------------------------------- 4.7/4.7 MB 35.3 MB/s  0:00:00
+Using cached sympy-1.14.0-py3-none-any.whl (6.3 MB)
+Using cached mpmath-1.3.0-py3-none-any.whl (536 kB)
+Downloading https://download.pytorch.org/whl/typing_extensions-4.15.0-py3-none-any.whl (44 kB)
+Downloading filelock-3.20.0-py3-none-any.whl (16 kB)
+Downloading fsspec-2025.12.0-py3-none-any.whl (201 kB)
+Downloading https://download.pytorch.org/whl/jinja2-3.1.6-py3-none-any.whl (134 kB)
+Using cached networkx-3.6.1-py3-none-any.whl (2.1 MB)
+Installing collected packages: mpmath, typing-extensions, sympy, networkx, MarkupSafe, fsspec, filelock, jinja2, torch, torchvision, torchaudio
+Successfully installed MarkupSafe-2.1.5 filelock-3.20.0 fsspec-2025.12.0 jinja2-3.1.6 mpmath-1.3.0 networkx-3.6.1 sympy-1.14.0 torch-2.8.0+cu128 torchaudio-2.8.0+cu128 torchvision-0.23.0+cu128 typing-extensions-4.15.0
+(oac) PS C:\Users\hamad\OpenAvatarChat>
+(oac) PS C:\Users\hamad\OpenAvatarChat> pip install C:\Users\hamad\OpenAvatarChat\src\third_party\gradio_webrtc_videochat\dist\fastrtc-0.0.28.dev0-py3-none-any.whl
+WARNING: Requirement 'C:\\Users\\hamad\\OpenAvatarChat\\src\\third_party\\gradio_webrtc_videochat\\dist\\fastrtc-0.0.28.dev0-py3-none-any.whl' looks like a filename, but the file does not exist
+Processing .\src\third_party\gradio_webrtc_videochat\dist\fastrtc-0.0.28.dev0-py3-none-any.whl
+ERROR: Could not install packages due to an OSError: [Errno 2] No such file or directory: 'C:\\Users\\hamad\\OpenAvatarChat\\src\\third_party\\gradio_webrtc_videochat\\dist\\fastrtc-0.0.28.dev0-py3-none-any.whl'
+
+(oac) PS C:\Users\hamad\OpenAvatarChat> dir C:\Users\hamad\OpenAvatarChat\src\third_party\ -Recurse -Filter "*.whl"
+(oac) PS C:\Users\hamad\OpenAvatarChat>
+(oac) PS C:\Users\hamad\OpenAvatarChat> cd C:\Users\hamad\OpenAvatarChat
+(oac) PS C:\Users\hamad\OpenAvatarChat> git submodule update --init --recursive
+Submodule 'src/handlers/avatar/lam/LAM_Audio2Expression' (https://github.com/aigc3d/LAM_Audio2Expression.git) registered for path 'src/handlers/avatar/lam/LAM_Audio2Expression'
+Submodule 'src/avatar/algo/tts2face_cpu' (https://github.com/HumanAIGC/lite-avatar.git) registered for path 'src/handlers/avatar/liteavatar/algo/liteavatar'
+Submodule 'src/handlers/avatar/musetalk/MuseTalk' (https://github.com/TMElyralab/MuseTalk.git) registered for path 'src/handlers/avatar/musetalk/MuseTalk'
+Submodule 'src/handlers/client/rtc_client/frontend' (https://github.com/HumanAIGC-Engineering/OpenAvatarChat-WebUI.git) registered for path 'src/handlers/client/rtc_client/frontend'
+Submodule 'src/third_party/CosyVoice' (https://github.com/FunAudioLLM/CosyVoice.git) registered for path 'src/handlers/tts/cosyvoice/CosyVoice'
+Submodule 'src/third_party/silero_vad' (https://github.com/snakers4/silero-vad.git) registered for path 'src/handlers/vad/silerovad/silero_vad'
+Submodule 'src/third_party/gradio_webrtc_videochat' (https://github.com/HumanAIGC-Engineering/gradio-webrtc.git) registered for path 'src/third_party/gradio_webrtc_videochat'
+Cloning into 'C:/Users/hamad/OpenAvatarChat/src/handlers/avatar/lam/LAM_Audio2Expression'...
+Cloning into 'C:/Users/hamad/OpenAvatarChat/src/handlers/avatar/liteavatar/algo/liteavatar'...
+Cloning into 'C:/Users/hamad/OpenAvatarChat/src/handlers/avatar/musetalk/MuseTalk'...
+Cloning into 'C:/Users/hamad/OpenAvatarChat/src/handlers/client/rtc_client/frontend'...
+Cloning into 'C:/Users/hamad/OpenAvatarChat/src/handlers/tts/cosyvoice/CosyVoice'...
+Cloning into 'C:/Users/hamad/OpenAvatarChat/src/handlers/vad/silerovad/silero_vad'...
+Cloning into 'C:/Users/hamad/OpenAvatarChat/src/third_party/gradio_webrtc_videochat'...
+Submodule path 'src/handlers/avatar/lam/LAM_Audio2Expression': checked out 'aa5bc3487ac2c915db2ff43d05d9f563cb62864d'
+Submodule path 'src/handlers/avatar/liteavatar/algo/liteavatar': checked out '5b7ec850945e03d56fb290b05fb68440c359fa86'
+Submodule path 'src/handlers/avatar/musetalk/MuseTalk': checked out '67e7ee3c7397bcfd03e123398e5497f31be1bf92'
+Submodule path 'src/handlers/client/rtc_client/frontend': checked out 'c7226f2f2eff957b17c533a4b3acdbacf8055588'
+Submodule path 'src/handlers/tts/cosyvoice/CosyVoice': checked out '0a496c18f78ca993c63f6d880fcc60778bfc85c1'
+Submodule 'third_party/Matcha-TTS' (https://github.com/shivammehta25/Matcha-TTS.git) registered for path 'src/handlers/tts/cosyvoice/CosyVoice/third_party/Matcha-TTS'
+Cloning into 'C:/Users/hamad/OpenAvatarChat/src/handlers/tts/cosyvoice/CosyVoice/third_party/Matcha-TTS'...
+Submodule path 'src/handlers/tts/cosyvoice/CosyVoice/third_party/Matcha-TTS': checked out 'dd9105b34bf2be2230f4aa1e4769fb586a3c824e'
+Submodule path 'src/handlers/vad/silerovad/silero_vad': checked out '9060f664f20eabb66328e4002a41479ff288f14c'
+Submodule path 'src/third_party/gradio_webrtc_videochat': checked out '4bf0fbc71680e8489ce36eeecd00ccf34bfd3102'
+(oac) PS C:\Users\hamad\OpenAvatarChat>
+(oac) PS C:\Users\hamad\OpenAvatarChat> dir C:\Users\hamad\OpenAvatarChat\src\third_party\ -Recurse -Filter "*.whl"
+
+
+    ディレクトリ: C:\Users\hamad\OpenAvatarChat\src\third_party\gradio_webrtc_videochat\dist
+
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+-a----        2026/02/19     21:06        2528655 fastrtc-0.0.19.dev0-py3-none-any.whl
+-a----        2026/02/19     21:06        3380558 fastrtc-0.0.28.dev0-py3-none-any.whl
+
+
+(oac) PS C:\Users\hamad\OpenAvatarChat> pip install C:\Users\hamad\OpenAvatarChat\src\third_party\gradio_webrtc_videochat\dist\fastrtc-0.0.28.dev0-py3-none-any.whl
+Processing .\src\third_party\gradio_webrtc_videochat\dist\fastrtc-0.0.28.dev0-py3-none-any.whl
+Collecting aioice>=0.10.1 (from fastrtc==0.0.28.dev0)
+  Using cached aioice-0.10.2-py3-none-any.whl.metadata (4.1 kB)
+Collecting aiortc (from fastrtc==0.0.28.dev0)
+  Downloading aiortc-1.14.0-py3-none-any.whl.metadata (4.9 kB)
+Collecting gradio<6.0,>=4.0 (from fastrtc==0.0.28.dev0)
+  Downloading gradio-5.50.0-py3-none-any.whl.metadata (16 kB)
+Collecting librosa (from fastrtc==0.0.28.dev0)
+  Downloading librosa-0.11.0-py3-none-any.whl.metadata (8.7 kB)
+Collecting numba>=0.60.0 (from fastrtc==0.0.28.dev0)
+  Using cached numba-0.64.0-cp311-cp311-win_amd64.whl.metadata (2.8 kB)
+Collecting numpy<=1.26.4 (from fastrtc==0.0.28.dev0)
+  Using cached numpy-1.26.4-cp311-cp311-win_amd64.whl.metadata (61 kB)
+Collecting aiofiles<25.0,>=22.0 (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Downloading aiofiles-24.1.0-py3-none-any.whl.metadata (10 kB)
+Collecting anyio<5.0,>=3.0 (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached anyio-4.12.1-py3-none-any.whl.metadata (4.3 kB)
+Collecting brotli>=1.1.0 (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Downloading brotli-1.2.0-cp311-cp311-win_amd64.whl.metadata (6.3 kB)
+Collecting fastapi<1.0,>=0.115.2 (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Downloading fastapi-0.129.0-py3-none-any.whl.metadata (30 kB)
+Collecting ffmpy (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached ffmpy-1.0.0-py3-none-any.whl.metadata (3.0 kB)
+Collecting gradio-client==1.14.0 (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Downloading gradio_client-1.14.0-py3-none-any.whl.metadata (7.1 kB)
+Collecting groovy~=0.1 (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Downloading groovy-0.1.2-py3-none-any.whl.metadata (6.1 kB)
+Collecting httpx<1.0,>=0.24.1 (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached httpx-0.28.1-py3-none-any.whl.metadata (7.1 kB)
+Collecting huggingface-hub<2.0,>=0.33.5 (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached huggingface_hub-1.4.1-py3-none-any.whl.metadata (13 kB)
+Requirement already satisfied: jinja2<4.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0) (3.1.6)
+Requirement already satisfied: markupsafe<4.0,>=2.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0) (2.1.5)
+Collecting orjson~=3.0 (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached orjson-3.11.7-cp311-cp311-win_amd64.whl.metadata (43 kB)
+Requirement already satisfied: packaging in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0) (25.0)
+Collecting pandas<3.0,>=1.0 (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached pandas-2.3.3-cp311-cp311-win_amd64.whl.metadata (19 kB)
+Collecting pillow<12.0,>=8.0 (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached pillow-11.3.0-cp311-cp311-win_amd64.whl.metadata (9.2 kB)
+Collecting pydantic<=2.12.3,>=2.0 (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Downloading pydantic-2.12.3-py3-none-any.whl.metadata (87 kB)
+Collecting pydub (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached pydub-0.25.1-py2.py3-none-any.whl.metadata (1.4 kB)
+Collecting python-multipart>=0.0.18 (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached python_multipart-0.0.22-py3-none-any.whl.metadata (1.8 kB)
+Collecting pyyaml<7.0,>=5.0 (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached pyyaml-6.0.3-cp311-cp311-win_amd64.whl.metadata (2.4 kB)
+Collecting ruff>=0.9.3 (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached ruff-0.15.1-py3-none-win_amd64.whl.metadata (26 kB)
+Collecting safehttpx<0.2.0,>=0.1.6 (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached safehttpx-0.1.7-py3-none-any.whl.metadata (4.2 kB)
+Collecting semantic-version~=2.0 (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached semantic_version-2.10.0-py2.py3-none-any.whl.metadata (9.7 kB)
+Collecting starlette<1.0,>=0.40.0 (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Downloading starlette-0.52.1-py3-none-any.whl.metadata (6.3 kB)
+Collecting tomlkit<0.14.0,>=0.12.0 (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached tomlkit-0.13.3-py3-none-any.whl.metadata (2.8 kB)
+Collecting typer<1.0,>=0.12 (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached typer-0.24.0-py3-none-any.whl.metadata (16 kB)
+Requirement already satisfied: typing-extensions~=4.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0) (4.15.0)
+Collecting uvicorn>=0.14.0 (from gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Downloading uvicorn-0.41.0-py3-none-any.whl.metadata (6.7 kB)
+Requirement already satisfied: fsspec in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from gradio-client==1.14.0->gradio<6.0,>=4.0->fastrtc==0.0.28.dev0) (2025.12.0)
+Collecting websockets<16.0,>=13.0 (from gradio-client==1.14.0->gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Downloading websockets-15.0.1-cp311-cp311-win_amd64.whl.metadata (7.0 kB)
+Collecting idna>=2.8 (from anyio<5.0,>=3.0->gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached idna-3.11-py3-none-any.whl.metadata (8.4 kB)
+Collecting typing-inspection>=0.4.2 (from fastapi<1.0,>=0.115.2->gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Downloading typing_inspection-0.4.2-py3-none-any.whl.metadata (2.6 kB)
+Collecting annotated-doc>=0.0.2 (from fastapi<1.0,>=0.115.2->gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached annotated_doc-0.0.4-py3-none-any.whl.metadata (6.6 kB)
+Collecting certifi (from httpx<1.0,>=0.24.1->gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached certifi-2026.1.4-py3-none-any.whl.metadata (2.5 kB)
+Collecting httpcore==1.* (from httpx<1.0,>=0.24.1->gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached httpcore-1.0.9-py3-none-any.whl.metadata (21 kB)
+Collecting h11>=0.16 (from httpcore==1.*->httpx<1.0,>=0.24.1->gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached h11-0.16.0-py3-none-any.whl.metadata (8.3 kB)
+Requirement already satisfied: filelock in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from huggingface-hub<2.0,>=0.33.5->gradio<6.0,>=4.0->fastrtc==0.0.28.dev0) (3.20.0)
+Collecting hf-xet<2.0.0,>=1.2.0 (from huggingface-hub<2.0,>=0.33.5->gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached hf_xet-1.2.0-cp37-abi3-win_amd64.whl.metadata (5.0 kB)
+Collecting shellingham (from huggingface-hub<2.0,>=0.33.5->gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached shellingham-1.5.4-py2.py3-none-any.whl.metadata (3.5 kB)
+Collecting tqdm>=4.42.1 (from huggingface-hub<2.0,>=0.33.5->gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached tqdm-4.67.3-py3-none-any.whl.metadata (57 kB)
+Collecting typer-slim (from huggingface-hub<2.0,>=0.33.5->gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached typer_slim-0.24.0-py3-none-any.whl.metadata (4.2 kB)
+Collecting python-dateutil>=2.8.2 (from pandas<3.0,>=1.0->gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached python_dateutil-2.9.0.post0-py2.py3-none-any.whl.metadata (8.4 kB)
+Collecting pytz>=2020.1 (from pandas<3.0,>=1.0->gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached pytz-2025.2-py2.py3-none-any.whl.metadata (22 kB)
+Collecting tzdata>=2022.7 (from pandas<3.0,>=1.0->gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached tzdata-2025.3-py2.py3-none-any.whl.metadata (1.4 kB)
+Collecting annotated-types>=0.6.0 (from pydantic<=2.12.3,>=2.0->gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached annotated_types-0.7.0-py3-none-any.whl.metadata (15 kB)
+Collecting pydantic-core==2.41.4 (from pydantic<=2.12.3,>=2.0->gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Downloading pydantic_core-2.41.4-cp311-cp311-win_amd64.whl.metadata (7.4 kB)
+Collecting click>=8.2.1 (from typer<1.0,>=0.12->gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached click-8.3.1-py3-none-any.whl.metadata (2.6 kB)
+Collecting rich>=12.3.0 (from typer<1.0,>=0.12->gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached rich-14.3.2-py3-none-any.whl.metadata (18 kB)
+Collecting dnspython>=2.0.0 (from aioice>=0.10.1->fastrtc==0.0.28.dev0)
+  Using cached dnspython-2.8.0-py3-none-any.whl.metadata (5.7 kB)
+Collecting ifaddr>=0.2.0 (from aioice>=0.10.1->fastrtc==0.0.28.dev0)
+  Using cached ifaddr-0.2.0-py3-none-any.whl.metadata (4.9 kB)
+Collecting colorama (from click>=8.2.1->typer<1.0,>=0.12->gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached colorama-0.4.6-py2.py3-none-any.whl.metadata (17 kB)
+Collecting llvmlite<0.47,>=0.46.0dev0 (from numba>=0.60.0->fastrtc==0.0.28.dev0)
+  Using cached llvmlite-0.46.0-cp311-cp311-win_amd64.whl.metadata (4.9 kB)
+Collecting six>=1.5 (from python-dateutil>=2.8.2->pandas<3.0,>=1.0->gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached six-1.17.0-py2.py3-none-any.whl.metadata (1.7 kB)
+Collecting markdown-it-py>=2.2.0 (from rich>=12.3.0->typer<1.0,>=0.12->gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached markdown_it_py-4.0.0-py3-none-any.whl.metadata (7.3 kB)
+Collecting pygments<3.0.0,>=2.13.0 (from rich>=12.3.0->typer<1.0,>=0.12->gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached pygments-2.19.2-py3-none-any.whl.metadata (2.5 kB)
+Collecting mdurl~=0.1 (from markdown-it-py>=2.2.0->rich>=12.3.0->typer<1.0,>=0.12->gradio<6.0,>=4.0->fastrtc==0.0.28.dev0)
+  Using cached mdurl-0.1.2-py3-none-any.whl.metadata (1.6 kB)
+Requirement already satisfied: av<17.0.0,>=14.0.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from aiortc->fastrtc==0.0.28.dev0) (14.4.0)
+Collecting cryptography>=44.0.0 (from aiortc->fastrtc==0.0.28.dev0)
+  Using cached cryptography-46.0.5-cp311-abi3-win_amd64.whl.metadata (5.7 kB)
+Collecting google-crc32c>=1.1 (from aiortc->fastrtc==0.0.28.dev0)
+  Using cached google_crc32c-1.8.0-cp311-cp311-win_amd64.whl.metadata (1.8 kB)
+Collecting pyee>=13.0.0 (from aiortc->fastrtc==0.0.28.dev0)
+  Using cached pyee-13.0.1-py3-none-any.whl.metadata (3.0 kB)
+Collecting pylibsrtp>=0.10.0 (from aiortc->fastrtc==0.0.28.dev0)
+  Using cached pylibsrtp-1.0.0-cp310-abi3-win_amd64.whl.metadata (4.2 kB)
+Collecting pyopenssl>=25.0.0 (from aiortc->fastrtc==0.0.28.dev0)
+  Using cached pyopenssl-25.3.0-py3-none-any.whl.metadata (17 kB)
+Collecting cffi>=2.0.0 (from cryptography>=44.0.0->aiortc->fastrtc==0.0.28.dev0)
+  Using cached cffi-2.0.0-cp311-cp311-win_amd64.whl.metadata (2.6 kB)
+Collecting pycparser (from cffi>=2.0.0->cryptography>=44.0.0->aiortc->fastrtc==0.0.28.dev0)
+  Using cached pycparser-3.0-py3-none-any.whl.metadata (8.2 kB)
+Collecting audioread>=2.1.9 (from librosa->fastrtc==0.0.28.dev0)
+  Using cached audioread-3.1.0-py3-none-any.whl.metadata (9.0 kB)
+Collecting scipy>=1.6.0 (from librosa->fastrtc==0.0.28.dev0)
+  Downloading scipy-1.17.0-cp311-cp311-win_amd64.whl.metadata (60 kB)
+Collecting scikit-learn>=1.1.0 (from librosa->fastrtc==0.0.28.dev0)
+  Using cached scikit_learn-1.8.0-cp311-cp311-win_amd64.whl.metadata (11 kB)
+Collecting joblib>=1.0 (from librosa->fastrtc==0.0.28.dev0)
+  Using cached joblib-1.5.3-py3-none-any.whl.metadata (5.5 kB)
+Collecting decorator>=4.3.0 (from librosa->fastrtc==0.0.28.dev0)
+  Using cached decorator-5.2.1-py3-none-any.whl.metadata (3.9 kB)
+Collecting soundfile>=0.12.1 (from librosa->fastrtc==0.0.28.dev0)
+  Using cached soundfile-0.13.1-py2.py3-none-win_amd64.whl.metadata (16 kB)
+Collecting pooch>=1.1 (from librosa->fastrtc==0.0.28.dev0)
+  Using cached pooch-1.9.0-py3-none-any.whl.metadata (10 kB)
+Collecting soxr>=0.3.2 (from librosa->fastrtc==0.0.28.dev0)
+  Using cached soxr-1.0.0-cp311-cp311-win_amd64.whl.metadata (5.6 kB)
+Collecting lazy_loader>=0.1 (from librosa->fastrtc==0.0.28.dev0)
+  Using cached lazy_loader-0.4-py3-none-any.whl.metadata (7.6 kB)
+Collecting msgpack>=1.0 (from librosa->fastrtc==0.0.28.dev0)
+  Using cached msgpack-1.1.2-cp311-cp311-win_amd64.whl.metadata (8.4 kB)
+Collecting platformdirs>=2.5.0 (from pooch>=1.1->librosa->fastrtc==0.0.28.dev0)
+  Using cached platformdirs-4.9.2-py3-none-any.whl.metadata (4.7 kB)
+Collecting requests>=2.19.0 (from pooch>=1.1->librosa->fastrtc==0.0.28.dev0)
+  Using cached requests-2.32.5-py3-none-any.whl.metadata (4.9 kB)
+Collecting charset_normalizer<4,>=2 (from requests>=2.19.0->pooch>=1.1->librosa->fastrtc==0.0.28.dev0)
+  Using cached charset_normalizer-3.4.4-cp311-cp311-win_amd64.whl.metadata (38 kB)
+Collecting urllib3<3,>=1.21.1 (from requests>=2.19.0->pooch>=1.1->librosa->fastrtc==0.0.28.dev0)
+  Using cached urllib3-2.6.3-py3-none-any.whl.metadata (6.9 kB)
+Collecting threadpoolctl>=3.2.0 (from scikit-learn>=1.1.0->librosa->fastrtc==0.0.28.dev0)
+  Using cached threadpoolctl-3.6.0-py3-none-any.whl.metadata (13 kB)
+Downloading gradio-5.50.0-py3-none-any.whl (63.5 MB)
+   ---------------------------------------- 63.5/63.5 MB 29.3 MB/s  0:00:02
+Downloading gradio_client-1.14.0-py3-none-any.whl (325 kB)
+Downloading aiofiles-24.1.0-py3-none-any.whl (15 kB)
+Using cached anyio-4.12.1-py3-none-any.whl (113 kB)
+Downloading fastapi-0.129.0-py3-none-any.whl (102 kB)
+Downloading groovy-0.1.2-py3-none-any.whl (14 kB)
+Using cached httpx-0.28.1-py3-none-any.whl (73 kB)
+Using cached httpcore-1.0.9-py3-none-any.whl (78 kB)
+Using cached huggingface_hub-1.4.1-py3-none-any.whl (553 kB)
+Using cached hf_xet-1.2.0-cp37-abi3-win_amd64.whl (2.9 MB)
+Using cached numpy-1.26.4-cp311-cp311-win_amd64.whl (15.8 MB)
+Using cached orjson-3.11.7-cp311-cp311-win_amd64.whl (124 kB)
+Using cached pandas-2.3.3-cp311-cp311-win_amd64.whl (11.3 MB)
+Using cached pillow-11.3.0-cp311-cp311-win_amd64.whl (7.0 MB)
+Downloading pydantic-2.12.3-py3-none-any.whl (462 kB)
+Downloading pydantic_core-2.41.4-cp311-cp311-win_amd64.whl (2.0 MB)
+   ---------------------------------------- 2.0/2.0 MB 37.4 MB/s  0:00:00
+Using cached pyyaml-6.0.3-cp311-cp311-win_amd64.whl (158 kB)
+Using cached safehttpx-0.1.7-py3-none-any.whl (9.0 kB)
+Using cached semantic_version-2.10.0-py2.py3-none-any.whl (15 kB)
+Downloading starlette-0.52.1-py3-none-any.whl (74 kB)
+Using cached tomlkit-0.13.3-py3-none-any.whl (38 kB)
+Using cached typer-0.24.0-py3-none-any.whl (56 kB)
+Downloading websockets-15.0.1-cp311-cp311-win_amd64.whl (176 kB)
+Using cached aioice-0.10.2-py3-none-any.whl (24 kB)
+Using cached annotated_doc-0.0.4-py3-none-any.whl (5.3 kB)
+Using cached annotated_types-0.7.0-py3-none-any.whl (13 kB)
+Downloading brotli-1.2.0-cp311-cp311-win_amd64.whl (369 kB)
+Using cached click-8.3.1-py3-none-any.whl (108 kB)
+Using cached dnspython-2.8.0-py3-none-any.whl (331 kB)
+Using cached h11-0.16.0-py3-none-any.whl (37 kB)
+Using cached idna-3.11-py3-none-any.whl (71 kB)
+Using cached ifaddr-0.2.0-py3-none-any.whl (12 kB)
+Using cached numba-0.64.0-cp311-cp311-win_amd64.whl (2.7 MB)
+Using cached llvmlite-0.46.0-cp311-cp311-win_amd64.whl (38.1 MB)
+Using cached python_dateutil-2.9.0.post0-py2.py3-none-any.whl (229 kB)
+Using cached python_multipart-0.0.22-py3-none-any.whl (24 kB)
+Using cached pytz-2025.2-py2.py3-none-any.whl (509 kB)
+Using cached rich-14.3.2-py3-none-any.whl (309 kB)
+Using cached pygments-2.19.2-py3-none-any.whl (1.2 MB)
+Using cached markdown_it_py-4.0.0-py3-none-any.whl (87 kB)
+Using cached mdurl-0.1.2-py3-none-any.whl (10.0 kB)
+Using cached ruff-0.15.1-py3-none-win_amd64.whl (11.6 MB)
+Using cached shellingham-1.5.4-py2.py3-none-any.whl (9.8 kB)
+Using cached six-1.17.0-py2.py3-none-any.whl (11 kB)
+Using cached tqdm-4.67.3-py3-none-any.whl (78 kB)
+Downloading typing_inspection-0.4.2-py3-none-any.whl (14 kB)
+Using cached tzdata-2025.3-py2.py3-none-any.whl (348 kB)
+Downloading uvicorn-0.41.0-py3-none-any.whl (68 kB)
+Downloading aiortc-1.14.0-py3-none-any.whl (93 kB)
+Using cached cryptography-46.0.5-cp311-abi3-win_amd64.whl (3.5 MB)
+Using cached cffi-2.0.0-cp311-cp311-win_amd64.whl (182 kB)
+Using cached google_crc32c-1.8.0-cp311-cp311-win_amd64.whl (34 kB)
+Using cached pyee-13.0.1-py3-none-any.whl (15 kB)
+Using cached pylibsrtp-1.0.0-cp310-abi3-win_amd64.whl (1.6 MB)
+Using cached pyopenssl-25.3.0-py3-none-any.whl (57 kB)
+Using cached certifi-2026.1.4-py3-none-any.whl (152 kB)
+Using cached colorama-0.4.6-py2.py3-none-any.whl (25 kB)
+Using cached ffmpy-1.0.0-py3-none-any.whl (5.6 kB)
+Downloading librosa-0.11.0-py3-none-any.whl (260 kB)
+Using cached audioread-3.1.0-py3-none-any.whl (23 kB)
+Using cached decorator-5.2.1-py3-none-any.whl (9.2 kB)
+Using cached joblib-1.5.3-py3-none-any.whl (309 kB)
+Using cached lazy_loader-0.4-py3-none-any.whl (12 kB)
+Using cached msgpack-1.1.2-cp311-cp311-win_amd64.whl (71 kB)
+Using cached pooch-1.9.0-py3-none-any.whl (67 kB)
+Using cached platformdirs-4.9.2-py3-none-any.whl (21 kB)
+Using cached requests-2.32.5-py3-none-any.whl (64 kB)
+Using cached charset_normalizer-3.4.4-cp311-cp311-win_amd64.whl (106 kB)
+Using cached urllib3-2.6.3-py3-none-any.whl (131 kB)
+Using cached scikit_learn-1.8.0-cp311-cp311-win_amd64.whl (8.1 MB)
+Downloading scipy-1.17.0-cp311-cp311-win_amd64.whl (36.4 MB)
+   ---------------------------------------- 36.4/36.4 MB 39.2 MB/s  0:00:00
+Using cached soundfile-0.13.1-py2.py3-none-win_amd64.whl (1.0 MB)
+Using cached soxr-1.0.0-cp311-cp311-win_amd64.whl (173 kB)
+Using cached threadpoolctl-3.6.0-py3-none-any.whl (18 kB)
+Using cached pycparser-3.0-py3-none-any.whl (48 kB)
+Using cached pydub-0.25.1-py2.py3-none-any.whl (32 kB)
+Using cached typer_slim-0.24.0-py3-none-any.whl (3.4 kB)
+Installing collected packages: pytz, pydub, ifaddr, brotli, websockets, urllib3, tzdata, typing-inspection, tomlkit, threadpoolctl, six, shellingham, semantic-version, ruff, pyyaml, python-multipart, pygments, pyee, pydantic-core, pycparser, platformdirs, pillow, orjson, numpy, msgpack, mdurl, llvmlite, lazy_loader, joblib, idna, hf-xet, h11, groovy, google-crc32c, ffmpy, dnspython, decorator, colorama, charset_normalizer, certifi, audioread, annotated-types, annotated-doc, aiofiles, tqdm, soxr, scipy, requests, python-dateutil, pydantic, numba, markdown-it-py, httpcore, click, cffi, anyio, aioice, uvicorn, starlette, soundfile, scikit-learn, rich, pylibsrtp, pooch, pandas, httpx, cryptography, typer, safehttpx, pyopenssl, librosa, fastapi, typer-slim, aiortc, huggingface-hub, gradio-client, gradio, fastrtc
+  Attempting uninstall: pillow
+    Found existing installation: pillow 12.1.1
+    Uninstalling pillow-12.1.1:
+      Successfully uninstalled pillow-12.1.1
+  Attempting uninstall: numpy
+    Found existing installation: numpy 2.4.2
+    Uninstalling numpy-2.4.2:
+      Successfully uninstalled numpy-2.4.2
+Successfully installed aiofiles-24.1.0 aioice-0.10.2 aiortc-1.14.0 annotated-doc-0.0.4 annotated-types-0.7.0 anyio-4.12.1 audioread-3.1.0 brotli-1.2.0 certifi-2026.1.4 cffi-2.0.0 charset_normalizer-3.4.4 click-8.3.1 colorama-0.4.6 cryptography-46.0.5 decorator-5.2.1 dnspython-2.8.0 fastapi-0.129.0 fastrtc-0.0.28.dev0 ffmpy-1.0.0 google-crc32c-1.8.0 gradio-5.50.0 gradio-client-1.14.0 groovy-0.1.2 h11-0.16.0 hf-xet-1.2.0 httpcore-1.0.9 httpx-0.28.1 huggingface-hub-1.4.1 idna-3.11 ifaddr-0.2.0 joblib-1.5.3 lazy_loader-0.4 librosa-0.11.0 llvmlite-0.46.0 markdown-it-py-4.0.0 mdurl-0.1.2 msgpack-1.1.2 numba-0.64.0 numpy-1.26.4 orjson-3.11.7 pandas-2.3.3 pillow-11.3.0 platformdirs-4.9.2 pooch-1.9.0 pycparser-3.0 pydantic-2.12.3 pydantic-core-2.41.4 pydub-0.25.1 pyee-13.0.1 pygments-2.19.2 pylibsrtp-1.0.0 pyopenssl-25.3.0 python-dateutil-2.9.0.post0 python-multipart-0.0.22 pytz-2025.2 pyyaml-6.0.3 requests-2.32.5 rich-14.3.2 ruff-0.15.1 safehttpx-0.1.7 scikit-learn-1.8.0 scipy-1.17.0 semantic-version-2.10.0 shellingham-1.5.4 six-1.17.0 soundfile-0.13.1 soxr-1.0.0 starlette-0.52.1 threadpoolctl-3.6.0 tomlkit-0.13.3 tqdm-4.67.3 typer-0.24.0 typer-slim-0.24.0 typing-inspection-0.4.2 tzdata-2025.3 urllib3-2.6.3 uvicorn-0.41.0 websockets-15.0.1
+(oac) PS C:\Users\hamad\OpenAvatarChat>
+(oac) PS C:\Users\hamad\OpenAvatarChat> python run_chat.py --config_file ./configs/config_videochat.yaml
+C:\Users\hamad\miniconda3\envs\oac\python.exe: can't open file 'C:\\Users\\hamad\\OpenAvatarChat\\run_chat.py': [Errno 2] No such file or directory
+(oac) PS C:\Users\hamad\OpenAvatarChat>
+(oac) PS C:\Users\hamad\OpenAvatarChat> dir C:\Users\hamad\OpenAvatarChat\ -Name
+assets
+build
+config
+coturn-data
+docs
+models
+resource
+scripts
+src
+ssl_certs
+tests
+.dockerignore
+.gitattributes
+.gitignore
+.gitmodules
+build_and_run.sh
+build_cuda128.sh
+docker-compose.yml
+Dockerfile
+Dockerfile.cuda12.8
+install.py
+LICENSE
+pyproject.toml
+README.md
+readme_en.md
+run_docker_cuda128.sh
+setup.cfg
+(oac) PS C:\Users\hamad\OpenAvatarChat> dir C:\Users\hamad\OpenAvatarChat\scripts\ -Name
+compile_requirements.sh
+create_ssl_certs.sh
+download_avatar_model.py
+download_liteavatar_weights.sh
+download_MiniCPM-o_2.6-int4.sh
+download_MiniCPM-o_2.6.sh
+download_musetalk_weights.sh
+post_config_install.sh
+pre_config_install.sh
+setup_coturn.sh
+(oac) PS C:\Users\hamad\OpenAvatarChat> dir C:\Users\hamad\OpenAvatarChat\config\ -Name
+chat_with_lam.yaml
+chat_with_minicpm.yaml
+chat_with_openai_compatible.yaml
+chat_with_openai_compatible_bailian_cosyvoice.yaml
+chat_with_openai_compatible_bailian_cosyvoice_musetalk.yaml
+chat_with_openai_compatible_edge_tts.yaml
+chat_with_qwen_omni.yaml
+(oac) PS C:\Users\hamad\OpenAvatarChat> dir C:\Users\hamad\OpenAvatarChat\src\ -Name
+chat_engine
+engine_utils
+handlers
+open_video_chat.egg-info
+service
+third_party
+demo.py
+__init__.py
+(oac) PS C:\Users\hamad\OpenAvatarChat> type C:\Users\hamad\OpenAvatarChat\pyproject.toml
+[project]
+name = "open-video-chat"
+version = "0.1.0"
+description = "A modular interactive digital human conversation implementation that runs full-featured on a single PC."
+readme = "README.md"
+requires-python = ">=3.11.7, <3.12"
+dependencies = [
+    "aiohttp~=3.11.12",
+    "aiortc~=1.12.0",
+    "dynaconf~=3.2.7",
+    "fastapi[standard]~=0.115.12",
+    "fastrtc",
+    "gradio~=5.9.1",
+    "librosa~=0.10.2",
+    "loguru~=0.7.3",
+    "modelscope>=1.25.0",
+    "numpy<=1.26.4",
+    "openai>=1.72.0",
+    "opencv-python-headless~=4.11.0",
+    "pip>=25.0.1",
+    "pyaml>=25.1.0",
+    "pydantic~=2.10.6",
+    "pyyaml~=6.0.2",
+    "scipy~=1.15.1",
+    "setuptools>=78.1.0",
+    "soundfile~=0.13.1",
+    "starlette~=0.41.3",
+    "tqdm~=4.67.1",
+    "typing-extensions~=4.12.2",
+    "uvicorn~=0.34.0",
+    "torch==2.8.0",
+    "torchvision",
+    "torchaudio",
+    "python-dotenv>=1.1.0",
+]
+
+[tool.uv.workspace]
+members = [
+    "src/handlers/tts/edgetts",
+    "src/handlers/tts/cosyvoice",
+    "src/handlers/llm/minicpm",
+    "src/handlers/avatar/liteavatar",
+    "src/handlers/avatar/lam",
+    "src/handlers/vad/silerovad",
+    "src/handlers/tts/bailian_tts",
+    "src/handlers/asr/sensevoice",
+    "src/handlers/avatar/musetalk",
+]
+
+[tool.uv.sources]
+fastrtc = { path = "src/third_party/gradio_webrtc_videochat/dist/fastrtc-0.0.28.dev0-py3-none-any.whl" }
+torch = [
+    { index = "pytorch-cu128" },
+]
+torchvision = [
+    { index = "pytorch-cu128" },
+]
+torchaudio = [
+    { index = "pytorch-cu128" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv]
+no-build-isolation-package = ["chumpy"]
+
+[tool.uv.extra-build-dependencies]
+chumpy = ["wheel"]
+(oac) PS C:\Users\hamad\OpenAvatarChat> python C:\Users\hamad\OpenAvatarChat\src\demo.py --config_file C:\Users\hamad\OpenAvatarChat\config\chat_with_lam.yaml
+Traceback (most recent call last):
+  File "C:\Users\hamad\OpenAvatarChat\src\demo.py", line 1, in <module>
+    from chat_engine.chat_engine import ChatEngine
+  File "C:\Users\hamad\OpenAvatarChat\src\chat_engine\chat_engine.py", line 5, in <module>
+    from loguru import logger
+ModuleNotFoundError: No module named 'loguru'
+(oac) PS C:\Users\hamad\OpenAvatarChat>
+(oac) PS C:\Users\hamad\OpenAvatarChat> pip install -e C:\Users\hamad\OpenAvatarChat
+Obtaining file:///C:/Users/hamad/OpenAvatarChat
+  Installing build dependencies ... done
+  Checking if build backend supports build_editable ... done
+  Getting requirements to build editable ... done
+  Preparing editable metadata (pyproject.toml) ... done
+Collecting aiohttp~=3.11.12 (from open-video-chat==0.1.0)
+  Using cached aiohttp-3.11.18-cp311-cp311-win_amd64.whl.metadata (8.0 kB)
+Collecting aiortc~=1.12.0 (from open-video-chat==0.1.0)
+  Using cached aiortc-1.12.0-py3-none-any.whl.metadata (4.9 kB)
+Collecting dynaconf~=3.2.7 (from open-video-chat==0.1.0)
+  Using cached dynaconf-3.2.12-py2.py3-none-any.whl.metadata (9.4 kB)
+Collecting fastapi~=0.115.12 (from fastapi[standard]~=0.115.12->open-video-chat==0.1.0)
+  Using cached fastapi-0.115.14-py3-none-any.whl.metadata (27 kB)
+Requirement already satisfied: fastrtc in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from open-video-chat==0.1.0) (0.0.28.dev0)
+Collecting gradio~=5.9.1 (from open-video-chat==0.1.0)
+  Using cached gradio-5.9.1-py3-none-any.whl.metadata (16 kB)
+Collecting librosa~=0.10.2 (from open-video-chat==0.1.0)
+  Using cached librosa-0.10.2.post1-py3-none-any.whl.metadata (8.6 kB)
+Collecting loguru~=0.7.3 (from open-video-chat==0.1.0)
+  Using cached loguru-0.7.3-py3-none-any.whl.metadata (22 kB)
+Collecting modelscope>=1.25.0 (from open-video-chat==0.1.0)
+  Using cached modelscope-1.34.0-py3-none-any.whl.metadata (43 kB)
+Requirement already satisfied: numpy<=1.26.4 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from open-video-chat==0.1.0) (1.26.4)
+Collecting openai>=1.72.0 (from open-video-chat==0.1.0)
+  Using cached openai-2.21.0-py3-none-any.whl.metadata (29 kB)
+Collecting opencv-python-headless~=4.11.0 (from open-video-chat==0.1.0)
+  Using cached opencv_python_headless-4.11.0.86-cp37-abi3-win_amd64.whl.metadata (20 kB)
+Requirement already satisfied: pip>=25.0.1 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from open-video-chat==0.1.0) (26.0.1)
+Collecting pyaml>=25.1.0 (from open-video-chat==0.1.0)
+  Using cached pyaml-26.2.1-py3-none-any.whl.metadata (12 kB)
+Collecting pydantic~=2.10.6 (from open-video-chat==0.1.0)
+  Using cached pydantic-2.10.6-py3-none-any.whl.metadata (30 kB)
+Requirement already satisfied: pyyaml~=6.0.2 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from open-video-chat==0.1.0) (6.0.3)
+Collecting scipy~=1.15.1 (from open-video-chat==0.1.0)
+  Using cached scipy-1.15.3-cp311-cp311-win_amd64.whl.metadata (60 kB)
+Requirement already satisfied: setuptools>=78.1.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from open-video-chat==0.1.0) (80.10.2)
+Requirement already satisfied: soundfile~=0.13.1 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from open-video-chat==0.1.0) (0.13.1)
+Collecting starlette~=0.41.3 (from open-video-chat==0.1.0)
+  Using cached starlette-0.41.3-py3-none-any.whl.metadata (6.0 kB)
+Requirement already satisfied: tqdm~=4.67.1 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from open-video-chat==0.1.0) (4.67.3)
+Collecting typing-extensions~=4.12.2 (from open-video-chat==0.1.0)
+  Using cached typing_extensions-4.12.2-py3-none-any.whl.metadata (3.0 kB)
+Collecting uvicorn~=0.34.0 (from open-video-chat==0.1.0)
+  Using cached uvicorn-0.34.3-py3-none-any.whl.metadata (6.5 kB)
+Requirement already satisfied: torch==2.8.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from open-video-chat==0.1.0) (2.8.0+cu128)
+Requirement already satisfied: torchvision in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from open-video-chat==0.1.0) (0.23.0+cu128)
+Requirement already satisfied: torchaudio in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from open-video-chat==0.1.0) (2.8.0+cu128)
+Collecting python-dotenv>=1.1.0 (from open-video-chat==0.1.0)
+  Using cached python_dotenv-1.2.1-py3-none-any.whl.metadata (25 kB)
+Requirement already satisfied: filelock in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from torch==2.8.0->open-video-chat==0.1.0) (3.20.0)
+Requirement already satisfied: sympy>=1.13.3 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from torch==2.8.0->open-video-chat==0.1.0) (1.14.0)
+Requirement already satisfied: networkx in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from torch==2.8.0->open-video-chat==0.1.0) (3.6.1)
+Requirement already satisfied: jinja2 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from torch==2.8.0->open-video-chat==0.1.0) (3.1.6)
+Requirement already satisfied: fsspec in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from torch==2.8.0->open-video-chat==0.1.0) (2025.12.0)
+Collecting aiohappyeyeballs>=2.3.0 (from aiohttp~=3.11.12->open-video-chat==0.1.0)
+  Using cached aiohappyeyeballs-2.6.1-py3-none-any.whl.metadata (5.9 kB)
+Collecting aiosignal>=1.1.2 (from aiohttp~=3.11.12->open-video-chat==0.1.0)
+  Using cached aiosignal-1.4.0-py3-none-any.whl.metadata (3.7 kB)
+Collecting attrs>=17.3.0 (from aiohttp~=3.11.12->open-video-chat==0.1.0)
+  Using cached attrs-25.4.0-py3-none-any.whl.metadata (10 kB)
+Collecting frozenlist>=1.1.1 (from aiohttp~=3.11.12->open-video-chat==0.1.0)
+  Using cached frozenlist-1.8.0-cp311-cp311-win_amd64.whl.metadata (21 kB)
+Collecting multidict<7.0,>=4.5 (from aiohttp~=3.11.12->open-video-chat==0.1.0)
+  Using cached multidict-6.7.1-cp311-cp311-win_amd64.whl.metadata (5.5 kB)
+Collecting propcache>=0.2.0 (from aiohttp~=3.11.12->open-video-chat==0.1.0)
+  Using cached propcache-0.4.1-cp311-cp311-win_amd64.whl.metadata (14 kB)
+Collecting yarl<2.0,>=1.17.0 (from aiohttp~=3.11.12->open-video-chat==0.1.0)
+  Using cached yarl-1.22.0-cp311-cp311-win_amd64.whl.metadata (77 kB)
+Requirement already satisfied: aioice<1.0.0,>=0.10.1 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from aiortc~=1.12.0->open-video-chat==0.1.0) (0.10.2)
+Requirement already satisfied: av<15.0.0,>=14.0.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from aiortc~=1.12.0->open-video-chat==0.1.0) (14.4.0)
+Requirement already satisfied: cffi>=1.0.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from aiortc~=1.12.0->open-video-chat==0.1.0) (2.0.0)
+Requirement already satisfied: cryptography>=44.0.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from aiortc~=1.12.0->open-video-chat==0.1.0) (46.0.5)
+Requirement already satisfied: google-crc32c>=1.1 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from aiortc~=1.12.0->open-video-chat==0.1.0) (1.8.0)
+Requirement already satisfied: pyee>=13.0.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from aiortc~=1.12.0->open-video-chat==0.1.0) (13.0.1)
+Requirement already satisfied: pylibsrtp>=0.10.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from aiortc~=1.12.0->open-video-chat==0.1.0) (1.0.0)
+Requirement already satisfied: pyopenssl>=25.0.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from aiortc~=1.12.0->open-video-chat==0.1.0) (25.3.0)
+Requirement already satisfied: dnspython>=2.0.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from aioice<1.0.0,>=0.10.1->aiortc~=1.12.0->open-video-chat==0.1.0) (2.8.0)
+Requirement already satisfied: ifaddr>=0.2.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from aioice<1.0.0,>=0.10.1->aiortc~=1.12.0->open-video-chat==0.1.0) (0.2.0)
+Collecting fastapi-cli>=0.0.5 (from fastapi-cli[standard]>=0.0.5; extra == "standard"->fastapi[standard]~=0.115.12->open-video-chat==0.1.0)
+  Using cached fastapi_cli-0.0.23-py3-none-any.whl.metadata (6.4 kB)
+Requirement already satisfied: httpx>=0.23.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from fastapi[standard]~=0.115.12->open-video-chat==0.1.0) (0.28.1)
+Requirement already satisfied: python-multipart>=0.0.18 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from fastapi[standard]~=0.115.12->open-video-chat==0.1.0) (0.0.22)
+Collecting email-validator>=2.0.0 (from fastapi[standard]~=0.115.12->open-video-chat==0.1.0)
+  Using cached email_validator-2.3.0-py3-none-any.whl.metadata (26 kB)
+Collecting aiofiles<24.0,>=22.0 (from gradio~=5.9.1->open-video-chat==0.1.0)
+  Using cached aiofiles-23.2.1-py3-none-any.whl.metadata (9.7 kB)
+Requirement already satisfied: anyio<5.0,>=3.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from gradio~=5.9.1->open-video-chat==0.1.0) (4.12.1)
+Requirement already satisfied: ffmpy in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from gradio~=5.9.1->open-video-chat==0.1.0) (1.0.0)
+Collecting gradio-client==1.5.2 (from gradio~=5.9.1->open-video-chat==0.1.0)
+  Using cached gradio_client-1.5.2-py3-none-any.whl.metadata (7.1 kB)
+Requirement already satisfied: huggingface-hub>=0.25.1 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from gradio~=5.9.1->open-video-chat==0.1.0) (1.4.1)
+Requirement already satisfied: markupsafe~=2.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from gradio~=5.9.1->open-video-chat==0.1.0) (2.1.5)
+Requirement already satisfied: orjson~=3.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from gradio~=5.9.1->open-video-chat==0.1.0) (3.11.7)
+Requirement already satisfied: packaging in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from gradio~=5.9.1->open-video-chat==0.1.0) (25.0)
+Requirement already satisfied: pandas<3.0,>=1.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from gradio~=5.9.1->open-video-chat==0.1.0) (2.3.3)
+Requirement already satisfied: pillow<12.0,>=8.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from gradio~=5.9.1->open-video-chat==0.1.0) (11.3.0)
+Requirement already satisfied: pydub in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from gradio~=5.9.1->open-video-chat==0.1.0) (0.25.1)
+Requirement already satisfied: ruff>=0.2.2 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from gradio~=5.9.1->open-video-chat==0.1.0) (0.15.1)
+Requirement already satisfied: safehttpx<0.2.0,>=0.1.6 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from gradio~=5.9.1->open-video-chat==0.1.0) (0.1.7)
+Requirement already satisfied: semantic-version~=2.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from gradio~=5.9.1->open-video-chat==0.1.0) (2.10.0)
+Requirement already satisfied: tomlkit<0.14.0,>=0.12.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from gradio~=5.9.1->open-video-chat==0.1.0) (0.13.3)
+Requirement already satisfied: typer<1.0,>=0.12 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from gradio~=5.9.1->open-video-chat==0.1.0) (0.24.0)
+Collecting websockets<15.0,>=10.0 (from gradio-client==1.5.2->gradio~=5.9.1->open-video-chat==0.1.0)
+  Using cached websockets-14.2-cp311-cp311-win_amd64.whl.metadata (7.0 kB)
+Requirement already satisfied: idna>=2.8 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from anyio<5.0,>=3.0->gradio~=5.9.1->open-video-chat==0.1.0) (3.11)
+Requirement already satisfied: audioread>=2.1.9 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from librosa~=0.10.2->open-video-chat==0.1.0) (3.1.0)
+Requirement already satisfied: scikit-learn>=0.20.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from librosa~=0.10.2->open-video-chat==0.1.0) (1.8.0)
+Requirement already satisfied: joblib>=0.14 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from librosa~=0.10.2->open-video-chat==0.1.0) (1.5.3)
+Requirement already satisfied: decorator>=4.3.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from librosa~=0.10.2->open-video-chat==0.1.0) (5.2.1)
+Requirement already satisfied: numba>=0.51.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from librosa~=0.10.2->open-video-chat==0.1.0) (0.64.0)
+Requirement already satisfied: pooch>=1.1 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from librosa~=0.10.2->open-video-chat==0.1.0) (1.9.0)
+Requirement already satisfied: soxr>=0.3.2 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from librosa~=0.10.2->open-video-chat==0.1.0) (1.0.0)
+Requirement already satisfied: lazy-loader>=0.1 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from librosa~=0.10.2->open-video-chat==0.1.0) (0.4)
+Requirement already satisfied: msgpack>=1.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from librosa~=0.10.2->open-video-chat==0.1.0) (1.1.2)
+Requirement already satisfied: colorama>=0.3.4 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from loguru~=0.7.3->open-video-chat==0.1.0) (0.4.6)
+Collecting win32-setctime>=1.0.0 (from loguru~=0.7.3->open-video-chat==0.1.0)
+  Using cached win32_setctime-1.2.0-py3-none-any.whl.metadata (2.4 kB)
+Requirement already satisfied: python-dateutil>=2.8.2 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from pandas<3.0,>=1.0->gradio~=5.9.1->open-video-chat==0.1.0) (2.9.0.post0)
+Requirement already satisfied: pytz>=2020.1 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from pandas<3.0,>=1.0->gradio~=5.9.1->open-video-chat==0.1.0) (2025.2)
+Requirement already satisfied: tzdata>=2022.7 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from pandas<3.0,>=1.0->gradio~=5.9.1->open-video-chat==0.1.0) (2025.3)
+Requirement already satisfied: annotated-types>=0.6.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from pydantic~=2.10.6->open-video-chat==0.1.0) (0.7.0)
+Collecting pydantic-core==2.27.2 (from pydantic~=2.10.6->open-video-chat==0.1.0)
+  Using cached pydantic_core-2.27.2-cp311-cp311-win_amd64.whl.metadata (6.7 kB)
+Requirement already satisfied: click>=8.2.1 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from typer<1.0,>=0.12->gradio~=5.9.1->open-video-chat==0.1.0) (8.3.1)
+Requirement already satisfied: shellingham>=1.3.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from typer<1.0,>=0.12->gradio~=5.9.1->open-video-chat==0.1.0) (1.5.4)
+Requirement already satisfied: rich>=12.3.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from typer<1.0,>=0.12->gradio~=5.9.1->open-video-chat==0.1.0) (14.3.2)
+Requirement already satisfied: annotated-doc>=0.0.2 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from typer<1.0,>=0.12->gradio~=5.9.1->open-video-chat==0.1.0) (0.0.4)
+Requirement already satisfied: h11>=0.8 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from uvicorn~=0.34.0->open-video-chat==0.1.0) (0.16.0)
+Requirement already satisfied: pycparser in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from cffi>=1.0.0->aiortc~=1.12.0->open-video-chat==0.1.0) (3.0)
+Collecting rich-toolkit>=0.14.8 (from fastapi-cli>=0.0.5->fastapi-cli[standard]>=0.0.5; extra == "standard"->fastapi[standard]~=0.115.12->open-video-chat==0.1.0)
+  Using cached rich_toolkit-0.19.4-py3-none-any.whl.metadata (1.0 kB)
+Collecting fastapi-cloud-cli>=0.1.1 (from fastapi-cli[standard]>=0.0.5; extra == "standard"->fastapi[standard]~=0.115.12->open-video-chat==0.1.0)
+  Using cached fastapi_cloud_cli-0.13.0-py3-none-any.whl.metadata (3.3 kB)
+Collecting rignore>=0.5.1 (from fastapi-cloud-cli>=0.1.1->fastapi-cli[standard]>=0.0.5; extra == "standard"->fastapi[standard]~=0.115.12->open-video-chat==0.1.0)
+  Using cached rignore-0.7.6-cp311-cp311-win_amd64.whl.metadata (4.3 kB)
+Collecting sentry-sdk>=2.20.0 (from fastapi-cloud-cli>=0.1.1->fastapi-cli[standard]>=0.0.5; extra == "standard"->fastapi[standard]~=0.115.12->open-video-chat==0.1.0)
+  Using cached sentry_sdk-2.53.0-py2.py3-none-any.whl.metadata (10 kB)
+Collecting fastar>=0.8.0 (from fastapi-cloud-cli>=0.1.1->fastapi-cli[standard]>=0.0.5; extra == "standard"->fastapi[standard]~=0.115.12->open-video-chat==0.1.0)
+  Using cached fastar-0.8.0-cp311-cp311-win_amd64.whl.metadata (4.0 kB)
+Requirement already satisfied: certifi in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from httpx>=0.23.0->fastapi[standard]~=0.115.12->open-video-chat==0.1.0) (2026.1.4)
+Requirement already satisfied: httpcore==1.* in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from httpx>=0.23.0->fastapi[standard]~=0.115.12->open-video-chat==0.1.0) (1.0.9)
+Requirement already satisfied: hf-xet<2.0.0,>=1.2.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from huggingface-hub>=0.25.1->gradio~=5.9.1->open-video-chat==0.1.0) (1.2.0)
+Requirement already satisfied: typer-slim in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from huggingface-hub>=0.25.1->gradio~=5.9.1->open-video-chat==0.1.0) (0.24.0)
+Requirement already satisfied: requests>=2.25 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from modelscope>=1.25.0->open-video-chat==0.1.0) (2.32.5)
+Requirement already satisfied: urllib3>=1.26 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from modelscope>=1.25.0->open-video-chat==0.1.0) (2.6.3)
+Requirement already satisfied: llvmlite<0.47,>=0.46.0dev0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from numba>=0.51.0->librosa~=0.10.2->open-video-chat==0.1.0) (0.46.0)
+Collecting distro<2,>=1.7.0 (from openai>=1.72.0->open-video-chat==0.1.0)
+  Using cached distro-1.9.0-py3-none-any.whl.metadata (6.8 kB)
+Collecting jiter<1,>=0.10.0 (from openai>=1.72.0->open-video-chat==0.1.0)
+  Using cached jiter-0.13.0-cp311-cp311-win_amd64.whl.metadata (5.3 kB)
+Collecting sniffio (from openai>=1.72.0->open-video-chat==0.1.0)
+  Using cached sniffio-1.3.1-py3-none-any.whl.metadata (3.9 kB)
+Requirement already satisfied: platformdirs>=2.5.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from pooch>=1.1->librosa~=0.10.2->open-video-chat==0.1.0) (4.9.2)
+Requirement already satisfied: six>=1.5 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from python-dateutil>=2.8.2->pandas<3.0,>=1.0->gradio~=5.9.1->open-video-chat==0.1.0) (1.17.0)
+Requirement already satisfied: charset_normalizer<4,>=2 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from requests>=2.25->modelscope>=1.25.0->open-video-chat==0.1.0) (3.4.4)
+Requirement already satisfied: markdown-it-py>=2.2.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from rich>=12.3.0->typer<1.0,>=0.12->gradio~=5.9.1->open-video-chat==0.1.0) (4.0.0)
+Requirement already satisfied: pygments<3.0.0,>=2.13.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from rich>=12.3.0->typer<1.0,>=0.12->gradio~=5.9.1->open-video-chat==0.1.0) (2.19.2)
+Requirement already satisfied: mdurl~=0.1 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from markdown-it-py>=2.2.0->rich>=12.3.0->typer<1.0,>=0.12->gradio~=5.9.1->open-video-chat==0.1.0) (0.1.2)
+Requirement already satisfied: threadpoolctl>=3.2.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from scikit-learn>=0.20.0->librosa~=0.10.2->open-video-chat==0.1.0) (3.6.0)
+Requirement already satisfied: mpmath<1.4,>=1.1.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from sympy>=1.13.3->torch==2.8.0->open-video-chat==0.1.0) (1.3.0)
+Collecting httptools>=0.6.3 (from uvicorn[standard]>=0.12.0; extra == "standard"->fastapi[standard]~=0.115.12->open-video-chat==0.1.0)
+  Using cached httptools-0.7.1-cp311-cp311-win_amd64.whl.metadata (3.6 kB)
+Collecting watchfiles>=0.13 (from uvicorn[standard]>=0.12.0; extra == "standard"->fastapi[standard]~=0.115.12->open-video-chat==0.1.0)
+  Using cached watchfiles-1.1.1-cp311-cp311-win_amd64.whl.metadata (5.0 kB)
+Using cached aiohttp-3.11.18-cp311-cp311-win_amd64.whl (443 kB)
+Using cached aiortc-1.12.0-py3-none-any.whl (90 kB)
+Using cached dynaconf-3.2.12-py2.py3-none-any.whl (237 kB)
+Using cached fastapi-0.115.14-py3-none-any.whl (95 kB)
+Using cached gradio-5.9.1-py3-none-any.whl (57.2 MB)
+Using cached gradio_client-1.5.2-py3-none-any.whl (320 kB)
+Using cached aiofiles-23.2.1-py3-none-any.whl (15 kB)
+Using cached librosa-0.10.2.post1-py3-none-any.whl (260 kB)
+Using cached loguru-0.7.3-py3-none-any.whl (61 kB)
+Using cached multidict-6.7.1-cp311-cp311-win_amd64.whl (45 kB)
+Using cached opencv_python_headless-4.11.0.86-cp37-abi3-win_amd64.whl (39.4 MB)
+Using cached pydantic-2.10.6-py3-none-any.whl (431 kB)
+Using cached pydantic_core-2.27.2-cp311-cp311-win_amd64.whl (2.0 MB)
+Using cached scipy-1.15.3-cp311-cp311-win_amd64.whl (41.2 MB)
+Using cached starlette-0.41.3-py3-none-any.whl (73 kB)
+Using cached typing_extensions-4.12.2-py3-none-any.whl (37 kB)
+Using cached uvicorn-0.34.3-py3-none-any.whl (62 kB)
+Using cached websockets-14.2-cp311-cp311-win_amd64.whl (164 kB)
+Using cached yarl-1.22.0-cp311-cp311-win_amd64.whl (86 kB)
+Using cached aiohappyeyeballs-2.6.1-py3-none-any.whl (15 kB)
+Using cached aiosignal-1.4.0-py3-none-any.whl (7.5 kB)
+Using cached attrs-25.4.0-py3-none-any.whl (67 kB)
+Using cached email_validator-2.3.0-py3-none-any.whl (35 kB)
+Using cached fastapi_cli-0.0.23-py3-none-any.whl (12 kB)
+Using cached fastapi_cloud_cli-0.13.0-py3-none-any.whl (27 kB)
+Using cached fastar-0.8.0-cp311-cp311-win_amd64.whl (490 kB)
+Using cached frozenlist-1.8.0-cp311-cp311-win_amd64.whl (44 kB)
+Using cached modelscope-1.34.0-py3-none-any.whl (6.1 MB)
+Using cached openai-2.21.0-py3-none-any.whl (1.1 MB)
+Using cached distro-1.9.0-py3-none-any.whl (20 kB)
+Using cached jiter-0.13.0-cp311-cp311-win_amd64.whl (204 kB)
+Using cached propcache-0.4.1-cp311-cp311-win_amd64.whl (41 kB)
+Using cached pyaml-26.2.1-py3-none-any.whl (27 kB)
+Using cached python_dotenv-1.2.1-py3-none-any.whl (21 kB)
+Using cached rich_toolkit-0.19.4-py3-none-any.whl (32 kB)
+Using cached rignore-0.7.6-cp311-cp311-win_amd64.whl (727 kB)
+Using cached sentry_sdk-2.53.0-py2.py3-none-any.whl (437 kB)
+Using cached httptools-0.7.1-cp311-cp311-win_amd64.whl (86 kB)
+Using cached watchfiles-1.1.1-cp311-cp311-win_amd64.whl (287 kB)
+Using cached win32_setctime-1.2.0-py3-none-any.whl (4.1 kB)
+Using cached sniffio-1.3.1-py3-none-any.whl (10 kB)
+Building wheels for collected packages: open-video-chat
+  Building editable for open-video-chat (pyproject.toml) ... done
+  Created wheel for open-video-chat: filename=open_video_chat-0.1.0-0.editable-py3-none-any.whl size=21450 sha256=d48f0f6d4b84ac94929f94c6e75cbd0b2f09919dc6aace2b6705318c1ddc8d4c
+  Stored in directory: C:\Users\hamad\AppData\Local\Temp\pip-ephem-wheel-cache-0jiqh09e\wheels\3a\a8\73\fb9579a7f3f6c5e58fffaad832c5965e24d361fa11a2a41c7c
+Successfully built open-video-chat
+Installing collected packages: win32-setctime, websockets, typing-extensions, sniffio, sentry-sdk, scipy, rignore, python-dotenv, pyaml, propcache, opencv-python-headless, multidict, jiter, httptools, frozenlist, fastar, email-validator, dynaconf, distro, attrs, aiohappyeyeballs, aiofiles, yarl, uvicorn, pydantic-core, modelscope, loguru, aiosignal, watchfiles, starlette, rich-toolkit, pydantic, librosa, aiohttp, openai, fastapi, aiortc, fastapi-cloud-cli, fastapi-cli, gradio-client, gradio, open-video-chat
+  Attempting uninstall: websockets
+    Found existing installation: websockets 15.0.1
+    Uninstalling websockets-15.0.1:
+      Successfully uninstalled websockets-15.0.1
+  Attempting uninstall: typing-extensions
+    Found existing installation: typing_extensions 4.15.0
+    Uninstalling typing_extensions-4.15.0:
+      Successfully uninstalled typing_extensions-4.15.0
+  Attempting uninstall: scipy
+    Found existing installation: scipy 1.17.0
+    Uninstalling scipy-1.17.0:
+      Successfully uninstalled scipy-1.17.0
+  Attempting uninstall: aiofiles
+    Found existing installation: aiofiles 24.1.0
+    Uninstalling aiofiles-24.1.0:
+      Successfully uninstalled aiofiles-24.1.0
+  Attempting uninstall: uvicorn
+    Found existing installation: uvicorn 0.41.0
+    Uninstalling uvicorn-0.41.0:
+      Successfully uninstalled uvicorn-0.41.0
+  Attempting uninstall: pydantic-core
+    Found existing installation: pydantic_core 2.41.4
+    Uninstalling pydantic_core-2.41.4:
+      Successfully uninstalled pydantic_core-2.41.4
+  Attempting uninstall: starlette
+    Found existing installation: starlette 0.52.1
+    Uninstalling starlette-0.52.1:
+      Successfully uninstalled starlette-0.52.1
+  Attempting uninstall: pydantic
+    Found existing installation: pydantic 2.12.3
+    Uninstalling pydantic-2.12.3:
+      Successfully uninstalled pydantic-2.12.3
+  Attempting uninstall: librosa
+    Found existing installation: librosa 0.11.0
+    Uninstalling librosa-0.11.0:
+      Successfully uninstalled librosa-0.11.0
+  Attempting uninstall: fastapi
+    Found existing installation: fastapi 0.129.0
+    Uninstalling fastapi-0.129.0:
+      Successfully uninstalled fastapi-0.129.0
+  Attempting uninstall: aiortc
+    Found existing installation: aiortc 1.14.0
+    Uninstalling aiortc-1.14.0:
+      Successfully uninstalled aiortc-1.14.0
+  Attempting uninstall: gradio-client
+    Found existing installation: gradio_client 1.14.0
+    Uninstalling gradio_client-1.14.0:
+      Successfully uninstalled gradio_client-1.14.0
+  Attempting uninstall: gradio
+    Found existing installation: gradio 5.50.0
+    Uninstalling gradio-5.50.0:
+      Successfully uninstalled gradio-5.50.0
+Successfully installed aiofiles-23.2.1 aiohappyeyeballs-2.6.1 aiohttp-3.11.18 aiortc-1.12.0 aiosignal-1.4.0 attrs-25.4.0 distro-1.9.0 dynaconf-3.2.12 email-validator-2.3.0 fastapi-0.115.14 fastapi-cli-0.0.23 fastapi-cloud-cli-0.13.0 fastar-0.8.0 frozenlist-1.8.0 gradio-5.9.1 gradio-client-1.5.2 httptools-0.7.1 jiter-0.13.0 librosa-0.10.2.post1 loguru-0.7.3 modelscope-1.34.0 multidict-6.7.1 open-video-chat-0.1.0 openai-2.21.0 opencv-python-headless-4.11.0.86 propcache-0.4.1 pyaml-26.2.1 pydantic-2.10.6 pydantic-core-2.27.2 python-dotenv-1.2.1 rich-toolkit-0.19.4 rignore-0.7.6 scipy-1.15.3 sentry-sdk-2.53.0 sniffio-1.3.1 starlette-0.41.3 typing-extensions-4.12.2 uvicorn-0.34.3 watchfiles-1.1.1 websockets-14.2 win32-setctime-1.2.0 yarl-1.22.0
+(oac) PS C:\Users\hamad\OpenAvatarChat>
+(oac) PS C:\Users\hamad\OpenAvatarChat> python C:\Users\hamad\OpenAvatarChat\src\demo.py --config_file C:\Users\hamad\OpenAvatarChat\config\chat_with_lam.yaml
+usage: demo.py [-h] [--host HOST] [--port PORT] [--config CONFIG] [--env ENV]
+demo.py: error: unrecognized arguments: --config_file C:\Users\hamad\OpenAvatarChat\config\chat_with_lam.yaml
+(oac) PS C:\Users\hamad\OpenAvatarChat>
+(oac) PS C:\Users\hamad\OpenAvatarChat> python C:\Users\hamad\OpenAvatarChat\src\demo.py --config C:\Users\hamad\OpenAvatarChat\config\chat_with_lam.yaml
+2026-02-19 21:35:46.219 | INFO     | service.service_utils.service_config_loader:load_configs:23 - Load config with env default from C:\Users\hamad\OpenAvatarChat\config\chat_with_lam.yaml
+2026-02-19 21:35:46.294 | INFO     | service.service_utils.logger_utils:config_loggers:8 - Set log level to INFO
+Traceback (most recent call last):
+  File "C:\Users\hamad\OpenAvatarChat\src\demo.py", line 98, in <module>
+    main()
+  File "C:\Users\hamad\OpenAvatarChat\src\demo.py", line 86, in main
+    chat_engine.initialize(engine_config, app=demo_app, ui=ui, parent_block=parent_block)
+  File "C:\Users\hamad\OpenAvatarChat\src\chat_engine\chat_engine.py", line 29, in initialize
+    load_dotenv()
+  File "C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages\dotenv\main.py", line 384, in load_dotenv
+    return dotenv.set_as_environment_variables()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages\dotenv\main.py", line 104, in set_as_environment_variables
+    if not self.dict():
+           ^^^^^^^^^^^
+  File "C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages\dotenv\main.py", line 87, in dict
+    resolve_variables(raw_values, override=self.override)
+  File "C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages\dotenv\main.py", line 250, in resolve_variables
+    for name, value in values:
+  File "C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages\dotenv\main.py", line 96, in parse
+    for mapping in with_warn_for_invalid_lines(parse_stream(stream)):
+  File "C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages\dotenv\main.py", line 36, in with_warn_for_invalid_lines
+    for mapping in mappings:
+  File "C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages\dotenv\parser.py", line 180, in parse_stream
+    reader = Reader(stream)
+             ^^^^^^^^^^^^^^
+  File "C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages\dotenv\parser.py", line 71, in __init__
+    self.string = stream.read()
+                  ^^^^^^^^^^^^^
+  File "<frozen codecs>", line 322, in decode
+UnicodeDecodeError: 'utf-8' codec can't decode byte 0x90 in position 19: invalid start byte
+(oac) PS C:\Users\hamad\OpenAvatarChat>
+(oac) PS C:\Users\hamad\OpenAvatarChat> Get-Content C:\Users\hamad\OpenAvatarChat\.env -Raw
+Get-Content : パス 'C:\Users\hamad\OpenAvatarChat\.env' が存在しないため検出できません。
+発生場所 行:1 文字:1
++ Get-Content C:\Users\hamad\OpenAvatarChat\.env -Raw
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (C:\Users\hamad\OpenAvatarChat\.env:String) [Get-Content], ItemNotFoundE
+   xception
+    + FullyQualifiedErrorId : PathNotFound,Microsoft.PowerShell.Commands.GetContentCommand
+
+(oac) PS C:\Users\hamad\OpenAvatarChat>
+(oac) PS C:\Users\hamad\OpenAvatarChat> Get-ChildItem -Path C:\Users\hamad\OpenAvatarChat -Recurse -Filter ".env" -Force
+(oac) PS C:\Users\hamad\OpenAvatarChat>
+(oac) PS C:\Users\hamad\OpenAvatarChat> New-Item C:\Users\hamad\OpenAvatarChat\.env -ItemType File
+
+
+    ディレクトリ: C:\Users\hamad\OpenAvatarChat
+
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+-a----        2026/02/19     21:38              0 .env
+
+
+(oac) PS C:\Users\hamad\OpenAvatarChat> python C:\Users\hamad\OpenAvatarChat\src\demo.py --config C:\Users\hamad\OpenAvatarChat\config\chat_with_lam.yaml
+2026-02-19 21:38:27.451 | INFO     | service.service_utils.service_config_loader:load_configs:23 - Load config with env default from C:\Users\hamad\OpenAvatarChat\config\chat_with_lam.yaml
+2026-02-19 21:38:27.488 | INFO     | service.service_utils.logger_utils:config_loggers:8 - Set log level to INFO
+2026-02-19 21:38:27.739 | INFO     | chat_engine.core.handler_manager:initialize:48 - Use handler search path: ['C:\\Users\\hamad\\OpenAvatarChat\\src\\handlers']
+2026-02-19 21:38:27.740 | INFO     | chat_engine.core.handler_manager:initialize:72 - Try to load client.h5_rendering_client.client_handler_lam
+2026-02-19 21:38:28.428 | INFO     | handlers.client.rtc_client.client_handler_rtc:_prioritize_h264:35 - Video codec priority: ['video/H264', 'video/H264', 'video/VP8']
+2026-02-19 21:38:28.430 | INFO     | handlers.client.rtc_client.client_handler_rtc:_configure_h264_hardware_encoding:57 - Detected H.264 hardware encoder: h264_nvenc
+2026-02-19 21:38:28.433 | INFO     | handlers.client.rtc_client.client_handler_rtc:_configure_h264_hardware_encoding:219 - H.264 encoder configuration completed
+2026-02-19 21:38:28.488 | ERROR    | chat_engine.core.handler_manager:initialize:75 - Failed to import handler module client/h5_rendering_client/client_handler_lam
+Traceback (most recent call last):
+  File "C:\Users\hamad\OpenAvatarChat\src\demo.py", line 98, in <module>
+    main()
+  File "C:\Users\hamad\OpenAvatarChat\src\demo.py", line 86, in main
+    chat_engine.initialize(engine_config, app=demo_app, ui=ui, parent_block=parent_block)
+  File "C:\Users\hamad\OpenAvatarChat\src\chat_engine\chat_engine.py", line 34, in initialize
+    self.handler_manager.initialize(engine_config)
+  File "C:\Users\hamad\OpenAvatarChat\src\chat_engine\core\handler_manager.py", line 73, in initialize
+    module = importlib.import_module(module_input_path)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\hamad\miniconda3\envs\oac\Lib\importlib\__init__.py", line 126, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1204, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1176, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1147, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 690, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 940, in exec_module
+  File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
+  File "C:\Users\hamad\OpenAvatarChat\src\handlers\client\h5_rendering_client\client_handler_lam.py", line 26, in <module>
+    from handlers.client.rtc_client.client_handler_rtc import RtcClientSessionDelegate, ClientHandlerRtc, \
+  File "C:\Users\hamad\OpenAvatarChat\src\handlers\client\rtc_client\client_handler_rtc.py", line 227, in <module>
+    from fastrtc import Stream  # noqa: E402
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages\fastrtc\__init__.py", line 19, in <module>
+    from .stream import Stream, UIArgs
+  File "C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages\fastrtc\stream.py", line 24, in <module>
+    from .webrtc import WebRTC
+  File "C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages\fastrtc\webrtc.py", line 50, in <module>
+    class WebRTC(Component, WebRTCConnectionMixin):
+  File "C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages\gradio\component_meta.py", line 218, in __new__
+    create_or_modify_pyi(component_class, name, events)
+  File "C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages\gradio\component_meta.py", line 133, in create_or_modify_pyi
+    current_interface, _ = extract_class_source_code(pyi_file.read_text(), class_name)
+                                                     ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\hamad\miniconda3\envs\oac\Lib\pathlib.py", line 1059, in read_text
+    return f.read()
+           ^^^^^^^^
+UnicodeDecodeError: 'cp932' codec can't decode byte 0x88 in position 3228: illegal multibyte sequence
+(oac) PS C:\Users\hamad\OpenAvatarChat>
+(oac) PS C:\Users\hamad\OpenAvatarChat> $env:PYTHONUTF8 = "1"
+(oac) PS C:\Users\hamad\OpenAvatarChat> python C:\Users\hamad\OpenAvatarChat\src\demo.py --config C:\Users\hamad\OpenAvatarChat\config\chat_with_lam.yaml
+2026-02-19 21:39:25.162 | INFO     | service.service_utils.service_config_loader:load_configs:23 - Load config with env default from C:\Users\hamad\OpenAvatarChat\config\chat_with_lam.yaml
+2026-02-19 21:39:25.208 | INFO     | service.service_utils.logger_utils:config_loggers:8 - Set log level to INFO
+2026-02-19 21:39:25.456 | INFO     | chat_engine.core.handler_manager:initialize:48 - Use handler search path: ['C:\\Users\\hamad\\OpenAvatarChat\\src\\handlers']
+2026-02-19 21:39:25.456 | INFO     | chat_engine.core.handler_manager:initialize:72 - Try to load client.h5_rendering_client.client_handler_lam
+2026-02-19 21:39:25.879 | INFO     | handlers.client.rtc_client.client_handler_rtc:_prioritize_h264:35 - Video codec priority: ['video/H264', 'video/H264', 'video/VP8']
+2026-02-19 21:39:25.880 | INFO     | handlers.client.rtc_client.client_handler_rtc:_configure_h264_hardware_encoding:57 - Detected H.264 hardware encoder: h264_nvenc
+2026-02-19 21:39:25.881 | INFO     | handlers.client.rtc_client.client_handler_rtc:_configure_h264_hardware_encoding:219 - H.264 encoder configuration completed
+2026-02-19 21:39:26.132 | INFO     | chat_engine.core.handler_manager:register_handler:130 - Registered handler LamClient(<class 'client.h5_rendering_client.client_handler_lam.ClientHandlerLam'>) with config: enabled=True module='client/h5_rendering_client/client_handler_lam' concurrent_limit=5 connection_ttl=900 turn_config=None asset_path='lam_samples/barbara.zip'
+2026-02-19 21:39:26.132 | INFO     | chat_engine.core.handler_manager:initialize:72 - Try to load vad.silerovad.vad_handler_silero
+2026-02-19 21:39:26.201 | INFO     | chat_engine.core.handler_manager:register_handler:130 - Registered handler SileroVad(<class 'vad.silerovad.vad_handler_silero.HandlerAudioVAD'>) with config: enabled=True module='vad/silerovad/vad_handler_silero' concurrent_limit=5 speaking_threshold=0.5 start_delay=2048 end_delay=5000 buffer_look_back=5000 speech_padding=512
+2026-02-19 21:39:26.202 | INFO     | chat_engine.core.handler_manager:initialize:72 - Try to load asr.sensevoice.asr_handler_sensevoice
+2026-02-19 21:39:26.228 | ERROR    | chat_engine.core.handler_manager:initialize:75 - Failed to import handler module asr/sensevoice/asr_handler_sensevoice
+Traceback (most recent call last):
+  File "C:\Users\hamad\OpenAvatarChat\src\demo.py", line 98, in <module>
+    main()
+  File "C:\Users\hamad\OpenAvatarChat\src\demo.py", line 86, in main
+    chat_engine.initialize(engine_config, app=demo_app, ui=ui, parent_block=parent_block)
+  File "C:\Users\hamad\OpenAvatarChat\src\chat_engine\chat_engine.py", line 34, in initialize
+    self.handler_manager.initialize(engine_config)
+  File "C:\Users\hamad\OpenAvatarChat\src\chat_engine\core\handler_manager.py", line 73, in initialize
+    module = importlib.import_module(module_input_path)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\hamad\miniconda3\envs\oac\Lib\importlib\__init__.py", line 126, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1204, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1176, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1147, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 690, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 940, in exec_module
+  File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
+  File "C:\Users\hamad\OpenAvatarChat\src\handlers\asr\sensevoice\asr_handler_sensevoice.py", line 18, in <module>
+    from funasr import AutoModel
+ModuleNotFoundError: No module named 'funasr'
+(oac) PS C:\Users\hamad\OpenAvatarChat>
+(oac) PS C:\Users\hamad\OpenAvatarChat> pip install funasr
+Collecting funasr
+  Downloading funasr-1.3.1-py3-none-any.whl.metadata (37 kB)
+Requirement already satisfied: scipy>=1.4.1 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from funasr) (1.15.3)
+Requirement already satisfied: librosa in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from funasr) (0.10.2.post1)
+Collecting jamo (from funasr)
+  Downloading jamo-0.4.1-py3-none-any.whl.metadata (2.3 kB)
+Requirement already satisfied: PyYAML>=5.1.2 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from funasr) (6.0.3)
+Requirement already satisfied: soundfile>=0.12.1 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from funasr) (0.13.1)
+Collecting kaldiio>=2.17.0 (from funasr)
+  Downloading kaldiio-2.18.1-py3-none-any.whl.metadata (13 kB)
+Collecting torch-complex (from funasr)
+  Downloading torch_complex-0.4.4-py3-none-any.whl.metadata (3.1 kB)
+Collecting sentencepiece (from funasr)
+  Downloading sentencepiece-0.2.1-cp311-cp311-win_amd64.whl.metadata (10 kB)
+Collecting jieba (from funasr)
+  Downloading jieba-0.42.1.tar.gz (19.2 MB)
+     ---------------------------------------- 19.2/19.2 MB 25.3 MB/s  0:00:00
+  Installing build dependencies ... done
+  Getting requirements to build wheel ... done
+  Preparing metadata (pyproject.toml) ... done
+Collecting pytorch-wpe (from funasr)
+  Downloading pytorch_wpe-0.0.1-py3-none-any.whl.metadata (242 bytes)
+Collecting editdistance>=0.5.2 (from funasr)
+  Downloading editdistance-0.8.1-cp311-cp311-win_amd64.whl.metadata (3.9 kB)
+Collecting oss2 (from funasr)
+  Downloading oss2-2.19.1.tar.gz (298 kB)
+  Installing build dependencies ... done
+  Getting requirements to build wheel ... done
+  Preparing metadata (pyproject.toml) ... done
+Requirement already satisfied: tqdm in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from funasr) (4.67.3)
+Collecting umap-learn (from funasr)
+  Downloading umap_learn-0.5.11-py3-none-any.whl.metadata (26 kB)
+Collecting jaconv (from funasr)
+  Downloading jaconv-0.5.0-py3-none-any.whl.metadata (8.9 kB)
+Collecting hydra-core>=1.3.2 (from funasr)
+  Downloading hydra_core-1.3.2-py3-none-any.whl.metadata (5.5 kB)
+Collecting tensorboardX (from funasr)
+  Downloading tensorboardx-2.6.4-py3-none-any.whl.metadata (6.2 kB)
+Requirement already satisfied: requests in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from funasr) (2.32.5)
+Requirement already satisfied: modelscope in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from funasr) (1.34.0)
+Collecting omegaconf<2.4,>=2.2 (from hydra-core>=1.3.2->funasr)
+  Downloading omegaconf-2.3.0-py3-none-any.whl.metadata (3.9 kB)
+Collecting antlr4-python3-runtime==4.9.* (from hydra-core>=1.3.2->funasr)
+  Downloading antlr4-python3-runtime-4.9.3.tar.gz (117 kB)
+  Installing build dependencies ... done
+  Getting requirements to build wheel ... done
+  Preparing metadata (pyproject.toml) ... done
+Requirement already satisfied: packaging in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from hydra-core>=1.3.2->funasr) (25.0)
+Requirement already satisfied: numpy in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from kaldiio>=2.17.0->funasr) (1.26.4)
+Requirement already satisfied: cffi>=1.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from soundfile>=0.12.1->funasr) (2.0.0)
+Requirement already satisfied: pycparser in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from cffi>=1.0->soundfile>=0.12.1->funasr) (3.0)
+Requirement already satisfied: audioread>=2.1.9 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from librosa->funasr) (3.1.0)
+Requirement already satisfied: scikit-learn>=0.20.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from librosa->funasr) (1.8.0)
+Requirement already satisfied: joblib>=0.14 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from librosa->funasr) (1.5.3)
+Requirement already satisfied: decorator>=4.3.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from librosa->funasr) (5.2.1)
+Requirement already satisfied: numba>=0.51.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from librosa->funasr) (0.64.0)
+Requirement already satisfied: pooch>=1.1 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from librosa->funasr) (1.9.0)
+Requirement already satisfied: soxr>=0.3.2 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from librosa->funasr) (1.0.0)
+Requirement already satisfied: typing-extensions>=4.1.1 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from librosa->funasr) (4.12.2)
+Requirement already satisfied: lazy-loader>=0.1 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from librosa->funasr) (0.4)
+Requirement already satisfied: msgpack>=1.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from librosa->funasr) (1.1.2)
+Requirement already satisfied: llvmlite<0.47,>=0.46.0dev0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from numba>=0.51.0->librosa->funasr) (0.46.0)
+Requirement already satisfied: platformdirs>=2.5.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from pooch>=1.1->librosa->funasr) (4.9.2)
+Requirement already satisfied: charset_normalizer<4,>=2 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from requests->funasr) (3.4.4)
+Requirement already satisfied: idna<4,>=2.5 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from requests->funasr) (3.11)
+Requirement already satisfied: urllib3<3,>=1.21.1 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from requests->funasr) (2.6.3)
+Requirement already satisfied: certifi>=2017.4.17 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from requests->funasr) (2026.1.4)
+Requirement already satisfied: threadpoolctl>=3.2.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from scikit-learn>=0.20.0->librosa->funasr) (3.6.0)
+Requirement already satisfied: filelock in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from modelscope->funasr) (3.20.0)
+Requirement already satisfied: setuptools in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from modelscope->funasr) (80.10.2)
+Requirement already satisfied: colorama in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from tqdm->funasr) (0.4.6)
+Collecting crcmod>=1.7 (from oss2->funasr)
+  Downloading crcmod-1.7.tar.gz (89 kB)
+  Installing build dependencies ... done
+  Getting requirements to build wheel ... done
+  Preparing metadata (pyproject.toml) ... done
+Collecting pycryptodome>=3.4.7 (from oss2->funasr)
+  Downloading pycryptodome-3.23.0-cp37-abi3-win_amd64.whl.metadata (3.5 kB)
+Collecting aliyun-python-sdk-kms>=2.4.1 (from oss2->funasr)
+  Downloading aliyun_python_sdk_kms-2.16.5-py2.py3-none-any.whl.metadata (1.5 kB)
+Collecting aliyun-python-sdk-core>=2.13.12 (from oss2->funasr)
+  Downloading aliyun-python-sdk-core-2.16.0.tar.gz (449 kB)
+  Installing build dependencies ... done
+  Getting requirements to build wheel ... done
+  Preparing metadata (pyproject.toml) ... done
+Requirement already satisfied: six in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from oss2->funasr) (1.17.0)
+Collecting jmespath<1.0.0,>=0.9.3 (from aliyun-python-sdk-core>=2.13.12->oss2->funasr)
+  Downloading jmespath-0.10.0-py2.py3-none-any.whl.metadata (8.0 kB)
+Requirement already satisfied: cryptography>=3.0.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from aliyun-python-sdk-core>=2.13.12->oss2->funasr) (46.0.5)
+Collecting protobuf>=3.20 (from tensorboardX->funasr)
+  Downloading protobuf-6.33.5-cp310-abi3-win_amd64.whl.metadata (593 bytes)
+Collecting pynndescent>=0.5 (from umap-learn->funasr)
+  Downloading pynndescent-0.6.0-py3-none-any.whl.metadata (6.9 kB)
+Downloading funasr-1.3.1-py3-none-any.whl (811 kB)
+   ---------------------------------------- 812.0/812.0 kB 11.7 MB/s  0:00:00
+Downloading editdistance-0.8.1-cp311-cp311-win_amd64.whl (79 kB)
+Downloading hydra_core-1.3.2-py3-none-any.whl (154 kB)
+Downloading omegaconf-2.3.0-py3-none-any.whl (79 kB)
+Downloading kaldiio-2.18.1-py3-none-any.whl (29 kB)
+Downloading jaconv-0.5.0-py3-none-any.whl (16 kB)
+Downloading jamo-0.4.1-py3-none-any.whl (9.5 kB)
+Downloading jmespath-0.10.0-py2.py3-none-any.whl (24 kB)
+Downloading aliyun_python_sdk_kms-2.16.5-py2.py3-none-any.whl (99 kB)
+Downloading pycryptodome-3.23.0-cp37-abi3-win_amd64.whl (1.8 MB)
+   ---------------------------------------- 1.8/1.8 MB 19.7 MB/s  0:00:00
+Downloading pytorch_wpe-0.0.1-py3-none-any.whl (8.1 kB)
+Downloading sentencepiece-0.2.1-cp311-cp311-win_amd64.whl (1.1 MB)
+   ---------------------------------------- 1.1/1.1 MB 24.8 MB/s  0:00:00
+Downloading tensorboardx-2.6.4-py3-none-any.whl (87 kB)
+Downloading protobuf-6.33.5-cp310-abi3-win_amd64.whl (437 kB)
+Downloading torch_complex-0.4.4-py3-none-any.whl (9.1 kB)
+Downloading umap_learn-0.5.11-py3-none-any.whl (90 kB)
+Downloading pynndescent-0.6.0-py3-none-any.whl (73 kB)
+Building wheels for collected packages: antlr4-python3-runtime, jieba, oss2, aliyun-python-sdk-core, crcmod
+  Building wheel for antlr4-python3-runtime (pyproject.toml) ... done
+  Created wheel for antlr4-python3-runtime: filename=antlr4_python3_runtime-4.9.3-py3-none-any.whl size=144615 sha256=943c0875a90d022dd17392467c9b0bee7cf701ab179e6942dec3fedba06fc518
+  Stored in directory: c:\users\hamad\appdata\local\pip\cache\wheels\1a\97\32\461f837398029ad76911109f07047fde1d7b661a147c7c56d1
+  Building wheel for jieba (pyproject.toml) ... done
+  Created wheel for jieba: filename=jieba-0.42.1-py3-none-any.whl size=19314527 sha256=c7b74dc62baf199464ff304317f514b91c7ba210b2b5b56d0ea318f731bd6c89
+  Stored in directory: c:\users\hamad\appdata\local\pip\cache\wheels\ac\60\cf\538a1f183409caf1fc136b5d2c2dee329001ef6da2c5084bef
+  Building wheel for oss2 (pyproject.toml) ... done
+  Created wheel for oss2: filename=oss2-2.19.1-py3-none-any.whl size=124052 sha256=df379557dd6a951c35b44ffad86ecc10223723c9f5f6e73c588f1f5b619ad356
+  Stored in directory: c:\users\hamad\appdata\local\pip\cache\wheels\56\27\a3\50e7db0dd68810d9d4e383a547b88b4a5b1eaae58e63c1d64a
+  Building wheel for aliyun-python-sdk-core (pyproject.toml) ... done
+  Created wheel for aliyun-python-sdk-core: filename=aliyun_python_sdk_core-2.16.0-py3-none-any.whl size=535434 sha256=87aa7b82807fcd6ec4671a54e8b65b45df1cd6362d6e71c9a6e9ea81a41594cd
+  Stored in directory: c:\users\hamad\appdata\local\pip\cache\wheels\2b\9a\95\60f111d2a488c5f7f7ed2a96ce407ea57ec7393ddfdec8c956
+  Building wheel for crcmod (pyproject.toml) ... done
+  Created wheel for crcmod: filename=crcmod-1.7-py3-none-any.whl size=18949 sha256=46f2697e7724722596f2e0a729ff5247eba00316c82918def59db25fd4b89e14
+  Stored in directory: c:\users\hamad\appdata\local\pip\cache\wheels\23\94\7a\8cb7d14597e6395ce969933f01aed9ea8fa5f5b4d4c8a61e99
+Successfully built antlr4-python3-runtime jieba oss2 aliyun-python-sdk-core crcmod
+Installing collected packages: jieba, jamo, jaconv, crcmod, antlr4-python3-runtime, torch-complex, sentencepiece, pytorch-wpe, pycryptodome, protobuf, omegaconf, kaldiio, jmespath, editdistance, tensorboardX, hydra-core, pynndescent, aliyun-python-sdk-core, umap-learn, aliyun-python-sdk-kms, oss2, funasr
+Successfully installed aliyun-python-sdk-core-2.16.0 aliyun-python-sdk-kms-2.16.5 antlr4-python3-runtime-4.9.3 crcmod-1.7 editdistance-0.8.1 funasr-1.3.1 hydra-core-1.3.2 jaconv-0.5.0 jamo-0.4.1 jieba-0.42.1 jmespath-0.10.0 kaldiio-2.18.1 omegaconf-2.3.0 oss2-2.19.1 protobuf-6.33.5 pycryptodome-3.23.0 pynndescent-0.6.0 pytorch-wpe-0.0.1 sentencepiece-0.2.1 tensorboardX-2.6.4 torch-complex-0.4.4 umap-learn-0.5.11
+(oac) PS C:\Users\hamad\OpenAvatarChat>
+(oac) PS C:\Users\hamad\OpenAvatarChat> python C:\Users\hamad\OpenAvatarChat\src\demo.py --config C:\Users\hamad\OpenAvatarChat\config\chat_with_lam.yaml
+2026-02-20 00:18:10.662 | INFO     | service.service_utils.service_config_loader:load_configs:23 - Load config with env default from C:\Users\hamad\OpenAvatarChat\config\chat_with_lam.yaml
+2026-02-20 00:18:10.704 | INFO     | service.service_utils.logger_utils:config_loggers:8 - Set log level to INFO
+2026-02-20 00:18:10.943 | INFO     | chat_engine.core.handler_manager:initialize:48 - Use handler search path: ['C:\\Users\\hamad\\OpenAvatarChat\\src\\handlers']
+2026-02-20 00:18:10.943 | INFO     | chat_engine.core.handler_manager:initialize:72 - Try to load client.h5_rendering_client.client_handler_lam
+2026-02-20 00:18:11.391 | INFO     | handlers.client.rtc_client.client_handler_rtc:_prioritize_h264:35 - Video codec priority: ['video/H264', 'video/H264', 'video/VP8']
+2026-02-20 00:18:11.392 | INFO     | handlers.client.rtc_client.client_handler_rtc:_configure_h264_hardware_encoding:57 - Detected H.264 hardware encoder: h264_nvenc
+2026-02-20 00:18:11.396 | INFO     | handlers.client.rtc_client.client_handler_rtc:_configure_h264_hardware_encoding:219 - H.264 encoder configuration completed
+2026-02-20 00:18:11.491 | INFO     | chat_engine.core.handler_manager:register_handler:130 - Registered handler LamClient(<class 'client.h5_rendering_client.client_handler_lam.ClientHandlerLam'>) with config: enabled=True module='client/h5_rendering_client/client_handler_lam' concurrent_limit=5 connection_ttl=900 turn_config=None asset_path='lam_samples/barbara.zip'
+2026-02-20 00:18:11.491 | INFO     | chat_engine.core.handler_manager:initialize:72 - Try to load vad.silerovad.vad_handler_silero
+2026-02-20 00:18:11.504 | INFO     | chat_engine.core.handler_manager:register_handler:130 - Registered handler SileroVad(<class 'vad.silerovad.vad_handler_silero.HandlerAudioVAD'>) with config: enabled=True module='vad/silerovad/vad_handler_silero' concurrent_limit=5 speaking_threshold=0.5 start_delay=2048 end_delay=5000 buffer_look_back=5000 speech_padding=512
+2026-02-20 00:18:11.505 | INFO     | chat_engine.core.handler_manager:initialize:72 - Try to load asr.sensevoice.asr_handler_sensevoice
+2026-02-20 00:18:20.936 | INFO     | chat_engine.core.handler_manager:register_handler:130 - Registered handler SenseVoice(<class 'asr.sensevoice.asr_handler_sensevoice.HandlerASR'>) with config: enabled=True module='asr/sensevoice/asr_handler_sensevoice' concurrent_limit=5 model_name='iic/SenseVoiceSmall'
+2026-02-20 00:18:20.938 | INFO     | chat_engine.core.handler_manager:initialize:72 - Try to load tts.bailian_tts.tts_handler_cosyvoice_bailian
+2026-02-20 00:18:20.967 | ERROR    | chat_engine.core.handler_manager:initialize:75 - Failed to import handler module tts/bailian_tts/tts_handler_cosyvoice_bailian
+Traceback (most recent call last):
+  File "C:\Users\hamad\OpenAvatarChat\src\demo.py", line 98, in <module>
+    main()
+  File "C:\Users\hamad\OpenAvatarChat\src\demo.py", line 86, in main
+    chat_engine.initialize(engine_config, app=demo_app, ui=ui, parent_block=parent_block)
+  File "C:\Users\hamad\OpenAvatarChat\src\chat_engine\chat_engine.py", line 34, in initialize
+    self.handler_manager.initialize(engine_config)
+  File "C:\Users\hamad\OpenAvatarChat\src\chat_engine\core\handler_manager.py", line 73, in initialize
+    module = importlib.import_module(module_input_path)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\hamad\miniconda3\envs\oac\Lib\importlib\__init__.py", line 126, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1204, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1176, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1147, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 690, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 940, in exec_module
+  File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
+  File "C:\Users\hamad\OpenAvatarChat\src\handlers\tts\bailian_tts\tts_handler_cosyvoice_bailian.py", line 19, in <module>
+    from dashscope.audio.tts_v2 import SpeechSynthesizer, ResultCallback, AudioFormat
+ModuleNotFoundError: No module named 'dashscope'
+(oac) PS C:\Users\hamad\OpenAvatarChat>
+(oac) PS C:\Users\hamad\OpenAvatarChat> pip install dashscope
+Collecting dashscope
+  Downloading dashscope-1.25.12-py3-none-any.whl.metadata (7.1 kB)
+Requirement already satisfied: aiohttp in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from dashscope) (3.11.18)
+Requirement already satisfied: requests in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from dashscope) (2.32.5)
+Collecting websocket-client (from dashscope)
+  Downloading websocket_client-1.9.0-py3-none-any.whl.metadata (8.3 kB)
+Requirement already satisfied: cryptography in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from dashscope) (46.0.5)
+Requirement already satisfied: certifi in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from dashscope) (2026.1.4)
+Requirement already satisfied: aiohappyeyeballs>=2.3.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from aiohttp->dashscope) (2.6.1)
+Requirement already satisfied: aiosignal>=1.1.2 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from aiohttp->dashscope) (1.4.0)
+Requirement already satisfied: attrs>=17.3.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from aiohttp->dashscope) (25.4.0)
+Requirement already satisfied: frozenlist>=1.1.1 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from aiohttp->dashscope) (1.8.0)
+Requirement already satisfied: multidict<7.0,>=4.5 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from aiohttp->dashscope) (6.7.1)
+Requirement already satisfied: propcache>=0.2.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from aiohttp->dashscope) (0.4.1)
+Requirement already satisfied: yarl<2.0,>=1.17.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from aiohttp->dashscope) (1.22.0)
+Requirement already satisfied: idna>=2.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from yarl<2.0,>=1.17.0->aiohttp->dashscope) (3.11)
+Requirement already satisfied: typing-extensions>=4.2 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from aiosignal>=1.1.2->aiohttp->dashscope) (4.12.2)
+Requirement already satisfied: cffi>=2.0.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from cryptography->dashscope) (2.0.0)
+Requirement already satisfied: pycparser in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from cffi>=2.0.0->cryptography->dashscope) (3.0)
+Requirement already satisfied: charset_normalizer<4,>=2 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from requests->dashscope) (3.4.4)
+Requirement already satisfied: urllib3<3,>=1.21.1 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from requests->dashscope) (2.6.3)
+Downloading dashscope-1.25.12-py3-none-any.whl (1.3 MB)
+   ---------------------------------------- 1.3/1.3 MB 5.3 MB/s  0:00:00
+Downloading websocket_client-1.9.0-py3-none-any.whl (82 kB)
+Installing collected packages: websocket-client, dashscope
+Successfully installed dashscope-1.25.12 websocket-client-1.9.0
+(oac) PS C:\Users\hamad\OpenAvatarChat>
+(oac) PS C:\Users\hamad\OpenAvatarChat> python C:\Users\hamad\OpenAvatarChat\src\demo.py --config C:\Users\hamad\OpenAvatarChat\config\chat_with_lam.yaml
+2026-02-20 00:22:31.884 | INFO     | service.service_utils.service_config_loader:load_configs:23 - Load config with env default from C:\Users\hamad\OpenAvatarChat\config\chat_with_lam.yaml
+2026-02-20 00:22:31.916 | INFO     | service.service_utils.logger_utils:config_loggers:8 - Set log level to INFO
+2026-02-20 00:22:32.133 | INFO     | chat_engine.core.handler_manager:initialize:48 - Use handler search path: ['C:\\Users\\hamad\\OpenAvatarChat\\src\\handlers']
+2026-02-20 00:22:32.134 | INFO     | chat_engine.core.handler_manager:initialize:72 - Try to load client.h5_rendering_client.client_handler_lam
+2026-02-20 00:22:32.569 | INFO     | handlers.client.rtc_client.client_handler_rtc:_prioritize_h264:35 - Video codec priority: ['video/H264', 'video/H264', 'video/VP8']
+2026-02-20 00:22:32.570 | INFO     | handlers.client.rtc_client.client_handler_rtc:_configure_h264_hardware_encoding:57 - Detected H.264 hardware encoder: h264_nvenc
+2026-02-20 00:22:32.572 | INFO     | handlers.client.rtc_client.client_handler_rtc:_configure_h264_hardware_encoding:219 - H.264 encoder configuration completed
+2026-02-20 00:22:32.668 | INFO     | chat_engine.core.handler_manager:register_handler:130 - Registered handler LamClient(<class 'client.h5_rendering_client.client_handler_lam.ClientHandlerLam'>) with config: enabled=True module='client/h5_rendering_client/client_handler_lam' concurrent_limit=5 connection_ttl=900 turn_config=None asset_path='lam_samples/barbara.zip'
+2026-02-20 00:22:32.670 | INFO     | chat_engine.core.handler_manager:initialize:72 - Try to load vad.silerovad.vad_handler_silero
+2026-02-20 00:22:32.679 | INFO     | chat_engine.core.handler_manager:register_handler:130 - Registered handler SileroVad(<class 'vad.silerovad.vad_handler_silero.HandlerAudioVAD'>) with config: enabled=True module='vad/silerovad/vad_handler_silero' concurrent_limit=5 speaking_threshold=0.5 start_delay=2048 end_delay=5000 buffer_look_back=5000 speech_padding=512
+2026-02-20 00:22:32.680 | INFO     | chat_engine.core.handler_manager:initialize:72 - Try to load asr.sensevoice.asr_handler_sensevoice
+2026-02-20 00:22:38.863 | INFO     | chat_engine.core.handler_manager:register_handler:130 - Registered handler SenseVoice(<class 'asr.sensevoice.asr_handler_sensevoice.HandlerASR'>) with config: enabled=True module='asr/sensevoice/asr_handler_sensevoice' concurrent_limit=5 model_name='iic/SenseVoiceSmall'
+2026-02-20 00:22:38.864 | INFO     | chat_engine.core.handler_manager:initialize:72 - Try to load tts.bailian_tts.tts_handler_cosyvoice_bailian
+2026-02-20 00:22:39.225 | INFO     | chat_engine.core.handler_manager:register_handler:130 - Registered handler CosyVoice(<class 'tts.bailian_tts.tts_handler_cosyvoice_bailian.HandlerTTS'>) with config: enabled=True module='tts/bailian_tts/tts_handler_cosyvoice_bailian' concurrent_limit=5 ref_audio_path=None ref_audio_text=None voice='longxiaocheng' sample_rate=24000 api_key=None model_name='cosyvoice-v1'
+2026-02-20 00:22:39.226 | INFO     | chat_engine.core.handler_manager:initialize:72 - Try to load llm.openai_compatible.llm_handler_openai_compatible
+2026-02-20 00:22:40.228 | INFO     | chat_engine.core.handler_manager:register_handler:130 - Registered handler LLMOpenAICompatible(<class 'llm.openai_compatible.llm_handler_openai_compatible.HandlerLLM'>) with config: enabled=True module='llm/openai_compatible/llm_handler_openai_compatible' concurrent_limit=5 model_name='qwen-plus' system_prompt='请你扮演一个 AI 助手，用简短的两三句对话来回答用户的问题，并在对话内容中加入合适的标点符号，不需要讨论标点符号相关的内容' api_key=None api_url='https://dashscope.aliyuncs.com/compatible-mode/v1' enable_video_input=False history_length=20
+2026-02-20 00:22:40.229 | INFO     | chat_engine.core.handler_manager:initialize:72 - Try to load avatar.lam.avatar_handler_lam_audio2expression
+2026-02-20 00:22:40.280 | INFO     | chat_engine.core.handler_manager:register_handler:130 - Registered handler LAM_Driver(<class 'avatar.lam.avatar_handler_lam_audio2expression.HandlerAvatarLAM'>) with config: enabled=True module='avatar/lam/avatar_handler_lam_audio2expression' concurrent_limit=5 model_name='LAM_audio2exp' feature_extractor_model_name='wav2vec2-base-960h' audio_sample_rate=24000
+2026-02-20 00:22:40.282 | INFO     | chat_engine.core.handler_manager:load_handlers:144 - Handler LamClient loaded in 0 milliseconds
+Traceback (most recent call last):
+  File "C:\Users\hamad\OpenAvatarChat\src\demo.py", line 98, in <module>
+    main()
+  File "C:\Users\hamad\OpenAvatarChat\src\demo.py", line 86, in main
+    chat_engine.initialize(engine_config, app=demo_app, ui=ui, parent_block=parent_block)
+  File "C:\Users\hamad\OpenAvatarChat\src\chat_engine\chat_engine.py", line 35, in initialize
+    self.handler_manager.load_handlers(engine_config, app, ui, parent_block)
+  File "C:\Users\hamad\OpenAvatarChat\src\chat_engine\core\handler_manager.py", line 142, in load_handlers
+    registry.handler.load(engine_config, registry.handler_config)
+  File "C:\Users\hamad\OpenAvatarChat\src\handlers\vad\silerovad\vad_handler_silero.py", line 149, in load
+    import onnxruntime
+ModuleNotFoundError: No module named 'onnxruntime'
+(oac) PS C:\Users\hamad\OpenAvatarChat>
+(oac) PS C:\Users\hamad\OpenAvatarChat> pip install onnxruntime
+Collecting onnxruntime
+  Downloading onnxruntime-1.24.1-cp311-cp311-win_amd64.whl.metadata (5.1 kB)
+Collecting flatbuffers (from onnxruntime)
+  Downloading flatbuffers-25.12.19-py2.py3-none-any.whl.metadata (1.0 kB)
+Requirement already satisfied: numpy>=1.21.6 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from onnxruntime) (1.26.4)
+Requirement already satisfied: packaging in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from onnxruntime) (25.0)
+Requirement already satisfied: protobuf in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from onnxruntime) (6.33.5)
+Requirement already satisfied: sympy in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from onnxruntime) (1.14.0)
+Requirement already satisfied: mpmath<1.4,>=1.1.0 in C:\Users\hamad\miniconda3\envs\oac\Lib\site-packages (from sympy->onnxruntime) (1.3.0)
+Downloading onnxruntime-1.24.1-cp311-cp311-win_amd64.whl (12.5 MB)
+   ---------------------------------------- 12.5/12.5 MB 21.7 MB/s  0:00:00
+Downloading flatbuffers-25.12.19-py2.py3-none-any.whl (26 kB)
+Installing collected packages: flatbuffers, onnxruntime
+Successfully installed flatbuffers-25.12.19 onnxruntime-1.24.1
+(oac) PS C:\Users\hamad\OpenAvatarChat> ]python C:\Users\hamad\OpenAvatarChat\src\demo.py --config C:\Users\hamad\OpenAvatarChat\config\chat_with_lam.yaml
+] : 用語 ']' は、コマンドレット、関数、スクリプト ファイル、または操作可能なプログラムの名前として認識されません。名前が正しく記述されていることを確認し、パスが含まれている場合はそのパスが正しいことを確認してから、再試行してくだ
+さい。
+発生場所 行:1 文字:1
++ ]python C:\Users\hamad\OpenAvatarChat\src\demo.py --config C:\Users\h ...
++ ~
+    + CategoryInfo          : ObjectNotFound: (]:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+(oac) PS C:\Users\hamad\OpenAvatarChat>
+(oac) PS C:\Users\hamad\OpenAvatarChat> python C:\Users\hamad\OpenAvatarChat\src\demo.py --config C:\Users\hamad\OpenAvatarChat\config\chat_with_lam.yaml
+2026-02-20 00:24:33.687 | INFO     | service.service_utils.service_config_loader:load_configs:23 - Load config with env default from C:\Users\hamad\OpenAvatarChat\config\chat_with_lam.yaml
+2026-02-20 00:24:33.727 | INFO     | service.service_utils.logger_utils:config_loggers:8 - Set log level to INFO
+2026-02-20 00:24:34.011 | INFO     | chat_engine.core.handler_manager:initialize:48 - Use handler search path: ['C:\\Users\\hamad\\OpenAvatarChat\\src\\handlers']
+2026-02-20 00:24:34.012 | INFO     | chat_engine.core.handler_manager:initialize:72 - Try to load client.h5_rendering_client.client_handler_lam
+2026-02-20 00:24:34.513 | INFO     | handlers.client.rtc_client.client_handler_rtc:_prioritize_h264:35 - Video codec priority: ['video/H264', 'video/H264', 'video/VP8']
+2026-02-20 00:24:34.513 | INFO     | handlers.client.rtc_client.client_handler_rtc:_configure_h264_hardware_encoding:57 - Detected H.264 hardware encoder: h264_nvenc
+2026-02-20 00:24:34.517 | INFO     | handlers.client.rtc_client.client_handler_rtc:_configure_h264_hardware_encoding:219 - H.264 encoder configuration completed
+2026-02-20 00:24:34.618 | INFO     | chat_engine.core.handler_manager:register_handler:130 - Registered handler LamClient(<class 'client.h5_rendering_client.client_handler_lam.ClientHandlerLam'>) with config: enabled=True module='client/h5_rendering_client/client_handler_lam' concurrent_limit=5 connection_ttl=900 turn_config=None asset_path='lam_samples/barbara.zip'
+2026-02-20 00:24:34.619 | INFO     | chat_engine.core.handler_manager:initialize:72 - Try to load vad.silerovad.vad_handler_silero
+2026-02-20 00:24:34.631 | INFO     | chat_engine.core.handler_manager:register_handler:130 - Registered handler SileroVad(<class 'vad.silerovad.vad_handler_silero.HandlerAudioVAD'>) with config: enabled=True module='vad/silerovad/vad_handler_silero' concurrent_limit=5 speaking_threshold=0.5 start_delay=2048 end_delay=5000 buffer_look_back=5000 speech_padding=512
+2026-02-20 00:24:34.631 | INFO     | chat_engine.core.handler_manager:initialize:72 - Try to load asr.sensevoice.asr_handler_sensevoice
+2026-02-20 00:24:40.498 | INFO     | chat_engine.core.handler_manager:register_handler:130 - Registered handler SenseVoice(<class 'asr.sensevoice.asr_handler_sensevoice.HandlerASR'>) with config: enabled=True module='asr/sensevoice/asr_handler_sensevoice' concurrent_limit=5 model_name='iic/SenseVoiceSmall'
+2026-02-20 00:24:40.498 | INFO     | chat_engine.core.handler_manager:initialize:72 - Try to load tts.bailian_tts.tts_handler_cosyvoice_bailian
+2026-02-20 00:24:40.953 | INFO     | chat_engine.core.handler_manager:register_handler:130 - Registered handler CosyVoice(<class 'tts.bailian_tts.tts_handler_cosyvoice_bailian.HandlerTTS'>) with config: enabled=True module='tts/bailian_tts/tts_handler_cosyvoice_bailian' concurrent_limit=5 ref_audio_path=None ref_audio_text=None voice='longxiaocheng' sample_rate=24000 api_key=None model_name='cosyvoice-v1'
+2026-02-20 00:24:40.953 | INFO     | chat_engine.core.handler_manager:initialize:72 - Try to load llm.openai_compatible.llm_handler_openai_compatible
+2026-02-20 00:24:41.618 | INFO     | chat_engine.core.handler_manager:register_handler:130 - Registered handler LLMOpenAICompatible(<class 'llm.openai_compatible.llm_handler_openai_compatible.HandlerLLM'>) with config: enabled=True module='llm/openai_compatible/llm_handler_openai_compatible' concurrent_limit=5 model_name='qwen-plus' system_prompt='请你扮演一个 AI 助手，用简短的两三句对话来回答用户的问题，并在对话内容中加入合适的标点符号，不需要讨论标点符号相关的内容' api_key=None api_url='https://dashscope.aliyuncs.com/compatible-mode/v1' enable_video_input=False history_length=20
+2026-02-20 00:24:41.619 | INFO     | chat_engine.core.handler_manager:initialize:72 - Try to load avatar.lam.avatar_handler_lam_audio2expression
+2026-02-20 00:24:41.638 | INFO     | chat_engine.core.handler_manager:register_handler:130 - Registered handler LAM_Driver(<class 'avatar.lam.avatar_handler_lam_audio2expression.HandlerAvatarLAM'>) with config: enabled=True module='avatar/lam/avatar_handler_lam_audio2expression' concurrent_limit=5 model_name='LAM_audio2exp' feature_extractor_model_name='wav2vec2-base-960h' audio_sample_rate=24000
+2026-02-20 00:24:41.640 | INFO     | chat_engine.core.handler_manager:load_handlers:144 - Handler LamClient loaded in 0 milliseconds
+2026-02-20 00:24:41.850 | INFO     | chat_engine.core.handler_manager:load_handlers:144 - Handler SileroVad loaded in 203 milliseconds
+2026-02-20 00:24:41.851 | INFO     | asr.sensevoice.asr_handler_sensevoice:load:93 - load model iic/SenseVoiceSmall
+funasr version: 1.3.1.
+Downloading Model from https://www.modelscope.cn to directory: C:\Users\hamad\OpenAvatarChat\models\iic\SenseVoiceSmall
+2026-02-20 00:24:44,979 - modelscope - INFO - Got 19 files, start to download ...
+Downloading [configuration.json]: 100%|█████████████████████████████████████████████████| 396/396 [00:01<00:00, 388B/s]
+Downloading [example/en.mp3]: 100%|███████████████████████████████████████████████| 56.1k/56.1k [00:01<00:00, 48.9kB/s]
+Downloading [config.yaml]: 100%|██████████████████████████████████████████████████| 1.81k/1.81k [00:01<00:00, 1.43kB/s]
+Downloading [example/.DS_Store]: 100%|████████████████████████████████████████████| 6.00k/6.00k [00:01<00:00, 3.94kB/s]
+Downloading [fig/asr_results.png]: 100%|█████████████████████████████████████████████| 238k/238k [00:01<00:00, 156kB/s]
+Downloading [fig/aed_figure.png]: 100%|█████████████████████████████████████████████| 116k/116k [00:01<00:00, 75.2kB/s]
+Downloading [chn_jpn_yue_eng_ko_spectok.bpe.model]: 100%|████████████████████████████| 368k/368k [00:01<00:00, 238kB/s]
+Downloading [example/ko.mp3]: 100%|███████████████████████████████████████████████| 27.3k/27.3k [00:00<00:00, 28.3kB/s]
+Downloading [example/ja.mp3]: 100%|███████████████████████████████████████████████| 56.5k/56.5k [00:01<00:00, 46.4kB/s]
+Downloading [am.mvn]: 100%|███████████████████████████████████████████████████████| 10.9k/10.9k [00:02<00:00, 4.44kB/s]
+Downloading [README.md]: 100%|████████████████████████████████████████████████████| 9.09k/9.09k [00:01<00:00, 7.18kB/s]
+Downloading [fig/inference.png]: 100%|███████████████████████████████████████████████| 935k/935k [00:02<00:00, 473kB/s]
+Downloading [fig/sensevoice.png]: 100%|██████████████████████████████████████████████| 880k/880k [00:01<00:00, 474kB/s]
+Downloading [example/yue.mp3]: 100%|██████████████████████████████████████████████| 30.5k/30.5k [00:01<00:00, 28.0kB/s]
+Downloading [tokens.json]: 100%|█████████████████████████████████████████████████████| 344k/344k [00:01<00:00, 291kB/s]
+Downloading [fig/ser_figure.png]: 100%|█████████████████████████████████████████████| 194k/194k [00:02<00:00, 87.8kB/s]
+Downloading [fig/ser_table.png]: 100%|███████████████████████████████████████████████| 318k/318k [00:01<00:00, 201kB/s]
+Downloading [example/zh.mp3]: 100%|███████████████████████████████████████████████| 43.9k/43.9k [00:01<00:00, 35.0kB/s]
+Downloading [model.pt]: 100%|███████████████████████████████████████████████████████| 893M/893M [04:52<00:00, 3.20MB/s]
+Processing 19 items: 100%|██████████████████████████████████████████████████████████| 19.0/19.0 [04:53<00:00, 15.5s/it]
+2026-02-20 00:29:38,965 - modelscope - INFO - Download model 'iic/SenseVoiceSmall' successfully.[00:01<00:00, 35.0kB/s]
+WARNING:root:trust_remote_code: False█▍                                            | 43.8k/344k [00:01<00:05, 55.3kB/s]
+2026-02-20 00:29:47.573 | INFO     | chat_engine.core.handler_manager:load_handlers:144 - Handler SenseVoice loaded in 305718 milliseconds
+2026-02-20 00:29:47.575 | INFO     | chat_engine.core.handler_manager:load_handlers:144 - Handler CosyVoice loaded in 0 milliseconds
+2026-02-20 00:29:47.577 | ERROR    | llm.openai_compatible.llm_handler_openai_compatible:load:81 - api_key is required in config/xxx.yaml, when use handler_llm
+Traceback (most recent call last):
+  File "C:\Users\hamad\OpenAvatarChat\src\demo.py", line 98, in <module>
+    main()
+  File "C:\Users\hamad\OpenAvatarChat\src\demo.py", line 86, in main
+    chat_engine.initialize(engine_config, app=demo_app, ui=ui, parent_block=parent_block)
+  File "C:\Users\hamad\OpenAvatarChat\src\chat_engine\chat_engine.py", line 35, in initialize
+    self.handler_manager.load_handlers(engine_config, app, ui, parent_block)
+  File "C:\Users\hamad\OpenAvatarChat\src\chat_engine\core\handler_manager.py", line 142, in load_handlers
+    registry.handler.load(engine_config, registry.handler_config)
+  File "C:\Users\hamad\OpenAvatarChat\src\handlers\llm\openai_compatible\llm_handler_openai_compatible.py", line 82, in load
+    raise ValueError(error_message)
+ValueError: api_key is required in config/xxx.yaml, when use handler_llm
+(oac) PS C:\Users\hamad\OpenAvatarChat>
+(oac) PS C:\Users\hamad\OpenAvatarChat> notepad C:\Users\hamad\OpenAvatarChat\config\chat_with_lam.yaml
+(oac) PS C:\Users\hamad\OpenAvatarChat>
+(oac) PS C:\Users\hamad\OpenAvatarChat> notepad C:\Users\hamad\OpenAvatarChat\config\chat_with_lam.yaml
+(oac) PS C:\Users\hamad\OpenAvatarChat>
