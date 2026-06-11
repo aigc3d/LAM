@@ -1,0 +1,340 @@
+---
+/**
+ * メインページ — グルメコンシェルジュ (Live API 対応)
+ *
+ * レイアウト:
+ *   左: LAMAvatar (3D アバター) — LAMAvatar.astro をそのまま使用
+ *   右: チャットパネル (テキスト + マイク入力)
+ *
+ * ★ LAMAvatar.astro は frontend-patches/ からコピーして使用。
+ *   変更禁止（iPhone対策のオーディオコード含む）。
+ */
+---
+
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>グルメコンシェルジュ AI</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans',
+        'Noto Sans JP', sans-serif;
+      background: #f0f9ff;
+      color: #1e293b;
+      height: 100dvh;
+      overflow: hidden;
+    }
+
+    .app-container {
+      display: flex;
+      height: 100dvh;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    /* === 左: アバターエリア === */
+    .avatar-panel {
+      flex: 0 0 45%;
+      position: relative;
+      background: linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .avatar-container {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .avatar-container.speaking {
+      /* CSS アニメーション（既存パッチと同じ） */
+    }
+
+    .mode-badge {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      background: rgba(6, 182, 212, 0.9);
+      color: white;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+      z-index: 10;
+    }
+
+    /* === 右: チャットパネル === */
+    .chat-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: white;
+      border-left: 1px solid #e2e8f0;
+    }
+
+    .chat-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid #e2e8f0;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .chat-header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      color: #0891b2;
+    }
+
+    .voice-status {
+      font-size: 12px;
+      color: #94a3b8;
+      margin-left: auto;
+    }
+
+    .voice-status.listening {
+      color: #ef4444;
+    }
+
+    .voice-status.speaking {
+      color: #0891b2;
+    }
+
+    .voice-status.reconnecting {
+      color: #f59e0b;
+    }
+
+    /* チャットエリア */
+    .chat-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .message {
+      max-width: 85%;
+      padding: 10px 14px;
+      border-radius: 16px;
+      font-size: 14px;
+      line-height: 1.5;
+      word-wrap: break-word;
+    }
+
+    .message.user {
+      align-self: flex-end;
+      background: #0891b2;
+      color: white;
+      border-bottom-right-radius: 4px;
+    }
+
+    .message.assistant {
+      align-self: flex-start;
+      background: #f1f5f9;
+      color: #1e293b;
+      border-bottom-left-radius: 4px;
+    }
+
+    .message.system {
+      align-self: center;
+      background: #fef3c7;
+      color: #92400e;
+      font-size: 12px;
+      border-radius: 8px;
+    }
+
+    /* 入力エリア */
+    .input-area {
+      padding: 12px 20px;
+      border-top: 1px solid #e2e8f0;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    #userInput {
+      flex: 1;
+      padding: 10px 16px;
+      border: 1px solid #cbd5e1;
+      border-radius: 24px;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    #userInput:focus {
+      border-color: #0891b2;
+    }
+
+    #userInput:disabled {
+      background: #f1f5f9;
+    }
+
+    .btn {
+      width: 40px;
+      height: 40px;
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s;
+    }
+
+    #sendBtn {
+      background: #0891b2;
+      color: white;
+    }
+
+    #sendBtn:hover {
+      background: #0e7490;
+    }
+
+    #sendBtn:disabled {
+      background: #cbd5e1;
+      cursor: not-allowed;
+    }
+
+    #micBtn {
+      background: #f1f5f9;
+      color: #64748b;
+      border: 1px solid #e2e8f0;
+    }
+
+    #micBtn:hover {
+      background: #e2e8f0;
+    }
+
+    #micBtn.recording {
+      background: #ef4444;
+      color: white;
+      border-color: #ef4444;
+      animation: pulse 1.5s infinite;
+    }
+
+    #micBtn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.08); }
+    }
+
+    /* === モバイル対応 === */
+    @media (max-width: 768px) {
+      .app-container {
+        flex-direction: column;
+      }
+
+      .avatar-panel {
+        flex: 0 0 40%;
+      }
+
+      .chat-panel {
+        border-left: none;
+        border-top: 1px solid #e2e8f0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-container" id="appContainer">
+    <!-- 左: アバター -->
+    <div class="avatar-panel">
+      <div class="mode-badge" id="modeIndicator">Live API</div>
+      <div class="avatar-container" id="avatarContainer">
+        <!--
+          ★ LAMAvatar.astro をここに埋め込む。
+          現在はプレースホルダー。
+          実際の統合時は <LAMAvatar /> コンポーネントを配置する。
+        -->
+        <div id="lamAvatarContainer"
+             data-avatar-path="/avatar/concierge.zip"
+             data-ws-url=""
+             data-auto-connect="false"
+             style="width: 100%; height: 100%;">
+          <div id="lamAvatarCanvas" class="lam-avatar-canvas"></div>
+          <div id="lamAvatarLoading" class="lam-avatar-loading">
+            <div style="text-align: center; padding-top: 40%;">
+              <p style="color: #0891b2; font-size: 14px;">Loading 3D Avatar...</p>
+            </div>
+          </div>
+          <div id="lamAvatarFallback" class="lam-avatar-fallback hidden">
+            <div style="text-align: center; padding-top: 30%;">
+              <div style="width: 120px; height: 120px; border-radius: 50%; background: #bae6fd; margin: 0 auto 16px; display: flex; align-items: center; justify-content: center;">
+                <span style="font-size: 48px;">🧑‍🍳</span>
+              </div>
+              <p style="color: #64748b; font-size: 14px;">AI Concierge</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右: チャット -->
+    <div class="chat-panel">
+      <div class="chat-header">
+        <h1>グルメコンシェルジュ</h1>
+        <span class="voice-status" id="voiceStatus"></span>
+      </div>
+
+      <div class="chat-area" id="chatArea">
+        <!-- メッセージがここに追加される -->
+      </div>
+
+      <div class="input-area">
+        <button class="btn" id="micBtn" disabled title="マイク">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+            <line x1="8" y1="23" x2="16" y2="23"/>
+          </svg>
+        </button>
+        <input
+          type="text"
+          id="userInput"
+          placeholder="メッセージを入力..."
+          disabled
+          autocomplete="off"
+        />
+        <button class="btn" id="sendBtn" disabled title="送信">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="22" y1="2" x2="11" y2="13"/>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    import { PlatformController } from '../scripts/platform/platform-controller';
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const container = document.getElementById('appContainer');
+      if (!container) return;
+
+      // API ベース URL
+      // ローカル開発: http://localhost:8080
+      // 本番: 同一オリジン or Cloud Run URL
+      const apiBase = (window as any).__API_BASE || window.location.origin;
+
+      new PlatformController(container, apiBase);
+    });
+  </script>
+</body>
+</html>

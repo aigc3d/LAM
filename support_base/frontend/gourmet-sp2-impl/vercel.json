@@ -1,0 +1,31 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "astro",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Cross-Origin-Opener-Policy",
+          "value": "same-origin"
+        },
+        {
+          "key": "Cross-Origin-Embedder-Policy",
+          "value": "require-corp"
+        }
+      ]
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/api/v2/:path*",
+      "destination": "${PUBLIC_API_URL}/api/v2/:path*"
+    },
+    {
+      "source": "/socket.io/:path*",
+      "destination": "${PUBLIC_API_URL}/socket.io/:path*"
+    }
+  ]
+}
