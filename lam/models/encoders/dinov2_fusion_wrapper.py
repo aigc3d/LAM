@@ -117,7 +117,7 @@ class Dinov2FusionWrapper(nn.Module):
         model = model_fn(modulation_dim=modulation_dim, pretrained=pretrained)
         return model
 
-    @torch.compile
+    # @torch.compile  # DISABLED: causes bird-monster on Modal L4 GPU
     def forward(self, image: torch.Tensor, mod: torch.Tensor = None):
         # image: [N, C, H, W]
         # mod: [N, D] or None
