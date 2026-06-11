@@ -1,0 +1,29 @@
+<svg width="100" height="100" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="micGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#64B5F6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1976D2;stop-opacity:1" />
+    </linearGradient>
+    <!-- 光るエフェクト用 -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- マイクアイコン（青・光る）のみ -->
+  <g transform="translate(50, 50)" filter="url(#glow)">
+    <!-- マイク本体 -->
+    <rect x="-12" y="-25" width="24" height="35" rx="12" fill="url(#micGradient)"/>
+    
+    <!-- マイク下部 -->
+    <path d="M -18 14 Q -18 26 0 26 Q 18 26 18 14" stroke="#1976D2" stroke-width="4" fill="none" stroke-linecap="round"/>
+    
+    <!-- スタンド -->
+    <line x1="0" y1="26" x2="0" y2="35" stroke="#1976D2" stroke-width="4" stroke-linecap="round"/>
+    <line x1="-12" y1="35" x2="12" y2="35" stroke="#1976D2" stroke-width="4" stroke-linecap="round"/>
+  </g>
+</svg>
