@@ -1,0 +1,130 @@
+
+experiment:
+    type: lam
+    seed: 42
+    parent: lam 
+    child: lam_20k
+model:
+    # image encoder
+    encoder_type: "dinov2_fusion"
+    encoder_model_name: "dinov2_vitl14_reg"
+    encoder_feat_dim: 1024
+    encoder_freeze: false
+
+    # points embeddings
+    latent_query_points_type: "e2e_flame"
+    pcl_dim: 1024
+
+    # transformer
+    transformer_type: "sd3_cond"
+    transformer_heads: 16
+    transformer_dim: 1024 
+    transformer_layers: 10
+    tf_grad_ckpt: true
+    encoder_grad_ckpt: true
+
+    # for gs renderer
+    human_model_path: "./pretrained_models/human_model_files"
+    flame_subdivide_num: 1
+    flame_type: "flame"
+    gs_query_dim: 1024
+    gs_use_rgb: True
+    gs_sh: 3
+    gs_mlp_network_config:
+        n_neurons: 512
+        n_hidden_layers: 2
+        activation: silu
+    gs_xyz_offset_max_step: 0.2
+    gs_clip_scaling: 0.01
+    scale_sphere: false
+    
+    expr_param_dim: 10
+    shape_param_dim: 10
+    add_teeth: false
+
+    fix_opacity: false
+    fix_rotation: false
+
+    has_disc: false
+
+    teeth_bs_flag: false
+    oral_mesh_flag: false
+
+dataset:
+    subsets:
+        -   name: video_head
+            root_dirs: "./train_data/vfhq_vhap_nooffset/export"
+            meta_path:
+                train: "./train_data/vfhq_vhap_nooffset/label/valid_id_train_list.json"
+                val: "./train_data/vfhq_vhap_nooffset/label/valid_id_val_list.json"
+            sample_rate: 1.0
+    sample_side_views: 7
+    sample_aug_views: 0
+    source_image_res: 512
+    render_image:
+        low: 512
+        high: 512
+        region: null
+    num_train_workers: 4
+    num_val_workers: 2
+    pin_mem: true
+    repeat_num: 1
+    gaga_track_type: "vfhq"
+
+train:
+    mixed_precision: bf16  # REPLACE THIS BASED ON GPU TYPE
+    find_unused_parameters: false
+    loss:
+        pixel_weight: 0.0
+        pixel_loss_fn: "mse"
+        crop_face_weight: 0.
+        crop_mouth_weight: 0.
+        crop_eye_weight: 0.
+        masked_pixel_weight: 1.0
+        perceptual_weight: 1.0
+        tv_weight: -1
+        mask_weight: 0:1.0:0.5:10000
+        offset_reg_weight: 0.1
+    optim:
+        lr: 4e-4
+        weight_decay: 0.05
+        beta1: 0.9
+        beta2: 0.95
+        clip_grad_norm: 1.0
+    scheduler:
+        type: cosine
+        warmup_real_iters: 3000
+    batch_size: 4  # REPLACE THIS (PER GPU)
+    accum_steps: 1  # REPLACE THIS
+    epochs: 100  # REPLACE THIS
+    debug_global_steps: null
+    resume: ""
+
+val:
+    batch_size: 2
+    global_step_period: 500
+    debug_batches: 10
+
+saver:
+    auto_resume: true
+    load_model: null
+    checkpoint_root: ./exps/checkpoints
+    checkpoint_global_steps: 500
+    checkpoint_keep_level: 5
+
+logger:
+    stream_level: WARNING
+    log_level: INFO
+    log_root: ./exps/logs
+    tracker_root: ./exps/trackers
+    enable_profiler: false
+    trackers:
+        - tensorboard
+    image_monitor:
+        train_global_steps: 500
+        samples_per_log: 4
+
+compile:
+    suppress_errors: true
+    print_specializations: true
+    disable: true
