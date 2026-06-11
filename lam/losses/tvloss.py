@@ -30,7 +30,7 @@ class TVLoss(nn.Module):
     def numel_excluding_first_dim(self, x):
         return x.numel() // x.shape[0]
 
-    @torch.compile
+    # @torch.compile  # DISABLED: causes bird-monster on Modal L4 GPU
     def forward(self, x):
         """
         Assume batched and channel first with inner sizes.

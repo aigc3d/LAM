@@ -3,9 +3,9 @@ omegaconf==2.3.0
 moviepy==1.0.3 
 pandas==2.2.3 
 transformers==4.41.2 
-numpy==1.23.0 
+numpy==1.26.4
 trimesh==4.4.9 
-opencv_python_headless==4.11.0.86 
+opencv_python_headless==4.9.0.80
 tensorflow==2.12.0 
 face-detection-tflite==0.6.0 
 scikit-image==0.20.0 
