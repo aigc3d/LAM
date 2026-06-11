@@ -176,7 +176,7 @@ class ModelLAM(nn.Module):
             image_feats = self.encoder(image)
         return image_feats
 
-    @torch.compile
+    # @torch.compile  # DISABLED: causes bird-monster on Modal L4 GPU
     def forward_latent_points(self, image, camera, query_points=None, additional_features=None):
         # image: [B, C_img, H_img, W_img]
         # camera: [B, D_cam_raw]
