@@ -1,0 +1,1106 @@
+---
+// ShopCardList.astro - ProposalCard形式のショップカードリスト
+export interface Props {
+  apiBaseUrl?: string;
+}
+
+const { apiBaseUrl = '' } = Astro.props;
+---
+
+<div class="shop-card-list" id="shopCardList" data-api-base={apiBaseUrl}>
+</div>
+
+<style>
+  .shop-card-list {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  /* ProposalCard形式のショップカード */
+  .shop-card-list :global(.shop-card) {
+    background: white;
+    border-radius: 24px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.12);
+    overflow: hidden;
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+
+  .shop-card-list :global(.shop-card:hover) {
+    transform: translateY(-4px);
+    box-shadow: 0 16px 50px rgba(0, 0, 0, 0.18);
+  }
+
+  /* ヒーロー画像リンク */
+  .shop-card-list :global(.hero-image-link) {
+    display: block;
+    text-decoration: none;
+    position: relative;
+    -webkit-tap-highlight-color: transparent; /* ★ スマホのタップハイライトを無効化 */
+  }
+
+  /* ヒーロー画像 */
+  .shop-card-list :global(.hero-image) {
+    position: relative;
+    aspect-ratio: 16/9;
+    overflow: hidden;
+    min-height: 200px; /* ★ スマホでもタップしやすい最低高さ */
+  }
+  
+  /* スマホ用：タッチ領域を確保 */
+  @media (max-width: 768px) {
+    .shop-card-list :global(.hero-image) {
+      min-height: 180px;
+    }
+    
+    .shop-card-list :global(.hero-image-link) {
+      min-height: 180px;
+      display: block;
+    }
+  }
+
+  .shop-card-list :global(.hero-image::after) {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 40%;
+    background: linear-gradient(to top, rgba(0,0,0,0.4), transparent);
+    pointer-events: none;
+  }
+
+  .shop-card-list :global(.hero-image img) {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 0.3s ease;
+  }
+
+  .shop-card-list :global(.hero-image-link:hover img) {
+    transform: scale(1.05);
+  }
+
+  /* Google Mapsオーバーレイ */
+  .shop-card-list :global(.maps-overlay) {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    color: white;
+    gap: 8px;
+    z-index: 5;
+    pointer-events: none; /* ★ オーバーレイ自体はクリック不可に */
+  }
+
+  /* PC: ホバーで表示 */
+  @media (hover: hover) and (pointer: fine) {
+    .shop-card-list :global(.hero-image-link:hover .maps-overlay) {
+      opacity: 1;
+    }
+  }
+  
+  /* スマホ: 常に薄く表示（タップ可能にするため） */
+  @media (hover: none) {
+    .shop-card-list :global(.maps-overlay) {
+      opacity: 0.8;
+      background: rgba(0, 0, 0, 0.4);
+    }
+  }
+
+  .shop-card-list :global(.maps-overlay svg) {
+    width: 32px;
+    height: 32px;
+  }
+
+  .shop-card-list :global(.maps-overlay span) {
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .shop-card-list :global(.category-badge) {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(4px);
+    color: #1f2937;
+    padding: 4px 10px;
+    border-radius: 16px;
+    font-size: 11px;
+    font-weight: 700;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    z-index: 10;
+    pointer-events: none; /* ★ クリックを透過 */
+  }
+
+  .shop-card-list :global(.location-badge) {
+    position: absolute;
+    bottom: 12px;
+    left: 12px;
+    right: 12px;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(10px);
+    padding: 6px 10px;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #1f2937;
+    z-index: 10;
+    pointer-events: none; /* ★ クリックを透過 */
+  }
+
+  .shop-card-list :global(.location-badge svg) {
+    width: 14px;
+    height: 14px;
+    color: #ef4444;
+    flex-shrink: 0;
+  }
+
+  /* カードボディ */
+  .shop-card-list :global(.card-body) {
+    padding: 16px;
+  }
+
+  /* ★店名と評価を包むリンクのスタイル */
+  .shop-card-list :global(.shop-header-link) {
+    text-decoration: none;
+    display: flex;
+    gap: 12px; /* アイコンとテキストの間隔 */
+    align-items: flex-start;
+    color: inherit;
+    transition: opacity 0.2s;
+    margin-bottom: 10px; /* 下の要素との余白 */
+  }
+
+  .shop-card-list :global(.shop-header-link:hover) {
+    opacity: 0.7;
+  }
+  
+  /* ★Google Mapアイコンのスタイル */
+  .shop-card-list :global(.google-map-icon-svg) {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+    margin-top: 2px; /* テキストとの位置合わせ */
+    filter: drop-shadow(0 2px 3px rgba(0,0,0,0.1));
+  }
+
+  .shop-card-list :global(.shop-name) {
+    font-size: 18px;
+    font-weight: 900;
+    color: #1f2937;
+    margin: 0 0 6px 0;
+    line-height: 1.3;
+  }
+
+  .shop-card-list :global(.meta-info) {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 4px; /* 見出しリンク内に移動したので調整 */
+  }
+
+  .shop-card-list :global(.rating) {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .shop-card-list :global(.stars) {
+    display: flex;
+  }
+
+  .shop-card-list :global(.star) {
+    width: 16px;
+    height: 16px;
+    color: #d1d5db;
+  }
+
+  .shop-card-list :global(.star.filled) {
+    color: #fbbf24;
+  }
+
+  .shop-card-list :global(.rating-value) {
+    font-size: 14px;
+    font-weight: 700;
+    color: #1f2937;
+  }
+
+  .shop-card-list :global(.review-count) {
+    font-size: 11px;
+    color: #6b7280;
+  }
+
+  .shop-card-list :global(.price-range) {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    color: #4b5563;
+    background: #f3f4f6;
+    padding: 4px 8px;
+    border-radius: 12px;
+  }
+
+  .shop-card-list :global(.price-range svg) {
+    width: 12px;
+    height: 12px;
+  }
+
+  /* 説明 */
+  .shop-card-list :global(.description) {
+    color: #4b5563;
+    font-size: 13px;
+    line-height: 1.6;
+    margin-bottom: 12px;
+  }
+
+  /* おすすめポイント */
+  .shop-card-list :global(.highlights) {
+    background: linear-gradient(135deg, #f3e8ff 0%, #fce7f3 100%);
+    border-radius: 12px;
+    padding: 12px;
+    margin-bottom: 12px;
+  }
+
+  .shop-card-list :global(.highlights h4) {
+    font-size: 13px;
+    font-weight: 700;
+    color: #1f2937;
+    margin: 0 0 8px 0;
+  }
+
+  .shop-card-list :global(.highlights ul) {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .shop-card-list :global(.highlights li) {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #1f2937;
+  }
+
+  .shop-card-list :global(.highlights li:last-child) {
+    margin-bottom: 0;
+  }
+
+  .shop-card-list :global(.check-icon) {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    background: #10b981;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 1px;
+  }
+
+  .shop-card-list :global(.check-icon svg) {
+    width: 10px;
+    height: 10px;
+    color: white;
+  }
+
+  /* 来店のポイント */
+  .shop-card-list :global(.tips) {
+    display: flex;
+    gap: 10px;
+    background: #eff6ff;
+    border-left: 3px solid #3b82f6;
+    border-radius: 0 8px 8px 0;
+    padding: 10px;
+    margin-bottom: 12px;
+  }
+
+  .shop-card-list :global(.tips-icon svg) {
+    width: 18px;
+    height: 18px;
+    color: #3b82f6;
+    flex-shrink: 0;
+  }
+
+  .shop-card-list :global(.tips h5) {
+    font-weight: 700;
+    color: #1f2937;
+    margin: 0 0 2px 0;
+    font-size: 12px;
+  }
+
+  .shop-card-list :global(.tips p) {
+    font-size: 11px;
+    color: #4b5563;
+    margin: 0;
+    line-height: 1.4;
+  }
+
+  /* リンクボタン */
+  .shop-card-list :global(.link-buttons) {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .shop-card-list :global(.link-btn) {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px;
+    border-radius: 10px;
+    text-decoration: none;
+    transition: all 0.2s ease;
+  }
+
+  .shop-card-list :global(.link-btn:active) {
+    transform: scale(0.98);
+  }
+
+  /* ★Instagramボタンのスタイル */
+  .shop-card-list :global(.link-btn.instagram) {
+    /* 左側は白、右に向かってInstagramのブランドカラーにグラデーション */
+    background: linear-gradient(to right, #ffffff 0%, #ffffff 40%, #f09433 65%, #dc2743 85%, #bc1888 100%);
+    color: #1f2937; /* 背景が白くなるため文字は濃い色に変更 */
+    box-shadow: 0 4px 12px rgba(220, 39, 67, 0.15); /* 影を少し控えめに */
+    border: 1px solid #f3f4f6; /* 白背景部分の境界がわかるように薄い枠線を追加 */
+  }
+  
+  .shop-card-list :global(.link-btn.instagram:hover) {
+    opacity: 0.95;
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(220, 39, 67, 0.25);
+  }
+
+  .shop-card-list :global(.link-btn.instagram .link-icon) {
+    background: transparent; /* 背景を透明に */
+    padding: 2px; /* 画像の余白 */
+  }
+
+  /* ★Instagramロゴ画像のスタイル */
+  .shop-card-list :global(.link-btn.instagram .link-icon img) {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1)); /* ロゴ自体に少し影をつけて立体感を出す */
+  }
+
+  /* ★変更: ホットペッパーボタン（白背景・食べログと同じ枠線） */
+  .shop-card-list :global(.link-btn.hotpepper) {
+    background: white; 
+    border: 2px solid #e5e7eb; /* 食べログと同じ枠線色 */
+    color: #1f2937; 
+  }
+
+  .shop-card-list :global(.link-btn.hotpepper:hover) {
+    background-color: #fff7ed; /* ホバー時は薄いオレンジ背景 */
+    border-color: #ea580c; /* ホバー時はブランドカラーの枠線 */
+  }
+
+  .shop-card-list :global(.link-btn.maps) {
+    background: white;
+    border: 2px solid #e5e7eb;
+    color: #1f2937;
+  }
+
+  .shop-card-list :global(.link-btn.maps:hover) {
+    border-color: #fca5a5;
+  }
+
+  .shop-card-list :global(.link-btn.tabelog) {
+    background: white;
+    border: 2px solid #e5e7eb;
+    color: #1f2937;
+  }
+
+  .shop-card-list :global(.link-btn.tabelog:hover) {
+    border-color: #fdba74;
+  }
+
+  /* ★変更: ぐるなびボタン（白背景・食べログと同じ枠線） */
+  .shop-card-list :global(.link-btn.gnavi) {
+    background: white;
+    border: 2px solid #e5e7eb; /* 食べログと同じ枠線色 */
+    color: #1f2937;
+  }
+
+  .shop-card-list :global(.link-btn.gnavi:hover) {
+    background-color: #fffbeb; /* ホバー時は薄い黄色背景 */
+    border-color: #fbbf24; /* ホバー時はブランドカラーの枠線 */
+  }
+
+  /* TripAdvisorボタン */
+  .shop-card-list :global(.link-btn.tripadvisor) {
+    background: #34E0A1; /* トリップアドバイザーのブランドカラー（明るい緑） */
+    color: #1f2937;
+    box-shadow: 0 4px 12px rgba(52, 224, 161, 0.3);
+    border: none;
+  }
+  .shop-card-list :global(.link-btn.tripadvisor:hover) {
+    background: #2dd498;
+  }
+
+  .shop-card-list :global(.link-btn-content) {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .shop-card-list :global(.link-icon) {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .shop-card-list :global(.link-icon svg) {
+    width: 16px;
+    height: 16px;
+  }
+
+  /* ホットペッパーのアイコン色調整 */
+  .shop-card-list :global(.link-btn.hotpepper .link-icon) {
+    background: #ea580c; /* アイコン背景はオレンジ */
+    color: white; /* アイコン自体は白 */
+  }
+
+  .shop-card-list :global(.link-btn.gnavi .link-icon) {
+    background: #fbbf24;
+    color: white;
+  }
+
+  .shop-card-list :global(.link-btn.tabelog .link-icon) {
+    background: #f97316;
+    color: white;
+  }
+
+  .shop-card-list :global(.link-btn.tripadvisor .link-icon) {
+    background: white; /* ロゴが見やすいように白背景 */
+    padding: 4px;
+    border-radius: 50%;
+  }
+  .shop-card-list :global(.link-btn.tripadvisor .link-icon img) {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  .shop-card-list :global(.link-text) {
+    text-align: left;
+  }
+
+  .shop-card-list :global(.link-title) {
+    font-weight: 700;
+    font-size: 12px;
+  }
+
+  .shop-card-list :global(.link-subtitle) {
+    font-size: 10px;
+    opacity: 0.8;
+  }
+
+  .shop-card-list :global(.link-arrow) {
+    width: 16px;
+    height: 16px;
+    opacity: 0.6;
+  }
+
+  /* TripAdvisor評価の○スタイル */
+  .shop-card-list :global(.tripadvisor-rating) {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+  }
+
+  .shop-card-list :global(.tripadvisor-rating .circles) {
+    display: flex;
+    gap: 2px;
+  }
+
+  .shop-card-list :global(.tripadvisor-rating .circle) {
+    width: 14px;
+    height: 14px;
+    color: #004F32; /* くすんだ緑 */
+  }
+
+  .shop-card-list :global(.tripadvisor-rating .circle.filled) {
+    color: #004F32;
+  }
+
+  .shop-card-list :global(.tripadvisor-rating .circle.empty) {
+    color: rgba(0, 79, 50, 0.2);
+  }
+
+  .shop-card-list :global(.tripadvisor-rating .circle.half) {
+    color: #004F32;
+  }
+
+  /* 空状態 */
+  .shop-card-list :global(.empty-state) {
+    text-align: center;
+    padding: 40px 20px;
+    color: #9ca3af;
+    font-size: 13px;
+  }
+</style>
+
+<script>
+  // デバイス判定
+  const isMobile = () => {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+    (window.innerWidth <= 768);
+  };
+
+  // PC版: ポップアップで開く / モバイル版: 別タブで開く
+  window.openLinkPopup = function(event: Event, url: string) {
+    // モバイルの場合は通常の動作（別タブで開く）
+    if (isMobile()) {
+      return true;
+    }
+
+    // PCの場合はポップアップで開く
+    event.preventDefault();
+    const width = 900;
+    const height = 700;
+    const left = (screen.width - width) / 2;
+    const top = (screen.height - height) / 2;
+    window.open(
+      url,
+      'shopInfoPopup',
+      `width=${width},height=${height},left=${left},top=${top},scrollbars=yes,resizable=yes`
+    );
+    return false;
+  };
+
+  // 食べログGoogle検索の自動処理
+  window.handleTabelogSearch = function(event: Event, searchUrl: string) {
+    // モバイルの場合は通常の動作（別タブで開く）
+    if (isMobile()) {
+      return true;
+    }
+
+    // PCの場合はポップアップで開く
+    event.preventDefault();
+    const width = 900;
+    const height = 700;
+    const left = (screen.width - width) / 2;
+    const top = (screen.height - height) / 2;
+    window.open(
+      searchUrl,
+      'shopInfoPopup',
+      `width=${width},height=${height},left=${left},top=${top},scrollbars=yes,resizable=yes`
+    );
+    return false;
+  };
+
+  // ショップカードリストの管理
+  interface ShopData {
+    name: string;
+    category?: string;
+    description?: string;
+    rating?: number;
+    reviewCount?: number;
+    priceRange?: string;
+    location?: string;
+    image?: string;
+    highlights?: string[];
+    tips?: string;
+    hotpepper_url?: string;
+    maps_url?: string;
+    tabelog_url?: string;
+    gnavi_url?: string;
+    tripadvisor_url?: string;
+    tripadvisor_rating?: number;
+    tripadvisor_reviews?: number;
+    latitude?: number;
+    longitude?: number;
+  }
+
+  class ShopCardManager {
+    private container: HTMLElement;
+    private currentLanguage: string = 'ja';
+    // デフォルトは日本語
+    private i18n = {
+      ja: {
+        instagramTitle: 'Instagram',       
+        instagramSubtitle: '最新の投稿を見る',
+        tripadvisorTitle: 'TripAdvisor',
+        tripadvisorSubtitle: 'レビュー・写真',
+        tabelogTitle: '食べログ',
+        tabelogSubtitle: '口コミ・写真',
+        hotpepperTitle: 'ホットペッパー',
+        hotpepperSubtitle: '予約・クーポン',
+        gnaviTitle: 'ぐるなび',
+        gnaviSubtitle: 'お店情報'
+      },
+      en: {
+        instagramTitle: 'Instagram',       
+        instagramSubtitle: 'Latest Photos', 
+        tripadvisorTitle: 'TripAdvisor',
+        tripadvisorSubtitle: 'Reviews & Photos',
+        tabelogTitle: 'Tabelog',
+        tabelogSubtitle: 'Reviews & Ratings',
+        hotpepperTitle: 'Hotpepper',
+        hotpepperSubtitle: 'Reservations & Coupons',
+        gnaviTitle: 'Gnavi',
+        gnaviSubtitle: 'Restaurant Info'
+      },
+      zh: {
+        instagramTitle: 'Instagram',       
+        instagramSubtitle: '查看最新照片',  
+        tripadvisorTitle: 'TripAdvisor',
+        tripadvisorSubtitle: '评论和照片',
+        tabelogTitle: 'Tabelog',
+        tabelogSubtitle: '评论和评分',
+        hotpepperTitle: 'Hotpepper',
+        hotpepperSubtitle: '预订和优惠券',
+        gnaviTitle: 'Gnavi',
+        gnaviSubtitle: '餐厅信息'
+      },
+      ko: {
+        instagramTitle: 'Instagram',       
+        instagramSubtitle: '최신 사진 보기', 
+        tripadvisorTitle: 'TripAdvisor',
+        tripadvisorSubtitle: '리뷰 및 사진',
+        tabelogTitle: 'Tabelog',
+        tabelogSubtitle: '리뷰 및 평점',
+        hotpepperTitle: 'Hotpepper',
+        hotpepperSubtitle: '예약 및 쿠폰',
+        gnaviTitle: 'Gnavi',
+        gnaviSubtitle: '음식점 정보'
+      }
+    };
+    constructor(containerId: string) {
+      this.container = document.getElementById(containerId)!;
+    }
+
+    // 言語を設定
+    setLanguage(language: string) {
+      this.currentLanguage = language;
+      console.log('[ShopCardList] Language set to:', language);
+    }
+
+    // 翻訳ヘルパー
+    private t(key: string): string {
+      const langData = this.i18n[this.currentLanguage as keyof typeof this.i18n] ||
+      this.i18n.en;
+      return langData[key as keyof typeof langData] || key;
+    }
+
+    // ショップリストを表示
+    displayShops(shops: ShopData[], language?: string) {
+      console.log('[ShopCardList] displayShops called with language:', language, 'shops:', shops);
+      if (language) {
+        this.currentLanguage = language;
+        console.log('[ShopCardList] Language set to:', language);
+      }
+      console.log('[ShopCardList] Current language:', this.currentLanguage);
+      this.container.innerHTML = '';
+      if (!shops || shops.length === 0) {
+        console.log('[ShopCardList] No shops to display');
+        this.container.innerHTML = `
+          <div class="empty-state">
+            お店が見つかりませんでした
+          </div>
+        `;
+        return;
+      }
+
+      shops.forEach((shop, index) => {
+        console.log(`[ShopCardList] Creating card ${index + 1}:`, shop.name);
+        const card = this.createShopCard(shop);
+        this.container.appendChild(card);
+      });
+      console.log(`[ShopCardList] ${shops.length} cards created`);
+    }
+
+    // ショップカードを追加
+    addShop(shop: ShopData) {
+      const card = this.createShopCard(shop);
+      this.container.appendChild(card);
+    }
+
+    // ProposalCard形式でショップカードを作成
+    private createShopCard(shop: ShopData): HTMLElement {
+      const card = document.createElement('div');
+      card.className = 'shop-card';
+
+      // デフォルト画像
+      const imageUrl = shop.image || 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=800&h=450&fit=crop';
+      // 星の生成
+      const starsHtml = this.createStarsHtml(shop.rating || 0);
+      // おすすめポイントの生成
+      const highlightsHtml = this.createHighlightsHtml(shop.highlights || []);
+      // 来店のポイント
+      const tipsHtml = shop.tips ? this.createTipsHtml(shop.tips) : '';
+      // リンクボタンの生成
+      const linksHtml = this.createLinksHtml(shop);
+      // Google Map URLの生成
+      let mapsUrl = '#';
+      if (shop.maps_url) {
+        // ★★★ place_id形式の場合、スマホアプリ対応形式に変換 ★★★
+        if (shop.maps_url.includes('place_id:')) {
+          // place_id:ChIJ... を抽出
+          const placeIdMatch = shop.maps_url.match(/place_id:(ChIJ[\w-]+)/);
+          if (placeIdMatch) {
+            const placeId = placeIdMatch[1];
+            // Google Maps アプリ対応URL
+            mapsUrl = `https://www.google.com/maps/search/?api=1&query=Google&query_place_id=${placeId}`;
+          } else {
+            mapsUrl = shop.maps_url;
+          }
+        } else {
+          mapsUrl = shop.maps_url;
+        }
+      } else if (shop.latitude && shop.longitude) {
+        // 緯度経度がある場合
+        mapsUrl = `https://www.google.com/maps/search/?api=1&query=${shop.latitude},${shop.longitude}`;
+      } else if (shop.name && shop.location) {
+        // 店名と住所がある場合
+        const query = encodeURIComponent(`${shop.name} ${shop.location}`);
+        mapsUrl = `https://www.google.com/maps/search/?api=1&query=${query}`;
+      } else if (shop.name) {
+        // 店名のみの場合
+        const query = encodeURIComponent(shop.name);
+        mapsUrl = `https://www.google.com/maps/search/?api=1&query=${query}`;
+      }
+
+      // ★ Google MapsのカラーアイコンSVG
+      const googleMapsIconSvg = `
+        <svg class="google-map-icon-svg" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M24 4C14.0589 4 6 12.0589 6 22C6 33.5 24 44 24 44C24 44 42 33.5 42 22C42 12.0589 33.9411 4 24 4Z" fill="#EA4335"/>
+          <path d="M24 44C24 44 42 33.5 42 22C42 17.0294 39.9853 12.5294 36.7279 9.27208L24 22L11.2721 9.27208C8.01472 12.5294 6 17.0294 6 22C6 33.5 24 44 24 44Z" fill="#34A853" fill-opacity="0.2"/>
+          <circle cx="24" cy="22" r="10" fill="#1976D2"/>
+          <path d="M24 4C14.0589 4 6 12.0589 6 22H24V4Z" fill="#EA4335"/>
+          <path d="M24 4V22H42C42 12.0589 33.9411 4 24 4Z" fill="#34A853"/>
+          <path d="M24 22V44C24 44 42 33.5 42 22H24Z" fill="#FBBC04"/>
+          <path d="M6 22C6 33.5 24 44 24 44V22H6Z" fill="#1976D2"/>
+          <circle cx="24" cy="22" r="5" fill="white"/>
+        </svg>
+      `;
+
+      card.innerHTML = `
+        <a href="${mapsUrl}" target="_blank" rel="noopener noreferrer" class="hero-image-link" data-maps-url="${mapsUrl}">
+          <div class="hero-image">
+            <img src="${imageUrl}" alt="${shop.name}" loading="lazy" />
+            ${shop.category ? `<span class="category-badge">${shop.category}</span>` : ''}
+            ${shop.location ? `
+              <div class="location-badge">
+                <svg fill="currentColor" viewBox="0 0 20 20">
+                  <path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"/>
+                </svg>
+                <span>${shop.location}</span>
+              </div>
+            ` : ''}
+          </div>
+        </a>
+        <div class="card-body">
+          
+          <a href="${mapsUrl}" target="_blank" rel="noopener noreferrer" class="shop-header-link">
+            ${googleMapsIconSvg}
+            <div class="shop-header-content">
+              <h3 class="shop-name">${shop.name}</h3>
+              <div class="meta-info">
+                ${shop.rating ? `
+                  <div class="rating">
+                    <div class="stars">${starsHtml}</div>
+                    <span class="rating-value">${shop.rating}</span>
+                    ${shop.reviewCount ? `<span class="review-count">(${shop.reviewCount}件)</span>` : ''}
+                  </div>
+                ` : ''}
+                ${shop.priceRange ? `
+                  <div class="price-range">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    <span>${shop.priceRange}</span>
+                  </div>
+                ` : ''}
+              </div>
+            </div>
+          </a>
+          ${shop.description ? `<p class="description">${shop.description}</p>` : ''}
+          
+          ${highlightsHtml}
+          
+          ${tipsHtml}
+          
+          <div class="link-buttons">
+            ${linksHtml}
+          </div>
+        </div>
+      `;
+
+      return card;
+    }
+
+    // 星の生成
+    private createStarsHtml(rating: number): string {
+      let html = '';
+      for (let i = 0; i < 5; i++) {
+        const filled = i < Math.floor(rating) ? 'filled' : '';
+        html += `
+          <svg class="star ${filled}" fill="currentColor" viewBox="0 0 20 20">
+            <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/>
+          </svg>
+        `;
+      }
+      return html;
+    }
+
+    // TripAdvisor評価の○（円）の生成
+    private createCirclesHtml(rating: number): string {
+      let html = '';
+      const fullCircles = Math.floor(rating);
+      const hasHalfCircle = rating % 1 >= 0.5;
+      for (let i = 0; i < 5; i++) {
+        if (i < fullCircles) {
+          // 塗りつぶし○
+          html += `
+            <svg class="circle filled" viewBox="0 0 24 24" fill="currentColor">
+              <circle cx="12" cy="12" r="10"/>
+            </svg>
+          `;
+        } else if (i === fullCircles && hasHalfCircle) {
+          // 半分塗りつぶし○
+          html += `
+            <svg class="circle half" viewBox="0 0 24 24">
+              <defs>
+                <linearGradient id="half-${i}">
+                  <stop offset="50%" stop-color="currentColor"/>
+                  <stop offset="50%" stop-color="transparent"/>
+                </linearGradient>
+              </defs>
+              <circle cx="12" cy="12" r="10" fill="url(#half-${i})" stroke="currentColor" stroke-width="1.5"/>
+            </svg>
+          `;
+        } else {
+          // 空○
+          html += `
+            <svg class="circle empty" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <circle cx="12" cy="12" r="10" stroke-width="1.5"/>
+            </svg>
+          `;
+        }
+      }
+      return html;
+    }
+
+    // おすすめポイントの生成
+    private createHighlightsHtml(highlights: string[]): string {
+      if (highlights.length === 0) return '';
+      const listItems = highlights.map(h => `
+        <li>
+          <span class="check-icon">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+            </svg>
+          </span>
+          <span>${h}</span>
+        </li>
+      `).join('');
+      return `
+        <div class="highlights">
+          <h4>✨ おすすめポイント</h4>
+          <ul>${listItems}</ul>
+        </div>
+      `;
+    }
+
+    // 来店のポイント
+    private createTipsHtml(tips: string): string {
+      return `
+        <div class="tips">
+          <div class="tips-icon">
+            <svg fill="currentColor" viewBox="0 0 20 20">
+              <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+            </svg>
+          </div>
+          <div>
+            <h5>来店のポイント</h5>
+            <p>${tips}</p>
+          </div>
+        </div>
+      `;
+    }
+
+    // リンクボタンの生成（URLの有無に基づいて表示）
+      private createLinksHtml(shop: ShopData): string {
+      const links: string[] = [];
+    // 0. Instagram検索 (★修正: 欧文部分を優先的に抽出してハッシュタグ化)
+      if (shop.name) {
+    // 欧文部分を抽出（英数字のみ、スペース除去）
+      const englishMatch = shop.name.match(/[a-zA-Z0-9]+/g);
+    // 欧文があればそれを結合、なければ日本語部分（スペース除去）
+      const tagName = englishMatch ? englishMatch.join('') : shop.name.replace(/\s+/g, '');
+    // URL形式: /explore/tags/店名/ (これならアプリでも開く)
+      const instaUrl = `https://www.instagram.com/explore/tags/${encodeURIComponent(tagName)}/`;
+        links.push(`
+          <a href="${instaUrl}" target="_blank" rel="noopener noreferrer" class="link-btn instagram" onclick="return openLinkPopup(event, '${instaUrl}')">
+            <div class="link-btn-content">
+              <div class="link-icon">
+                <img src="/instagram-logo.png" alt="Instagram" loading="lazy" />
+              </div>
+              <div class="link-text">
+                <div class="link-title">${this.t('instagramTitle')}</div>
+                <div class="link-subtitle">${this.t('instagramSubtitle')}</div>
+              </div>
+            </div>
+            <svg class="link-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+          </a>
+        `);
+      }
+
+      // 1. TripAdvisor (データがあれば表示)
+      if (shop.tripadvisor_url) {
+        const escapedUrl = shop.tripadvisor_url.replace(/'/g, "\\'");
+        const circlesHtml = shop.tripadvisor_rating ? this.createCirclesHtml(shop.tripadvisor_rating) : '';
+        const ratingValue = shop.tripadvisor_rating ? shop.tripadvisor_rating.toFixed(1) : '';
+        const reviewCount = shop.tripadvisor_reviews || 0;
+
+        links.push(`
+          <a href="${shop.tripadvisor_url}" target="_blank" rel="noopener noreferrer" class="link-btn tripadvisor" onclick="return openLinkPopup(event, '${escapedUrl}')">
+            <div class="link-btn-content">
+              <div class="link-icon">
+                <img src="/TripAdvisor-logo.png" alt="TripAdvisor" loading="lazy" />
+              </div>
+              <div class="link-text">
+                <div class="link-title">${this.t('tripadvisorTitle')}</div>
+                ${circlesHtml ? `
+                  <div class="tripadvisor-rating">
+                    <div class="circles">${circlesHtml}</div>
+                    <span class="rating-score">${ratingValue}</span>
+                    <span class="review-count">(${reviewCount})</span>
+                  </div>
+                ` : `<div class="link-subtitle">${this.t('tripadvisorSubtitle')}</div>`}
+              </div>
+            </div>
+            <svg class="link-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+          </a>
+        `);
+      }
+
+      // 2. 食べログ
+      if (shop.tabelog_url) {
+        const escapedUrl = shop.tabelog_url.replace(/'/g, "\\'");
+        const isGoogleSearch = shop.tabelog_url.includes('google.com/search');
+        const onclickAttr = isGoogleSearch
+          ? `onclick="return handleTabelogSearch(event, '${escapedUrl}')"`
+          : `onclick="return openLinkPopup(event, '${escapedUrl}')"`;
+        links.push(`
+          <a href="${shop.tabelog_url}" target="_blank" rel="noopener noreferrer" class="link-btn tabelog" ${onclickAttr}>
+            <div class="link-btn-content">
+              <div class="link-icon">
+                <svg fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M11 9H9V2H7v7H5V2H3v7c0 2.12 1.66 3.84 3.75 3.97V22h2.5v-9.03C11.34 12.84 13 11.12 13 9V2h-2v7zm5-3v8h2V6h2V4h-4zm4 0v8h2V6h2V4h-4z"/>
+                </svg>
+              </div>
+              <div class="link-text">
+                <div class="link-title">${this.t('tabelogTitle')}</div>
+                <div class="link-subtitle">${this.t('tabelogSubtitle')}</div>
+              </div>
+            </div>
+            <svg class="link-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+          </a>
+        `);
+      }
+
+      // 3. ホットペッパー
+      if (shop.hotpepper_url) {
+        const escapedUrl = shop.hotpepper_url.replace(/'/g, "\\'");
+        links.push(`
+          <a href="${shop.hotpepper_url}" target="_blank" rel="noopener noreferrer" class="link-btn hotpepper" onclick="return openLinkPopup(event, '${escapedUrl}')">
+            <div class="link-btn-content">
+              <div class="link-icon">
+                <svg fill="currentColor" viewBox="0 0 20 20">
+                  <path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clip-rule="evenodd"/>
+                </svg>
+              </div>
+              <div class="link-text">
+                <div class="link-title">${this.t('hotpepperTitle')}</div>
+                <div class="link-subtitle">${this.t('hotpepperSubtitle')}</div>
+              </div>
+            </div>
+            <svg class="link-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+          </a>
+        `);
+      }
+
+      // 4. ぐるなび
+      if (shop.gnavi_url) {
+        const escapedUrl = shop.gnavi_url.replace(/'/g, "\\'");
+        links.push(`
+          <a href="${shop.gnavi_url}" target="_blank" rel="noopener noreferrer" class="link-btn gnavi" onclick="return openLinkPopup(event, '${escapedUrl}')">
+            <div class="link-btn-content">
+              <div class="link-icon">
+                <svg fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                </svg>
+              </div>
+              <div class="link-text">
+                <div class="link-title">${this.t('gnaviTitle')}</div>
+                <div class="link-subtitle">${this.t('gnaviSubtitle')}</div>
+              </div>
+            </div>
+            <svg class="link-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+          </a>
+        `);
+      }
+
+      return links.join('');
+    }
+
+    // クリア
+    clear() {
+      this.container.innerHTML = '';
+    }
+  }
+
+  // グローバルに公開
+  (window as any).ShopCardManager = ShopCardManager;
+  // 初期化
+  document.addEventListener('DOMContentLoaded', () => {
+    const manager = new ShopCardManager('shopCardList');
+    (window as any).shopCardManager = manager;
+
+    // カスタムイベントをリッスン
+    document.addEventListener('displayShops', ((event: CustomEvent) => {
+      if (event.detail && event.detail.shops) {
+        const language = event.detail.language || 'ja';
+        manager.displayShops(event.detail.shops, language);
+      }
+    }) as EventListener);
+  });
+</script>

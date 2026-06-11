@@ -149,23 +149,42 @@ def convert_with_blender(
         blender_exec: Path to Blender executable
 
     Raises:
-        CalledProcessError: If Blender conversion fails
+        RuntimeError: If Blender conversion fails or output not created
     """
     logger.info(f"Starting Blender conversion to GLB")
+
+    # Use absolute path for the conversion script to avoid CWD issues
+    script_path = Path(__file__).resolve().parent / "convertFBX2GLB.py"
+    if not script_path.exists():
+        raise FileNotFoundError(f"Blender conversion script not found: {script_path}")
 
     cmd = [
         str(blender_exec),
         "--background",
-        "--python", "tools/convertFBX2GLB.py",  # Path to conversion script
+        "--python", str(script_path),
         "--", str(input_fbx), str(output_glb)
     ]
 
-    try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True, encoding='utf-8')
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
 
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Blender conversion failed: {e.stderr}")
-        raise
+    # Log Blender output for diagnostics (always, not just on failure)
+    if result.stdout:
+        logger.info(f"Blender stdout:\n{result.stdout[-2000:]}")
+    if result.stderr:
+        logger.warning(f"Blender stderr:\n{result.stderr[-2000:]}")
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Blender FBX→GLB exited with code {result.returncode}\n"
+            f"stdout: {result.stdout[-1000:]}\nstderr: {result.stderr[-1000:]}"
+        )
+
+    if not output_glb.exists():
+        raise RuntimeError(
+            f"Blender exited OK but {output_glb} was not created.\n"
+            f"stdout: {result.stdout[-1000:]}\nstderr: {result.stderr[-1000:]}"
+        )
+
     logger.info(f"GLB output saved to {output_glb}")
 
 def gen_vertex_order_with_blender(
@@ -180,22 +199,41 @@ def gen_vertex_order_with_blender(
         blender_exec: Path to Blender executable
 
     Raises:
-        CalledProcessError: If Blender conversion fails
+        RuntimeError: If Blender vertex order generation fails
     """
     logger.info(f"Starting Generation Vertex Order")
+
+    # Use absolute path for the script to avoid CWD issues
+    script_path = Path(__file__).resolve().parent / "generateVertexIndices.py"
+    if not script_path.exists():
+        raise FileNotFoundError(f"Blender vertex indices script not found: {script_path}")
 
     cmd = [
         str(blender_exec),
         "--background",
-        "--python", "tools/generateVertexIndices.py",  # Path to conversion script
+        "--python", str(script_path),
         "--", str(input_mesh), str(output_json)
     ]
 
-    try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True, encoding='utf-8')
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Blender conversion failed: {e.stderr}")
-        raise
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
+
+    if result.stdout:
+        logger.info(f"Blender stdout:\n{result.stdout[-2000:]}")
+    if result.stderr:
+        logger.warning(f"Blender stderr:\n{result.stderr[-2000:]}")
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Blender vertex order exited with code {result.returncode}\n"
+            f"stdout: {result.stdout[-1000:]}\nstderr: {result.stderr[-1000:]}"
+        )
+
+    if not output_json.exists():
+        raise RuntimeError(
+            f"Blender exited OK but {output_json} was not created.\n"
+            f"stdout: {result.stdout[-1000:]}\nstderr: {result.stderr[-1000:]}"
+        )
+
     logger.info(f"Vertex Order output saved to {output_json}")
 
 

@@ -1,0 +1,514 @@
+---
+// ProposalCard.astro - レストラン提案カード
+export interface Props {
+  proposal: {
+    name: string;
+    rating: number;
+    reviewCount: number;
+    heroImage: string;
+    official_website?: string;
+    maps_url?: string;
+    tabelog_url?: string;
+    category: string;
+    priceRange: string;
+    location: string;
+    description: string;
+    highlights: string[];
+    tips: string;
+  };
+}
+
+const { proposal } = Astro.props;
+---
+
+<article class="proposal-card">
+  <div class="hero-image">
+    <img 
+      src={proposal.heroImage} 
+      alt={`${proposal.name}のイメージ`} 
+      loading="lazy"
+    />
+    <div class="category-badge">
+      {proposal.category}
+    </div>
+    <div class="location-badge">
+      <svg class="location-icon" fill="currentColor" viewBox="0 0 20 20">
+        <path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"/>
+      </svg>
+      <span>{proposal.location}</span>
+    </div>
+  </div>
+
+  <div class="card-content">
+    <header>
+      <h2 class="shop-name">{proposal.name}</h2>
+      
+      <div class="meta-info">
+        <div class="rating">
+          <div class="stars">
+            {[...Array(5)].map((_, i) => (
+              <svg 
+                class={`star ${i < Math.floor(proposal.rating) ? 'filled' : ''}`}
+                fill="currentColor" 
+                viewBox="0 0 20 20"
+              >
+                <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/>
+              </svg>
+            ))}
+          </div>
+          <span class="rating-value">{proposal.rating}</span>
+          <span class="review-count">({proposal.reviewCount}件)</span>
+        </div>
+        
+        <div class="price-range">
+          <svg class="price-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+          <span>{proposal.priceRange}</span>
+        </div>
+      </div>
+    </header>
+
+    <section class="description">
+      <p>{proposal.description}</p>
+    </section>
+
+    <section class="highlights">
+      <h3>&#10024; おすすめポイント</h3>
+      <ul>
+        {proposal.highlights.map((highlight) => (
+          <li>
+            <span class="check-icon">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+              </svg>
+            </span>
+            <span>{highlight}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+
+    <section class="tips">
+      <div class="tips-icon">
+        <svg fill="currentColor" viewBox="0 0 20 20">
+          <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+        </svg>
+      </div>
+      <div>
+        <h4>来店のポイント</h4>
+        <p>{proposal.tips}</p>
+      </div>
+    </section>
+
+    <section class="links">
+      <h3>詳しい情報を見る</h3>
+      
+      {proposal.official_website && (
+        <a href={proposal.official_website} target="_blank" rel="noopener noreferrer" class="link-card hotpepper">
+          <div class="link-icon">
+            <svg fill="currentColor" viewBox="0 0 20 20">
+              <path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clip-rule="evenodd"/>
+            </svg>
+          </div>
+          <div class="link-text">
+            <div class="link-title">ホットペッパー</div>
+            <div class="link-subtitle">予約・クーポン</div>
+          </div>
+          <svg class="arrow-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+          </svg>
+        </a>
+      )}
+
+      {proposal.maps_url && (
+        <a href={proposal.maps_url} target="_blank" rel="noopener noreferrer" class="link-card maps">
+          <div class="link-icon maps-icon">
+            <svg fill="currentColor" viewBox="0 0 24 24">
+              <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+            </svg>
+          </div>
+          <div class="link-text">
+            <div class="link-title dark">Google Maps</div>
+            <div class="link-subtitle">場所・ルート検索</div>
+          </div>
+          <svg class="arrow-icon dark" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+          </svg>
+        </a>
+      )}
+
+      {proposal.tabelog_url && (
+        <a href={proposal.tabelog_url} target="_blank" rel="noopener noreferrer" class="link-card tabelog">
+          <div class="link-icon tabelog-icon">
+            <svg fill="currentColor" viewBox="0 0 24 24">
+              <path d="M11 9H9V2H7v7H5V2H3v7c0 2.12 1.66 3.84 3.75 3.97V22h2.5v-9.03C11.34 12.84 13 11.12 13 9V2h-2v7zm5-3v8h2V6h2V4h-4zm4 0v8h2V6h2V4h-4z"/>
+            </svg>
+          </div>
+          <div class="link-text">
+            <div class="link-title dark">食べログ</div>
+            <div class="link-subtitle">口コミ・写真</div>
+          </div>
+          <svg class="arrow-icon dark" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+          </svg>
+        </a>
+      )}
+    </section>
+  </div>
+</article>
+
+<style>
+  .proposal-card {
+    background: white;
+    border-radius: 24px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+    overflow: hidden;
+  }
+
+  .hero-image {
+    position: relative;
+    aspect-ratio: 4/3;
+    overflow: hidden;
+  }
+
+  .hero-image::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 40%;
+    background: linear-gradient(to top, rgba(0,0,0,0.4), transparent);
+  }
+
+  .hero-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .category-badge {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(4px);
+    color: #1f2937;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 700;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    animation: fadeIn 0.5s ease-in;
+  }
+
+  .location-badge {
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    right: 16px;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(10px);
+    padding: 8px 12px;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #1f2937;
+    z-index: 10;
+  }
+
+  .location-icon {
+    width: 16px;
+    height: 16px;
+    color: #ef4444;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .card-content {
+    padding: 24px;
+  }
+
+  header {
+    margin-bottom: 20px;
+  }
+
+  .shop-name {
+    font-size: 24px;
+    font-weight: 900;
+    color: #1f2937;
+    margin: 0 0 12px 0;
+    line-height: 1.3;
+  }
+
+  .meta-info {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .rating {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .stars {
+    display: flex;
+  }
+
+  .star {
+    width: 20px;
+    height: 20px;
+    color: #d1d5db;
+  }
+
+  .star.filled {
+    color: #fbbf24;
+  }
+
+  .rating-value {
+    font-size: 18px;
+    font-weight: 700;
+    color: #1f2937;
+  }
+
+  .review-count {
+    font-size: 14px;
+    color: #6b7280;
+  }
+
+  .price-range {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #4b5563;
+    background: #f3f4f6;
+    padding: 6px 12px;
+    border-radius: 20px;
+  }
+
+  .price-icon {
+    width: 16px;
+    height: 16px;
+  }
+
+  .description p {
+    color: #4b5563;
+    line-height: 1.7;
+    margin: 0;
+  }
+
+  .highlights {
+    background: linear-gradient(135deg, #f3e8ff 0%, #fce7f3 100%);
+    border-radius: 16px;
+    padding: 20px;
+    margin: 20px 0;
+  }
+
+  .highlights h3 {
+    font-size: 16px;
+    font-weight: 700;
+    color: #1f2937;
+    margin: 0 0 12px 0;
+  }
+
+  .highlights ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .highlights li {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-weight: 500;
+    color: #1f2937;
+  }
+
+  .highlights li:last-child {
+    margin-bottom: 0;
+  }
+
+  .check-icon {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    background: #10b981;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 2px;
+  }
+
+  .check-icon svg {
+    width: 12px;
+    height: 12px;
+    color: white;
+  }
+
+  .tips {
+    display: flex;
+    gap: 12px;
+    background: #eff6ff;
+    border-left: 4px solid #3b82f6;
+    border-radius: 0 12px 12px 0;
+    padding: 16px;
+    margin: 20px 0;
+  }
+
+  .tips-icon {
+    flex-shrink: 0;
+  }
+
+  .tips-icon svg {
+    width: 24px;
+    height: 24px;
+    color: #3b82f6;
+  }
+
+  .tips h4 {
+    font-weight: 700;
+    color: #1f2937;
+    margin: 0 0 4px 0;
+    font-size: 14px;
+  }
+
+  .tips p {
+    font-size: 13px;
+    color: #4b5563;
+    margin: 0;
+    line-height: 1.5;
+  }
+
+  .links {
+    margin-top: 24px;
+  }
+
+  .links h3 {
+    font-size: 16px;
+    font-weight: 700;
+    color: #1f2937;
+    margin: 0 0 16px 0;
+  }
+
+  .link-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px;
+    border-radius: 12px;
+    text-decoration: none;
+    margin-bottom: 12px;
+    transition: all 0.2s ease;
+  }
+
+  .link-card:last-child {
+    margin-bottom: 0;
+  }
+
+  .link-card:active {
+    transform: scale(0.98);
+  }
+
+  .link-card.hotpepper {
+    background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+    color: white;
+    box-shadow: 0 4px 12px rgba(249, 115, 22, 0.3);
+  }
+
+  .link-card.hotpepper:hover {
+    box-shadow: 0 6px 16px rgba(249, 115, 22, 0.4);
+  }
+
+  .link-card.maps,
+  .link-card.tabelog {
+    background: white;
+    border: 2px solid #e5e7eb;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  }
+
+  .link-card.maps:hover {
+    border-color: #fca5a5;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  }
+
+  .link-card.tabelog:hover {
+    border-color: #fdba74;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  }
+
+  .link-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(4px);
+  }
+
+  .link-icon svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .link-icon.maps-icon {
+    background: #ef4444;
+    color: white;
+  }
+
+  .link-icon.tabelog-icon {
+    background: #f97316;
+    color: white;
+  }
+
+  .link-text {
+    flex: 1;
+    margin-left: 12px;
+    text-align: left;
+  }
+
+  .link-title {
+    font-weight: 700;
+    font-size: 14px;
+  }
+
+  .link-title.dark {
+    color: #1f2937;
+  }
+
+  .link-subtitle {
+    font-size: 12px;
+    opacity: 0.8;
+  }
+
+  .link-card.maps .link-subtitle,
+  .link-card.tabelog .link-subtitle {
+    color: #6b7280;
+  }
+
+  .arrow-icon {
+    width: 20px;
+    height: 20px;
+  }
+
+  .arrow-icon.dark {
+    color: #9ca3af;
+  }
+</style>

@@ -1,0 +1,19 @@
+{
+  "params": {
+    "shape_scale": 1.0,
+    "motion_name": "talk"
+  },
+  "shape_param_range": [
+    -1.055837631225586,
+    0.7703481316566467
+  ],
+  "shape_param_dim": 300,
+  "zip_size_mb": 3.81,
+  "comp_rgb_stats": {
+    "mean": 0.6329985857009888,
+    "min": 0.0073764086700975895,
+    "max": 1.0,
+    "has_nan": false
+  },
+  "bird_fix_applied": true
+}
